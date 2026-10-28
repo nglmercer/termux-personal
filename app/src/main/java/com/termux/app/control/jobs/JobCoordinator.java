@@ -12,7 +12,7 @@ import java.util.concurrent.TimeUnit;
 /** Internal admission and worker orchestration; not an authorization or IPC entry point. */
 public final class JobCoordinator {
     public enum StartStatus { ACCEPTED, REPLAY, CONFLICT, DENIED, LIMIT_REACHED, UNSUPPORTED, UNAVAILABLE }
-    public enum CancelStatus { ACCEPTED, NOT_FOUND, FINISHED, ALREADY_REQUESTED, UNSUPPORTED }
+    public enum CancelStatus { ACCEPTED, DENIED, NOT_FOUND, FINISHED, ALREADY_REQUESTED, UNSUPPORTED }
 
     /** Implementations must check server-derived authority and resolve executable and cwd on this worker. */
     public interface Policy { Resolution authorizeAndResolve(JobSpec spec, long authorizationEpoch); }
@@ -29,19 +29,20 @@ public final class JobCoordinator {
     private final JobRegistry mRegistry;
     private final AppShellJobAdapter mAdapter;
     private final Policy mPolicy;
+    private final JobAuthority mAuthority;
     private final ThreadPoolExecutor mLaunchers;
     private final ScheduledThreadPoolExecutor mTimers;
     private final Map<String, Work> mWork = new HashMap<>();
     private boolean mStopping, mClosed;
 
-    public JobCoordinator(JobRegistry registry, AppShellJobAdapter adapter, Policy policy) {
-        this(registry, adapter, policy, JobIoPool.MAX_JOBS);
+    public JobCoordinator(JobRegistry registry, AppShellJobAdapter adapter, Policy policy, JobAuthority authority) {
+        this(registry, adapter, policy, authority, JobIoPool.MAX_JOBS);
     }
 
-    JobCoordinator(JobRegistry registry, AppShellJobAdapter adapter, Policy policy, int launchWorkers) {
-        if (registry == null || adapter == null || policy == null) throw new IllegalArgumentException("Missing job service dependency");
+    JobCoordinator(JobRegistry registry, AppShellJobAdapter adapter, Policy policy, JobAuthority authority, int launchWorkers) {
+        if (registry == null || adapter == null || policy == null || authority == null) throw new IllegalArgumentException("Missing job service dependency");
         if (launchWorkers < 1 || launchWorkers > JobIoPool.MAX_JOBS) throw new IllegalArgumentException("Invalid launcher count");
-        mRegistry = registry; mAdapter = adapter; mPolicy = policy;
+        mRegistry = registry; mAdapter = adapter; mPolicy = policy; mAuthority = authority;
         mLaunchers = new ThreadPoolExecutor(launchWorkers, launchWorkers, 30, TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(JobIoPool.MAX_JOBS), task -> {
                 Thread thread = new Thread(task, "TermuxJobLaunch"); thread.setDaemon(true); return thread;
@@ -54,8 +55,10 @@ public final class JobCoordinator {
     }
 
     /** Must run off the service/main thread; policy resolution may do filesystem I/O. */
-    public StartResult start(JobSpec spec, long authorizationEpoch) {
-        if (spec == null || authorizationEpoch < 0) throw new IllegalArgumentException("Invalid request");
+    public StartResult start(JobSpec spec, JobAuthority.Lease lease) {
+        if (spec == null) throw new IllegalArgumentException("Invalid request");
+        if (!mAuthority.allows(lease, JobAuthority.Permission.EXECUTE)) return new StartResult(StartStatus.DENIED, null);
+        long authorizationEpoch = lease.epoch();
         final Resolution resolution;
         try { resolution = mPolicy.authorizeAndResolve(spec, authorizationEpoch); }
         catch (SecurityException e) { return new StartResult(StartStatus.DENIED, null); }
@@ -65,13 +68,14 @@ public final class JobCoordinator {
         if (spec.timeoutMillis() != 0) return new StartResult(StartStatus.UNSUPPORTED, null);
         synchronized (this) {
             if (mStopping) return new StartResult(StartStatus.UNAVAILABLE, null);
+            if (!mAuthority.allows(lease, JobAuthority.Permission.EXECUTE)) return new StartResult(StartStatus.DENIED, null);
             JobRegistry.Admission admission = mRegistry.admit(spec, authorizationEpoch, 5000);
             if (admission.status != JobRegistry.Status.ACCEPTED) {
                 StartStatus status = admission.status == JobRegistry.Status.REPLAY ? StartStatus.REPLAY :
                     admission.status == JobRegistry.Status.CONFLICT ? StartStatus.CONFLICT : StartStatus.LIMIT_REACHED;
                 return new StartResult(status, admission.entry == null ? null : admission.entry.record().snapshot());
             }
-            Work work = new Work(admission.entry, spec, resolution);
+            Work work = new Work(admission.entry, spec, resolution, lease);
             mWork.put(admission.entry.record().snapshot().id, work);
             try { mLaunchers.execute(work); }
             catch (RejectedExecutionException e) {
@@ -82,9 +86,10 @@ public final class JobCoordinator {
     }
 
     /** Scope checks must occur before calling; only the current epoch can access a job. */
-    public CancelStatus cancel(String id, long authorizationEpoch) {
+    public CancelStatus cancel(String id, JobAuthority.Lease lease) {
         synchronized (this) {
-            JobRegistry.Entry entry = mRegistry.get(id, authorizationEpoch);
+            if (!mAuthority.allows(lease, JobAuthority.Permission.CANCEL)) return CancelStatus.DENIED;
+            JobRegistry.Entry entry = mRegistry.get(id, lease.epoch());
             if (entry == null) return CancelStatus.NOT_FOUND;
             Work work = mWork.get(id);
             if (work == null || JobRecord.isTerminal(entry.record().snapshot().state)) return CancelStatus.FINISHED;
@@ -121,11 +126,12 @@ public final class JobCoordinator {
     private final class Work implements Runnable {
         final JobRegistry.Entry entry;
         final OwnedProcessControl control;
+        final JobAuthority.Lease lease;
         JobSpec spec;
         Resolution resolution;
         boolean claimed, done;
-        Work(JobRegistry.Entry entry, JobSpec spec, Resolution resolution) {
-            this.entry = entry; this.spec = spec; this.resolution = resolution;
+        Work(JobRegistry.Entry entry, JobSpec spec, Resolution resolution, JobAuthority.Lease lease) {
+            this.entry = entry; this.spec = spec; this.resolution = resolution; this.lease = lease;
             this.control = OwnedProcessControl.forAndroid(entry.record(), mTimers, 10000);
         }
         @Override public void run() {
@@ -138,6 +144,9 @@ public final class JobCoordinator {
                 Resolution current = mPolicy.authorizeAndResolve(spec, entry.record().snapshot().authorizationEpoch);
                 if (current == null || !Objects.equals(current.executable, resolution.executable) ||
                     !Objects.equals(current.cwd, resolution.cwd)) throw new SecurityException("Job authorization changed");
+                // This short state check marks the operation in flight; revocation cannot undo a
+                // launch already past this point, so its outcome may need reconciliation.
+                if (!mAuthority.allows(lease, JobAuthority.Permission.EXECUTE)) throw new SecurityException("Job consent revoked");
                 mAdapter.launchBegun(entry, spec, current.executable, current.cwd, control);
             }
             catch (RuntimeException | Error e) {
