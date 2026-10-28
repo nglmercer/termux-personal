@@ -58,6 +58,8 @@ int main(void) {
 
     int pipe_fds[2];
     require(pipe2(pipe_fds, O_CLOEXEC) == 0, "create exec pipe");
+    int executable = open("/bin/echo", O_PATH | O_CLOEXEC);
+    require(executable >= 0, "open executable descriptor");
     handle = -1;
     child = termux_managed_fork_pidfd(&handle);
     require(child >= 0, "exec clone3");
@@ -66,9 +68,15 @@ int main(void) {
         if (dup2(pipe_fds[1], STDOUT_FILENO) < 0) _exit(72);
         close(pipe_fds[1]);
         char *const argv[] = {"/bin/echo", "exact argument", NULL};
-        execv(argv[0], argv);
+#if defined(__NR_execveat)
+        char *const environment[] = {NULL};
+        syscall(__NR_execveat, executable, "", argv, environment, AT_EMPTY_PATH);
+#else
+        errno = ENOSYS;
+#endif
         _exit(73);
     }
+    close(executable);
     close(pipe_fds[1]);
     char output[32];
     size_t count = 0;
