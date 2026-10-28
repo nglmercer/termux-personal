@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/syscall.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -58,8 +59,29 @@ int main(void) {
 
     int pipe_fds[2];
     require(pipe2(pipe_fds, O_CLOEXEC) == 0, "create exec pipe");
-    int executable = open("/bin/echo", O_PATH | O_CLOEXEC);
+    char temporary[] = "/tmp/termux-managed-exec-XXXXXX";
+    require(mkdtemp(temporary) != NULL, "create executable directory");
+    int directory = open(temporary, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    int source = open("/bin/echo", O_RDONLY | O_CLOEXEC);
+    int copy = openat(directory, "program", O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0700);
+    require(directory >= 0 && source >= 0 && copy >= 0, "open executable copy");
+    char buffer[16384];
+    for (;;) {
+        ssize_t n = read(source, buffer, sizeof(buffer));
+        if (n < 0 && errno == EINTR) continue;
+        require(n >= 0, "read executable copy");
+        if (n == 0) break;
+        for (ssize_t written = 0; written < n;) {
+            ssize_t amount = write(copy, buffer + written, (size_t)(n - written));
+            if (amount < 0 && errno == EINTR) continue;
+            require(amount > 0, "write executable copy"); written += amount;
+        }
+    }
+    require(close(source) == 0 && close(copy) == 0, "close executable copy");
+    int executable = openat(directory, "program", O_PATH | O_CLOEXEC | O_NOFOLLOW);
     require(executable >= 0, "open executable descriptor");
+    require(unlinkat(directory, "program", 0) == 0 && symlinkat("/bin/false", directory, "program") == 0,
+        "replace executable pathname");
     handle = -1;
     child = termux_managed_fork_pidfd(&handle);
     require(child >= 0, "exec clone3");
@@ -91,6 +113,8 @@ int main(void) {
     close(pipe_fds[0]);
     require(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0, "exec child exit");
     require(close(handle) == 0, "close exec pidfd");
+    require(unlinkat(directory, "program", 0) == 0 && close(directory) == 0 && rmdir(temporary) == 0,
+        "remove executable test directory");
 
     for (int i = 0; i < 100; i++) {
         handle = -1;
