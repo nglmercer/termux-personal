@@ -68,6 +68,7 @@ public final class JobSpec {
     public Presentation presentation() { return mPresentation; }
     public String clientRequestId() { return mClientRequestId; }
     public boolean sameExecution(JobSpec other) { return other != null && MessageDigest.isEqual(mFingerprint, other.mFingerprint); }
+    byte[] fingerprintCopy() { return mFingerprint.clone(); }
 
     private static void requireAbsolutePath(String path) {
         if (!path.startsWith("/") || (path.length() > 1 && path.endsWith("/"))) throw new IllegalArgumentException("Path must be absolute and normalized");

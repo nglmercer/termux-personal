@@ -31,10 +31,16 @@ public final class AppShellJobCapture implements AppShell.ManagedCapture {
 
     /** Release input and freeze output if process startup failed before this capture was handed off. */
     public void discardBeforeLaunch() {
-        if (!mStarted.compareAndSet(false, true)) throw new IllegalStateException("Capture already used");
+        if (!discardIfUnstarted()) throw new IllegalStateException("Capture already used");
+    }
+
+    /** Used during shutdown, when startup may already be racing with cleanup. */
+    public boolean discardIfUnstarted() {
+        if (!mStarted.compareAndSet(false, true)) return false;
         Arrays.fill(mStdin, (byte) 0);
         mOutput.finish();
         mIoWorkers.shutdown();
+        return true;
     }
 
     /** Called on the AppShell worker, never the Android service thread. */
