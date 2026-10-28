@@ -86,20 +86,25 @@ public final class RpcDispatcher {
                 return Collections.singletonMap("version", mCore.hello(ControlCore.PROTOCOL_VERSION));
             case "system.capabilities":
                 parameters(request.params);
-                List<String> methods = new ArrayList<>(mCore.capabilities());
-                if (scopes == null || !scopes.contains(ControlCore.Scope.SESSIONS_READ)) methods.remove("session.list");
-                if (scopes == null || !scopes.contains(ControlCore.Scope.SESSIONS_WRITE)) {
-                    methods.remove("session.create"); methods.remove("session.write");
-                    methods.remove("session.rename"); methods.remove("session.resize"); methods.remove("session.focus");
-                }
-                if (scopes == null || !scopes.contains(ControlCore.Scope.SESSIONS_WRITE) ||
-                    !scopes.contains(ControlCore.Scope.SESSIONS_CLOSE)) methods.remove("session.close");
-                if (scopes == null || !scopes.contains(ControlCore.Scope.SESSIONS_OUTPUT)) methods.remove("session.snapshot");
-                if (mOutput != null && scopes != null && scopes.contains(ControlCore.Scope.SESSIONS_OUTPUT)) {
-                    methods.add("session.output.subscribe"); methods.add("session.output.read"); methods.add("session.output.unsubscribe");
-                    if (scopes.contains(ControlCore.Scope.SESSIONS_OUTPUT_RESUME)) methods.add("session.output.resume");
-                }
+                List<String> methods = new ArrayList<>();
+                for (ControlMethodRegistry.Descriptor descriptor : ControlMethodRegistry.available(mCore, scopes, mOutput != null))
+                    methods.add(descriptor.name);
                 return Collections.singletonMap("methods", methods);
+            case "system.describe": {
+                parameters(request.params);
+                List<Object> descriptions = new ArrayList<>();
+                for (ControlMethodRegistry.Descriptor descriptor : ControlMethodRegistry.available(mCore, scopes, mOutput != null))
+                    descriptions.add(descriptor.describe());
+                Map<String, Object> limits = new LinkedHashMap<>();
+                limits.put("maxFrameBytes", FrameCodec.MAX_FRAME_BYTES);
+                limits.put("maxJsonRequestBytes", RpcRequestParser.MAX_REQUEST_BYTES);
+                limits.put("maxBinaryChunkBytes", ControlCore.MAX_WRITE_BYTES);
+                limits.put("hardMemoryLimitAvailable", false);
+                Map<String, Object> result = new LinkedHashMap<>();
+                result.put("protocolVersion", ControlCore.PROTOCOL_VERSION); result.put("schemaRevision", "1.1");
+                result.put("methods", descriptions); result.put("limits", limits);
+                return result;
+            }
             case "session.list":
                 parameters(request.params);
                 List<ControlCore.SessionInfo> sessions = mCore.listSessions(scopes);

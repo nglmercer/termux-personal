@@ -1,6 +1,6 @@
 [
   {"request":{"jsonrpc":"2.0","id":1,"method":"system.hello","params":{"version":1}},"response":{"jsonrpc":"2.0","id":1,"result":{"version":1}}},
-  {"request":{"jsonrpc":"2.0","id":"caps","method":"system.capabilities","params":{}},"response":{"jsonrpc":"2.0","id":"caps","result":{"methods":["system.hello","system.capabilities","session.list"]}}},
+  {"request":{"jsonrpc":"2.0","id":"caps","method":"system.capabilities","params":{}},"response":{"jsonrpc":"2.0","id":"caps","result":{"methods":["system.hello","system.capabilities","system.describe","session.list"]}}},
   {"request":{"jsonrpc":"2.0","id":3,"method":"session.list","params":{}},"response":{"jsonrpc":"2.0","id":3,"result":{"sessions":[{"id":"s1","state":"running","pid":123,"name":"Work"}]}}},
   {"request":{"jsonrpc":"2.0","id":4,"method":"session.rename","params":{"id":"s1","name":"new"}},"response":{"jsonrpc":"2.0","id":4,"error":{"code":-32001,"message":"DENIED"}}},
   {"request":{"jsonrpc":"2.0","id":5,"method":"unknown.method","params":{}},"response":{"jsonrpc":"2.0","id":5,"error":{"code":-32601,"message":"Method not found"}}}

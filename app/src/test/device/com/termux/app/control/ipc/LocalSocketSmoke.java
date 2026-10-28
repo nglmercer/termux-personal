@@ -54,6 +54,9 @@ public final class LocalSocketSmoke {
             write(codec, client, "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"system.capabilities\"}");
             String capabilities = read(codec, client);
             check(capabilities.contains("session.list") && !capabilities.contains("session.write"));
+            write(codec, client, "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"system.describe\",\"params\":{}}");
+            String description = read(codec, client);
+            check(description.contains("\"protocolVersion\":1") && description.contains("session.list") && !description.contains("session.write"));
             write(codec, client, "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"session.rename\",\"params\":{\"id\":\"s1\",\"name\":\"x\"}}");
             check(read(codec, client).contains("DENIED"));
             server.requestStop(); check(!server.isRunning());

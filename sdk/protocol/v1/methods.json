@@ -1,0 +1,21 @@
+{
+  "protocolVersion": 1,
+  "schemaRevision": "1.1",
+  "methods": [
+    {"name":"system.hello","scopes":[],"mutates":false,"binaryDirection":"none","outputService":false},
+    {"name":"system.capabilities","scopes":[],"mutates":false,"binaryDirection":"none","outputService":false},
+    {"name":"system.describe","scopes":[],"mutates":false,"binaryDirection":"none","outputService":false},
+    {"name":"session.list","scopes":["SESSIONS_READ"],"mutates":false,"binaryDirection":"none","outputService":false},
+    {"name":"session.create","scopes":["SESSIONS_WRITE"],"mutates":true,"binaryDirection":"none","outputService":false},
+    {"name":"session.write","scopes":["SESSIONS_WRITE"],"mutates":true,"binaryDirection":"request","outputService":false},
+    {"name":"session.rename","scopes":["SESSIONS_WRITE"],"mutates":true,"binaryDirection":"none","outputService":false},
+    {"name":"session.resize","scopes":["SESSIONS_WRITE"],"mutates":true,"binaryDirection":"none","outputService":false},
+    {"name":"session.focus","scopes":["SESSIONS_WRITE"],"mutates":true,"binaryDirection":"none","outputService":false},
+    {"name":"session.snapshot","scopes":["SESSIONS_OUTPUT"],"mutates":false,"binaryDirection":"none","outputService":false},
+    {"name":"session.close","scopes":["SESSIONS_WRITE","SESSIONS_CLOSE"],"mutates":true,"binaryDirection":"none","outputService":false},
+    {"name":"session.output.subscribe","scopes":["SESSIONS_OUTPUT"],"mutates":true,"binaryDirection":"none","outputService":true},
+    {"name":"session.output.read","scopes":["SESSIONS_OUTPUT"],"mutates":false,"binaryDirection":"response","outputService":true},
+    {"name":"session.output.unsubscribe","scopes":["SESSIONS_OUTPUT"],"mutates":true,"binaryDirection":"none","outputService":true},
+    {"name":"session.output.resume","scopes":["SESSIONS_OUTPUT","SESSIONS_OUTPUT_RESUME"],"mutates":true,"binaryDirection":"none","outputService":true}
+  ]
+}

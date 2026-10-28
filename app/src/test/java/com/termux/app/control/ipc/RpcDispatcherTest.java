@@ -133,6 +133,28 @@ public class RpcDispatcherTest extends TestCase {
         assertFalse(denied.contains("session.snapshot"));
     }
 
+    public void testDescribeMatchesCapabilitiesAndReportsLimits() throws Exception {
+        hello();
+        EnumSet<ControlCore.Scope> scopes = EnumSet.of(ControlCore.Scope.SESSIONS_READ);
+        JsonObject caps = object(send("{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"system.capabilities\"}", scopes)).getAsJsonObject("result");
+        JsonObject description = object(send("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"system.describe\",\"params\":{}}", scopes)).getAsJsonObject("result");
+        assertEquals(1, description.get("protocolVersion").getAsInt());
+        assertEquals("1.1", description.get("schemaRevision").getAsString());
+        assertEquals(65536, description.getAsJsonObject("limits").get("maxBinaryChunkBytes").getAsInt());
+        assertFalse(description.getAsJsonObject("limits").get("hardMemoryLimitAvailable").getAsBoolean());
+        JsonArray entries = description.getAsJsonArray("methods");
+        JsonArray names = caps.getAsJsonArray("methods");
+        assertEquals(names.size(), entries.size());
+        for (int i = 0; i < names.size(); i++) {
+            JsonObject entry = entries.get(i).getAsJsonObject();
+            assertEquals(names.get(i).getAsString(), entry.get("name").getAsString());
+            assertTrue(entry.get("available").getAsBoolean());
+            assertFalse(entry.get("name").getAsString().equals("session.write"));
+        }
+        JsonObject invalid = object(send("{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"system.describe\",\"params\":{\"scope\":\"SESSIONS_WRITE\"}}", scopes));
+        assertEquals(-32602, invalid.getAsJsonObject("error").get("code").getAsInt());
+    }
+
     public void testTransportTimeoutPreservesUnknownOutcomeAndSuppressesNotifications() throws Exception {
         RpcRequestParser.Request request = parser.parse(
             "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"session.close\"}".getBytes(StandardCharsets.UTF_8));
