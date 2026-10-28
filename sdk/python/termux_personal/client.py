@@ -4,7 +4,7 @@ import threading
 from typing import Any, Mapping, Optional
 
 from .errors import ControlError, ProtocolError, RpcError, TransportError
-from .transport import MAX_MESSAGE, SocketTransport
+from .transport import AdbTransport, FrameTransport, MAX_MESSAGE, SocketTransport
 
 _READ_ONLY = frozenset({"system.hello", "system.capabilities", "system.describe", "session.list", "session.snapshot", "session.output.read"})
 
@@ -23,7 +23,7 @@ def _invalid_constant(_value):
 
 
 class TermuxClient:
-    def __init__(self, transport: SocketTransport):
+    def __init__(self, transport: FrameTransport):
         self._transport = transport
         self._lock = threading.Lock()
         self._next_id = 1
@@ -42,6 +42,13 @@ class TermuxClient:
             return cls(SocketTransport.connect(path, timeout))
         except OSError as exc:
             raise TransportError("Unable to connect to local control socket") from exc
+
+    @classmethod
+    def connect_adb(cls, **options):
+        try:
+            return cls(AdbTransport.connect(**options))
+        except OSError as exc:
+            raise TransportError("Unable to start ADB bridge") from exc
 
     def __enter__(self):
         return self
@@ -109,7 +116,8 @@ class TermuxClient:
                 raise
             except (OSError, EOFError, UnicodeError, ValueError, ControlError) as exc:
                 self.close()
-                raise TransportError("Control connection failed", outcome_unknown=method not in _READ_ONLY) from exc
+                message = str(exc) if str(exc).startswith("ADB ") else "Control connection failed"
+                raise TransportError(message, outcome_unknown=method not in _READ_ONLY) from exc
 
     def capabilities(self):
         result, _ = self.request("system.capabilities")

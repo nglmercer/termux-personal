@@ -12,7 +12,9 @@ try {
 } finally { client.close(); }
 ```
 
-`AbortSignal` can cancel a request. Once a mutation has begun, a transport failure or cancellation produces `TransportError.outcomeUnknown`; do not blindly retry it. `RpcError.outcomeUnknown` also reports server-side uncertainty. Job, file, process and workspace APIs are not implemented yet. The Unix socket adapter requires a runtime with Node-compatible filesystem sockets; host ADB remains a separate debug adapter.
+`AbortSignal` can cancel a request. Once a mutation has begun, a transport failure or cancellation produces `TransportError.outcomeUnknown`; do not blindly retry it. `RpcError.outcomeUnknown` also reports server-side uncertainty. Job, file, process and workspace APIs are not implemented yet. The Unix socket adapter requires a runtime with Node-compatible filesystem sockets.
+
+For a debuggable device, use `await TermuxClient.fromTransport(AdbTransport.connect({ serial }))`. This requires an authorized ADB device, local control already enabled, and a compatible native `termux-control-adb` bridge already installed at the app-private path. It does not work on a non-debuggable installation and does not enable any permission.
 
 Install development dependencies with `npm ci` in this directory. From the repository root, after compiling debug Java classes, run `GSON_JAR=... bash scripts/test-control-typescript-sdk.sh`. Tests currently use Node's native TypeScript support and require a compatible Node runtime.
 

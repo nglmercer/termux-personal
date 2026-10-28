@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <poll.h>
 #include <signal.h>
@@ -256,7 +257,7 @@ static int read_output_once(int fd, const char *session_id, uint64_t *position, 
 
 static volatile sig_atomic_t attach_stop, attach_suspend;
 static int response_ack(const char *response, const char *field);
-static int connect_control(const char *path) {
+static int connect_raw(const char *path) {
     int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
     if (fd < 0) { perror("termux-control: socket"); return -1; }
     struct timeval timeout = { .tv_sec = 5, .tv_usec = 0 };
@@ -279,9 +280,66 @@ static int connect_control(const char *path) {
     if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &peer, &peer_size) || peer_size != sizeof(peer) || peer.uid != getuid()) {
         fprintf(stderr, "termux-control: socket peer is not the current UID\n"); close(fd); return -1;
     }
+    return fd;
+}
+static int connect_control(const char *path) {
+    int fd = connect_raw(path);
+    if (fd < 0) return -1;
     int handshake = exchange(fd, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"system.hello\",\"params\":{\"version\":1}}", 1, 1, NULL, 0, NULL);
     if (handshake != 0) { close(fd); return -1; }
     return fd;
+}
+
+/* Debug transport bridge: copies bounded byte streams; the peer still authenticates and negotiates v1. */
+static int bridge(const char *path) {
+    int fd = connect_raw(path);
+    if (fd < 0) return 1;
+    int in_flags = fcntl(STDIN_FILENO, F_GETFL), out_flags = fcntl(STDOUT_FILENO, F_GETFL);
+    if (in_flags < 0 || out_flags < 0 || fcntl(STDIN_FILENO, F_SETFL, in_flags | O_NONBLOCK) < 0) { close(fd); return 1; }
+    if (fcntl(STDOUT_FILENO, F_SETFL, out_flags | O_NONBLOCK) < 0) {
+        (void)fcntl(STDIN_FILENO, F_SETFL, in_flags); close(fd); return 1;
+    }
+    signal(SIGPIPE, SIG_IGN);
+    unsigned char to_socket[16384], to_stdout[16384];
+    size_t in_start = 0, in_end = 0, out_start = 0, out_end = 0;
+    int stdin_open = 1, socket_open = 1, write_shutdown = 0, result = 0;
+    while (socket_open || out_start < out_end) {
+        if (!stdin_open && in_start == in_end && !write_shutdown) {
+            (void)shutdown(fd, SHUT_WR); write_shutdown = 1;
+        }
+        struct pollfd fds[3] = {
+            { STDIN_FILENO, stdin_open && in_start == in_end ? POLLIN : 0, 0 },
+            { fd, (short)((socket_open && out_start == out_end ? POLLIN : 0) | (in_start < in_end ? POLLOUT : 0)), 0 },
+            { STDOUT_FILENO, out_start < out_end ? POLLOUT : 0, 0 }
+        };
+        int ready_count = poll(fds, 3, -1);
+        if (ready_count < 0) { if (errno == EINTR) continue; result = 1; break; }
+        if (stdin_open && in_start == in_end && (fds[0].revents & (POLLIN | POLLHUP))) {
+            ssize_t n = read(STDIN_FILENO, to_socket, sizeof(to_socket));
+            if (n > 0) { in_start = 0; in_end = (size_t)n; }
+            else if (n == 0) stdin_open = 0;
+            else if (errno != EAGAIN && errno != EINTR) { result = 1; break; }
+        }
+        if (in_start < in_end && (fds[1].revents & POLLOUT)) {
+            ssize_t n = send(fd, to_socket + in_start, in_end - in_start, MSG_NOSIGNAL);
+            if (n > 0) in_start += (size_t)n;
+            else if (n == 0 || (n < 0 && errno != EAGAIN && errno != EINTR)) { result = 1; break; }
+        }
+        if (socket_open && out_start == out_end && (fds[1].revents & (POLLIN | POLLHUP))) {
+            ssize_t n = recv(fd, to_stdout, sizeof(to_stdout), 0);
+            if (n > 0) { out_start = 0; out_end = (size_t)n; }
+            else if (n == 0) socket_open = 0;
+            else if (errno != EAGAIN && errno != EINTR) { result = 1; break; }
+        }
+        if (out_start < out_end && (fds[2].revents & POLLOUT)) {
+            ssize_t n = write(STDOUT_FILENO, to_stdout + out_start, out_end - out_start);
+            if (n > 0) out_start += (size_t)n;
+            else if (n == 0 || (n < 0 && errno != EAGAIN && errno != EINTR)) { result = 1; break; }
+        }
+        if ((fds[0].revents | fds[1].revents | fds[2].revents) & (POLLERR | POLLNVAL)) { result = 1; break; }
+    }
+    (void)fcntl(STDIN_FILENO, F_SETFL, in_flags); (void)fcntl(STDOUT_FILENO, F_SETFL, out_flags);
+    close(fd); return result;
 }
 
 /* Retry only read-side transport failures: never replay an uncertain input write. */
@@ -513,7 +571,7 @@ static int attach_loop(int *fd, const char *id, const char *path, const char *to
 }
 
 static void usage(void) {
-    fprintf(stderr, "Usage: termux-control [--socket PATH] [--resume] capabilities|list|create COLS ROWS [NAME]|rename ID NAME|resize ID COLS ROWS|focus ID|snapshot ID|close ID|write ID < FILE|follow ID|attach ID\n");
+    fprintf(stderr, "Usage: termux-control [--socket PATH] [--resume] capabilities|list|create COLS ROWS [NAME]|rename ID NAME|resize ID COLS ROWS|focus ID|snapshot ID|close ID|write ID < FILE|follow ID|attach ID|bridge\n");
 }
 int main(int argc, char **argv) {
     const char *path = getenv("TERMUX_CONTROL_SOCKET"); char default_path[sizeof(((struct sockaddr_un *)0)->sun_path)];
@@ -532,6 +590,7 @@ int main(int argc, char **argv) {
     }
     if (i >= argc || strlen(path) >= sizeof(((struct sockaddr_un *)0)->sun_path)) { usage(); return 2; }
     const char *cmd = argv[i++]; int count = argc - i; char req[MAX_REQUEST] = ""; size_t used = 0;
+    if (!strcmp(cmd, "bridge") && count == 0 && !resume) return bridge(path);
     const char *method = NULL;
     if (!strcmp(cmd, "list") && count == 0) method = "session.list";
     else if (!strcmp(cmd, "capabilities") && count == 0) method = "system.capabilities";

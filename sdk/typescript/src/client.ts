@@ -84,7 +84,8 @@ export class TermuxClient {
       }
       this.close();
       if (!started && error instanceof TransportError) throw error;
-      throw new TransportError("Control connection failed", started && !readOnly.has(method), { cause: error });
+      const message = error instanceof Error && error.message.startsWith("ADB ") ? error.message : "Control connection failed";
+      throw new TransportError(message, started && !readOnly.has(method), { cause: error });
     } finally { signal?.removeEventListener("abort", abort); }
   }
 

@@ -2,6 +2,9 @@ import json
 import socket
 import struct
 import threading
+import tempfile
+import time
+from pathlib import Path
 import unittest
 
 from termux_personal import RpcError, SocketTransport, TermuxClient, TransportError
@@ -127,6 +130,27 @@ class ClientTest(unittest.TestCase):
         with self.assertRaises(TransportError) as error:
             client.request("session.rename", {"id": "s1", "name": "x"})
         self.assertTrue(error.exception.outcome_unknown)
+
+    def test_adb_non_debuggable_is_reported_without_raw_stderr(self):
+        with tempfile.TemporaryDirectory(prefix="termux-adb-error-") as directory:
+            adb = Path(directory) / "adb"
+            adb.write_text("#!/bin/sh\necho 'run-as: package not debuggable: private detail' >&2\nexit 1\n")
+            adb.chmod(0o700)
+            with self.assertRaises(TransportError) as error:
+                TermuxClient.connect_adb(adb_path=str(adb))
+            self.assertEqual("ADB run-as requires a debuggable Termux installation", str(error.exception))
+            self.assertFalse(error.exception.outcome_unknown)
+
+    def test_adb_stalled_handshake_times_out(self):
+        with tempfile.TemporaryDirectory(prefix="termux-adb-stall-") as directory:
+            adb = Path(directory) / "adb"
+            adb.write_text("#!/bin/sh\nexec sleep 5\n")
+            adb.chmod(0o700)
+            start = time.monotonic()
+            with self.assertRaises(TransportError) as error:
+                TermuxClient.connect_adb(adb_path=str(adb), timeout=0.1)
+            self.assertFalse(error.exception.outcome_unknown)
+            self.assertLess(time.monotonic() - start, 2)
 
 
 if __name__ == "__main__":

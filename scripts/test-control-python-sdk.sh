@@ -9,3 +9,5 @@ mkdir -p "$out_dir/classes"
 PYTHONPATH=sdk/python python3 -m unittest discover -s sdk/python/tests -p 'test_*.py'
 javac -cp "$app_classes:$GSON_JAR" -d "$out_dir/classes" app/src/test/host/com/termux/app/control/ipc/HostRpcSocketSmoke.java
 PYTHONPATH=sdk/python python3 sdk/python/tests/java_interop.py "$out_dir/classes:$app_classes:$GSON_JAR"
+${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror tools/termux-control/termux-control.c -o "$out_dir/termux-control"
+PYTHONPATH=sdk/python python3 sdk/python/tests/adb_java_interop.py "$out_dir/classes:$app_classes:$GSON_JAR" "$out_dir/termux-control"
