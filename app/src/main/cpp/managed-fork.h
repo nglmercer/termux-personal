@@ -28,6 +28,10 @@ struct termux_managed_child {
 int termux_managed_launch(int executable_fd, int cwd_fd, char *const argv[], char *const envp[],
                           struct termux_managed_child *child);
 
+/* Signal only the owned pidfd with TERM, KILL or INT. Caller synchronizes
+ * descriptor lifetime with this call; never pass a recycled descriptor. */
+int termux_managed_signal(int pidfd, int signal_number);
+
 /* Child-only: wire three descriptors, fchdir and exec a pinned executable.
  * All supplied descriptors must be >= 3; error_fd must be distinct from the
  * other descriptors. Requires close_range(CLOEXEC); fails closed when absent.

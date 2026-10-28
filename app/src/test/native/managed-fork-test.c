@@ -13,14 +13,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-static int signal_handle(int handle, int signal_number) {
-#if defined(__NR_pidfd_send_signal)
-    return (int)syscall(__NR_pidfd_send_signal, handle, signal_number, NULL, 0);
-#else
-    (void)handle; (void)signal_number; errno = ENOSYS; return -1;
-#endif
-}
-
 static void require(int condition, const char *message) {
     if (!condition) { perror(message); exit(1); }
 }
@@ -64,7 +56,9 @@ int main(void) {
     require(handle >= 0, "pidfd returned");
     int flags = fcntl(handle, F_GETFD);
     require(flags >= 0 && (flags & FD_CLOEXEC), "pidfd close-on-exec");
-    if (signal_handle(handle, SIGTERM) < 0) {
+    errno = 0;
+    require(termux_managed_signal(handle, SIGSTOP) == -1 && errno == EINVAL, "reject unsupported signal");
+    if (termux_managed_signal(handle, SIGTERM) < 0) {
         int signal_error = errno;
         /* This is a disposable, unreaped test child, not an API fallback. */
         kill(child, SIGKILL); waitpid(child, NULL, 0); close(handle);
@@ -77,7 +71,7 @@ int main(void) {
     int status;
     require(waitpid(child, &status, 0) == child && WIFSIGNALED(status) && WTERMSIG(status) == SIGTERM, "wait original child");
     errno = 0;
-    require(signal_handle(handle, SIGTERM) == -1 && errno == ESRCH, "stale handle rejection");
+    require(termux_managed_signal(handle, SIGTERM) == -1 && errno == ESRCH, "stale handle rejection");
     require(close(handle) == 0, "close pidfd");
 
     int pipe_fds[2];
@@ -209,6 +203,20 @@ int main(void) {
         "managed exit status");
     close(managed_child.pidfd);
 
+    shell = open("/bin/sh", O_PATH | O_CLOEXEC);
+    cwd = open("/tmp", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    char *const wait_argv[] = {"sh", "-c", "read x", NULL};
+    require(termux_managed_launch(shell, cwd, wait_argv, launch_env, &managed_child) == 0, "launch cancellable child");
+    close(shell); close(cwd);
+    require(termux_managed_read_exec_status(managed_child.status_read, 2000, &exec_error) == 0, "cancellable exec status");
+    require(termux_managed_signal(managed_child.pidfd, SIGTERM) == 0, "signal launched child handle");
+    require(waitpid(managed_child.pid, &status, 0) == managed_child.pid && WIFSIGNALED(status) && WTERMSIG(status) == SIGTERM,
+        "observe signalled child");
+    errno = 0;
+    require(termux_managed_signal(managed_child.pidfd, SIGKILL) == -1 && errno == ESRCH, "reject post-exit signal");
+    close(managed_child.stdin_write); close(managed_child.stdout_read); close(managed_child.stderr_read);
+    close(managed_child.status_read); close(managed_child.pidfd);
+
     require(pipe2(errors, O_CLOEXEC) == 0, "create timeout pipe");
     errno = 0;
     require(termux_managed_read_exec_status(errors[0], 20, &exec_error) == -1 && errno == ETIMEDOUT, "bounded status wait");
@@ -224,7 +232,7 @@ int main(void) {
         if (child == 0) _exit(23);
         require(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 23, "immediate exit");
         errno = 0;
-        require(signal_handle(handle, SIGTERM) == -1 && errno == ESRCH, "immediate exit handle rejection");
+        require(termux_managed_signal(handle, SIGTERM) == -1 && errno == ESRCH, "immediate exit handle rejection");
         require(close(handle) == 0, "close immediate pidfd");
     }
     puts("atomic pidfd creation, owned signal, and exited-child rejection passed");

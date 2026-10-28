@@ -92,6 +92,17 @@ int termux_managed_launch(int executable_fd, int cwd_fd, char *const argv[], cha
     return 0;
 }
 
+int termux_managed_signal(int pidfd, int signal_number) {
+    if (pidfd < 0 || (signal_number != SIGTERM && signal_number != SIGKILL && signal_number != SIGINT)) {
+        errno = EINVAL; return -1;
+    }
+#if defined(__NR_pidfd_send_signal)
+    return (int)syscall(__NR_pidfd_send_signal, pidfd, signal_number, NULL, 0);
+#else
+    errno = ENOSYS; return -1;
+#endif
+}
+
 void termux_managed_exec_child(int executable_fd, int cwd_fd, int error_fd,
                                int stdin_fd, int stdout_fd, int stderr_fd,
                                char *const argv[], char *const envp[]) {
