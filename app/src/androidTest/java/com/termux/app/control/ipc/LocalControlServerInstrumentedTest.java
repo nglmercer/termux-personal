@@ -61,6 +61,7 @@ public class LocalControlServerInstrumentedTest {
             server.requestStop();
             assertFalse(server.isRunning());
             try { assertEquals(-1, client.getInputStream().read()); }
+            catch (java.net.SocketTimeoutException e) { throw new AssertionError("revocation did not close client", e); }
             catch (java.io.IOException expected) { /* A reset also closes the lease. */ }
         } finally {
             server.close(); client.close();
