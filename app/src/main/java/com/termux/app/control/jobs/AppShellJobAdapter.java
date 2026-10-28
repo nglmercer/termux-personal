@@ -36,9 +36,15 @@ public final class AppShellJobAdapter {
      * A callback may complete the already-published record before this method returns.
      */
     @Nullable public Process launch(JobRegistry.Entry entry, JobSpec spec, String executable, String cwd) {
+        return launch(entry, spec, executable, cwd, null);
+    }
+
+    @Nullable public Process launch(JobRegistry.Entry entry, JobSpec spec, String executable, String cwd,
+                                    @Nullable OwnedProcessControl control) {
         if (entry == null || !entry.matches(spec) || !isNormalizedAbsolute(executable) || !isNormalizedAbsolute(cwd) ||
             (spec.executable().startsWith("/") && !spec.executable().equals(executable)) ||
-            (spec.workingDirectory() != null && !spec.workingDirectory().equals(cwd)))
+            (spec.workingDirectory() != null && !spec.workingDirectory().equals(cwd)) ||
+            (control != null && !control.owns(entry.record())))
             throw new IllegalArgumentException("Resolved absolute executable and cwd required");
         JobRecord record = entry.record();
         if (!record.begin()) return null;
@@ -48,6 +54,7 @@ public final class AppShellJobAdapter {
             if (captureFailed || exitCode == null)
                 record.complete(JobRecord.State.FAILED, null, JobRecord.Failure.CAPTURE_FAILED, System.currentTimeMillis());
             else record.complete(JobRecord.State.EXITED, exitCode, null, System.currentTimeMillis());
+            if (control != null) control.completed();
         };
         try {
             Process process = mBackend.launch(spec, executable, cwd, entry.capture(), callback);
@@ -55,14 +62,17 @@ public final class AppShellJobAdapter {
                 entry.capture().discardIfUnstarted();
                 if (completed.compareAndSet(false, true))
                     record.complete(JobRecord.State.FAILED, null, JobRecord.Failure.START_FAILED, System.currentTimeMillis());
+                if (control != null) control.completed();
                 return null;
             }
             record.started(null, System.currentTimeMillis());
+            if (control != null) control.attach(process);
             return process;
         } catch (RuntimeException | Error e) {
             entry.capture().discardIfUnstarted();
             if (completed.compareAndSet(false, true))
                 record.complete(JobRecord.State.FAILED, null, JobRecord.Failure.START_FAILED, System.currentTimeMillis());
+            if (control != null) control.completed();
             throw e;
         }
     }
