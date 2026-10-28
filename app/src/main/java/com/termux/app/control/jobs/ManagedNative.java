@@ -14,5 +14,14 @@ public final class ManagedNative {
     }
     private ManagedNative() { }
     public static boolean isLibraryAvailable() { return AVAILABLE; }
+    /** Returns zero if atomic pidfd creation and signal-zero succeeded, otherwise negative errno.
+     * This is a partial probe, not a guarantee of exec, close_range, or job availability. */
+    public static int probePidfd() {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
+            throw new IllegalStateException("Kernel probe must run off the main thread");
+        if (!AVAILABLE) return -1;
+        return nativeProbePidfd();
+    }
     private static native int nativeAbi();
+    private static native int nativeProbePidfd();
 }
