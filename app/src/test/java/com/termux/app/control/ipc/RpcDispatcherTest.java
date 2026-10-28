@@ -16,8 +16,11 @@ public class RpcDispatcherTest extends TestCase {
     private static final class Backend implements ControlCore.Backend {
         int calls;
         boolean closeEnabled;
+        boolean focusAvailable, snapshotAvailable;
         String lastId;
         @Override public boolean isCloseEnabled() { return closeEnabled; }
+        @Override public boolean isFocusAvailable() { return focusAvailable; }
+        @Override public boolean isSnapshotAvailable() { return snapshotAvailable; }
         @Override public List<ControlCore.SessionInfo> list() {
             calls++;
             return Collections.singletonList(new ControlCore.SessionInfo("s1", ControlCore.State.RUNNING, 123, "Work"));
@@ -112,6 +115,22 @@ public class RpcDispatcherTest extends TestCase {
         backend.closeEnabled = false;
         assertEquals("UNAVAILABLE", object(send(close, both)).getAsJsonObject("error").get("message").getAsString());
         assertEquals(1, backend.calls);
+    }
+
+    public void testOptionalCapabilitiesRequireBackendAndScope() throws Exception {
+        hello();
+        EnumSet<ControlCore.Scope> scopes = EnumSet.of(ControlCore.Scope.SESSIONS_WRITE, ControlCore.Scope.SESSIONS_OUTPUT);
+        String request = "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"system.capabilities\"}";
+        String absent = object(send(request, scopes)).getAsJsonObject("result").toString();
+        assertFalse(absent.contains("session.focus"));
+        assertFalse(absent.contains("session.snapshot"));
+        backend.focusAvailable = true; backend.snapshotAvailable = true;
+        String present = object(send(request, scopes)).getAsJsonObject("result").toString();
+        assertTrue(present.contains("session.focus"));
+        assertTrue(present.contains("session.snapshot"));
+        String denied = object(send(request, Collections.emptySet())).getAsJsonObject("result").toString();
+        assertFalse(denied.contains("session.focus"));
+        assertFalse(denied.contains("session.snapshot"));
     }
 
     public void testTransportTimeoutPreservesUnknownOutcomeAndSuppressesNotifications() throws Exception {

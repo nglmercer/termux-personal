@@ -17,8 +17,8 @@ import com.termux.shared.termux.TermuxConstants;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.util.Collections;
 import java.util.LinkedList;
+import java.util.Locale;
 
 /**
  * A document provider for the Storage Access Framework which exposes the files in the
@@ -163,6 +163,8 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
     public Cursor querySearchDocuments(String rootId, String query, String[] projection) throws FileNotFoundException {
         final MatrixCursor result = new MatrixCursor(projection != null ? projection : DEFAULT_DOCUMENT_PROJECTION);
         final File parent = getFileForDocId(rootId);
+        if (!parent.equals(BASE_DIR) || query == null) throw new FileNotFoundException("Invalid search root or query");
+        final String normalizedQuery = query.toLowerCase(Locale.ROOT);
 
         // This example implementation searches file names for the query and doesn't rank search
         // results, so we can stop as soon as we find a sufficient number of matches.  Other
@@ -183,9 +185,12 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
             if (isInsideHome) {
                 if (file.isDirectory()) {
                     File[] children = file.listFiles();
-                    if (children != null) Collections.addAll(pending, children);
+                    if (children != null) for (File child : children) {
+                        if (pending.size() + visited >= 10000) break;
+                        pending.add(child);
+                    }
                 } else {
-                    if (file.getName().toLowerCase().contains(query)) {
+                    if (file.getName().toLowerCase(Locale.ROOT).contains(normalizedQuery)) {
                         includeFile(result, null, file);
                     }
                 }
@@ -257,7 +262,7 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
         } else if (file.canWrite()) {
             flags |= Document.FLAG_SUPPORTS_WRITE;
         }
-        if (file.getParentFile().canWrite()) flags |= Document.FLAG_SUPPORTS_DELETE;
+        if (!file.equals(BASE_DIR) && file.getParentFile().canWrite()) flags |= Document.FLAG_SUPPORTS_DELETE;
 
         final String displayName = file.getName();
         final String mimeType = getMimeType(file);

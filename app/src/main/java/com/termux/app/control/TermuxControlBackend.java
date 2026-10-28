@@ -10,6 +10,8 @@ import java.util.List;
 
 /** Main-thread adapter for the existing service; no session ownership is duplicated. */
 public final class TermuxControlBackend implements ControlCore.Backend {
+    @Override public boolean isFocusAvailable() { return true; }
+    @Override public boolean isSnapshotAvailable() { return true; }
     private final TermuxService mService;
     public TermuxControlBackend(TermuxService service) {
         if (service == null) throw new IllegalArgumentException("service required");

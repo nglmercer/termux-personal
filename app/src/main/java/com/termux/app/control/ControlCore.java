@@ -35,6 +35,8 @@ public final class ControlCore {
     /** The backend must execute on the existing service/emulator thread. */
     public interface Backend {
         boolean isCloseEnabled();
+        default boolean isFocusAvailable() { return false; }
+        default boolean isSnapshotAvailable() { return false; }
         List<SessionInfo> list() throws ControlException;
         SessionInfo create(String name, int columns, int rows, int cellWidth, int cellHeight) throws ControlException;
         void write(String id, byte[] data) throws ControlException;
@@ -68,8 +70,8 @@ public final class ControlCore {
         methods.add("session.write");
         methods.add("session.rename");
         methods.add("session.resize");
-        methods.add("session.focus");
-        methods.add("session.snapshot");
+        if (mBackend.isFocusAvailable()) methods.add("session.focus");
+        if (mBackend.isSnapshotAvailable()) methods.add("session.snapshot");
         if (mBackend.isCloseEnabled()) methods.add("session.close");
         return Collections.unmodifiableList(methods);
     }
