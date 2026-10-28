@@ -70,11 +70,12 @@ pid_t termux_managed_fork_pidfd(int *pidfd) {
 
 int termux_managed_launch(int executable_fd, int cwd_fd, char *const argv[], char *const envp[],
                           struct termux_managed_child *child) {
-    if (child == NULL || executable_fd < 3 || cwd_fd < 3 || argv == NULL || argv[0] == NULL || envp == NULL) {
-        errno = EINVAL; return -1;
-    }
+    if (child == NULL) { errno = EINVAL; return -1; }
     child->pid = -1;
     child->pidfd = child->stdin_write = child->stdout_read = child->stderr_read = child->status_read = -1;
+    if (executable_fd < 3 || cwd_fd < 3 || argv == NULL || argv[0] == NULL || envp == NULL) {
+        errno = EINVAL; return -1;
+    }
     struct termux_managed_pipes pipes;
     if (termux_managed_pipes_open(&pipes) < 0) return -1;
     int pidfd;

@@ -18,6 +18,14 @@ static void require(int condition, const char *message) {
 }
 
 int main(void) {
+    struct termux_managed_child invalid_child = { .pid = 42, .pidfd = 42, .stdin_write = 42,
+        .stdout_read = 42, .stderr_read = 42, .status_read = 42 };
+    errno = 0;
+    require(termux_managed_launch(-1, -1, NULL, NULL, &invalid_child) == -1 && errno == EINVAL,
+        "reject invalid launch");
+    require(invalid_child.pid == -1 && invalid_child.pidfd == -1 && invalid_child.stdin_write == -1 &&
+        invalid_child.stdout_read == -1 && invalid_child.stderr_read == -1 && invalid_child.status_read == -1,
+        "invalid launch clears ownership outputs");
     struct termux_managed_pipes managed_pipes;
     require(termux_managed_pipes_open(NULL) == -1 && errno == EINVAL, "reject missing pipe storage");
     require(termux_managed_pipes_open(&managed_pipes) == 0, "open managed pipes");
