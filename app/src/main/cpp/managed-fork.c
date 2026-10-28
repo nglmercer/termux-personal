@@ -9,6 +9,8 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <poll.h>
+#include <time.h>
 
 pid_t termux_managed_fork_pidfd(int *pidfd) {
     if (pidfd == NULL) { errno = EINVAL; return -1; }
@@ -49,4 +51,34 @@ void termux_managed_exec_child(int executable_fd, int cwd_fd, int error_fd,
         bytes += n; remaining -= (size_t)n;
     }
     _exit(127);
+}
+
+int termux_managed_read_exec_status(int fd, int timeout_ms, int *child_error) {
+    if (fd < 0 || child_error == NULL || timeout_ms < 1 || timeout_ms > 30000) { errno = EINVAL; return -1; }
+    *child_error = 0;
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) < 0) return -1;
+    int64_t deadline = (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000 + timeout_ms;
+    size_t received = 0;
+    while (received < sizeof(*child_error)) {
+        if (clock_gettime(CLOCK_MONOTONIC, &now) < 0) return -1;
+        int64_t remaining = deadline - ((int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000);
+        if (remaining <= 0) { errno = ETIMEDOUT; return -1; }
+        struct pollfd item = { .fd = fd, .events = POLLIN };
+        int ready = poll(&item, 1, (int)remaining);
+        if (ready < 0 && errno == EINTR) continue;
+        if (ready < 0) return -1;
+        if (ready == 0) { errno = ETIMEDOUT; return -1; }
+        if (item.revents & (POLLERR | POLLNVAL)) { errno = EIO; return -1; }
+        ssize_t n = read(fd, (char *)child_error + received, sizeof(*child_error) - received);
+        if (n < 0 && errno == EINTR) continue;
+        if (n < 0) return -1;
+        if (n == 0) {
+            if (received) { errno = EPROTO; return -1; }
+            return 0;
+        }
+        received += (size_t)n;
+    }
+    if (*child_error <= 0) { errno = EPROTO; return -1; }
+    return 1;
 }

@@ -18,4 +18,10 @@ pid_t termux_managed_fork_pidfd(int *pidfd);
 void termux_managed_exec_child(int executable_fd, int cwd_fd, int error_fd,
                                char *const argv[], char *const envp[]);
 
+/* Parent-only, worker thread: 0 = pipe closed without a reported error (exec
+ * outcome still unconfirmed), 1 = child reported errno, -1 = protocol/I/O
+ * error or timeout (errno set). Requires a pipe with one reader and no other
+ * inherited writers. Does not close the caller-owned descriptor. */
+int termux_managed_read_exec_status(int fd, int timeout_ms, int *child_error);
+
 #endif

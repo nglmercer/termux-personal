@@ -99,7 +99,7 @@ int main(void) {
     close(executable);
     close(errors[1]);
     int exec_error;
-    require(read(errors[0], &exec_error, sizeof(exec_error)) == 0, "exec succeeded without error");
+    require(termux_managed_read_exec_status(errors[0], 2000, &exec_error) == 0, "exec pipe closed without error");
     close(errors[0]);
     close(pipe_fds[1]);
     char output[32];
@@ -128,11 +128,19 @@ int main(void) {
         termux_managed_exec_child(-1, -1, errors[1], argv, environment);
     }
     close(errors[1]);
-    require(read(errors[0], &exec_error, sizeof(exec_error)) == sizeof(exec_error) && exec_error == EBADF,
+    require(termux_managed_read_exec_status(errors[0], 2000, &exec_error) == 1 && exec_error == EBADF,
         "child reports cwd failure");
     close(errors[0]);
     require(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 127, "failure exit");
     require(close(handle) == 0, "close failure pidfd");
+
+    require(pipe2(errors, O_CLOEXEC) == 0, "create timeout pipe");
+    errno = 0;
+    require(termux_managed_read_exec_status(errors[0], 20, &exec_error) == -1 && errno == ETIMEDOUT, "bounded status wait");
+    require(write(errors[1], "x", 1) == 1 && close(errors[1]) == 0, "write partial error");
+    errno = 0;
+    require(termux_managed_read_exec_status(errors[0], 2000, &exec_error) == -1 && errno == EPROTO, "reject partial error");
+    close(errors[0]);
 
     for (int i = 0; i < 100; i++) {
         handle = -1;
