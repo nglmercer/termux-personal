@@ -173,6 +173,52 @@ public class RpcConnectionTest extends TestCase {
         assertEquals(0, backend.calls);
     }
 
+    public void testRevocationDuringFrameReadDoesNotDispatchOrRespond() throws Exception {
+        AtomicBoolean running = new AtomicBoolean(true);
+        byte[] input = requests(
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"system.hello\",\"params\":{\"version\":1}}",
+            "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"session.list\"}");
+        ByteArrayInputStream source = new ByteArrayInputStream(input) {
+            @Override public synchronized int read(byte[] data, int offset, int length) {
+                int n = super.read(data, offset, length);
+                if (available() == 0) running.set(false);
+                return n;
+            }
+        };
+        RpcConnection connection = new RpcConnection(new ControlCore(backend), dispatch,
+            EnumSet.of(ControlCore.Scope.SESSIONS_READ), running::get, null, () -> { });
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        connection.serve(1000, 1000, source, out);
+        ByteArrayInputStream replies = new ByteArrayInputStream(out.toByteArray());
+        assertEquals(1, read(replies).getAsJsonObject("result").get("version").getAsInt());
+        assertNull(codec.read(replies));
+        assertEquals(0, backend.calls);
+    }
+
+    public void testRevocationDuringBinaryReadDoesNotWrite() throws Exception {
+        AtomicBoolean running = new AtomicBoolean(true);
+        ByteArrayOutputStream input = new ByteArrayOutputStream();
+        input.write(requests(
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"system.hello\",\"params\":{\"version\":1}}",
+            "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"session.write\",\"params\":{\"id\":\"s1\",\"length\":3}}"));
+        codec.write(input, new byte[]{1, 2, 3});
+        ByteArrayInputStream source = new ByteArrayInputStream(input.toByteArray()) {
+            @Override public synchronized int read(byte[] data, int offset, int length) {
+                int n = super.read(data, offset, length);
+                if (available() == 0) running.set(false);
+                return n;
+            }
+        };
+        RpcConnection connection = new RpcConnection(new ControlCore(backend), dispatch,
+            EnumSet.of(ControlCore.Scope.SESSIONS_WRITE), running::get, null, () -> { });
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        connection.serve(1000, 1000, source, out);
+        ByteArrayInputStream replies = new ByteArrayInputStream(out.toByteArray());
+        read(replies);
+        assertNull(codec.read(replies));
+        assertEquals(0, backend.calls);
+    }
+
     public void testInvalidJsonReturnsParseErrorAndStops() throws Exception {
         RpcConnection connection = new RpcConnection(new ControlCore(backend), dispatch, Collections.emptySet(), () -> true);
         ByteArrayOutputStream out = new ByteArrayOutputStream();

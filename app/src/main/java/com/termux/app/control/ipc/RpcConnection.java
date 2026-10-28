@@ -57,6 +57,7 @@ final class RpcConnection {
             if (!mRunning.get()) return;
             byte[] body = frames.read(input);
             if (body == null) return;
+            if (!mRunning.get()) return;
             RpcRequestParser.Request request;
             try { request = parser.parse(body); }
             catch (RpcRequestParser.InvalidRequest e) {
@@ -71,6 +72,7 @@ final class RpcConnection {
                     return;
                 }
                 binary = frames.read(input);
+                if (!mRunning.get()) return;
                 if (binary == null || binary.length != preparation.length) {
                     byte[] error = RpcDispatcher.invalidBinary(request);
                     if (error != null) frames.write(output, error);
