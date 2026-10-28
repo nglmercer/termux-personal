@@ -16,7 +16,6 @@ import com.termux.shared.termux.TermuxConstants;
 
 import java.io.File;
 import java.io.FileNotFoundException;
-import java.io.IOException;
 import java.util.LinkedList;
 import java.util.Locale;
 
@@ -197,10 +196,12 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
     @Override
     public boolean isChildDocument(String parentDocumentId, String documentId) {
         try {
-            String parent = getFileForDocId(parentDocumentId).getCanonicalPath();
-            String child = getFileForDocId(documentId).getCanonicalPath();
-            return child.startsWith(parent + File.separator);
-        } catch (IOException | RuntimeException e) { return false; }
+            if (parentDocumentId == null || documentId == null ||
+                !documentId.startsWith(parentDocumentId + File.separator)) return false;
+            if (!mStatter.stat(mBaseDir, parentDocumentId).directory) return false;
+            mStatter.stat(mBaseDir, documentId);
+            return true;
+        } catch (FileNotFoundException | RuntimeException e) { return false; }
     }
 
     /**

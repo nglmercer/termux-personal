@@ -38,6 +38,7 @@ public final class DocumentProviderRace {
         try {
             swapper.start();
             for (int i = 0; i < 1000; i++) {
+                check(!provider.isChildDocument(root.getAbsolutePath(), new File(dir, "outside_secret").getAbsolutePath()));
                 try (Cursor cursor = provider.queryChildDocuments(dir.getAbsolutePath(), null, (String) null)) {
                     int column = cursor.getColumnIndexOrThrow(Document.COLUMN_DISPLAY_NAME);
                     while (cursor.moveToNext()) check(!"outside_secret".equals(cursor.getString(column)));

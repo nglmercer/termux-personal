@@ -50,6 +50,9 @@ public class TermuxDocumentsProviderTest {
         assertEquals(new File(root, "project/ReadMe.txt (2)").getAbsolutePath(), second);
         assertTrue(provider.isChildDocument(root.getPath(), file));
         assertFalse(provider.isChildDocument(folder, folder));
+        assertFalse(provider.isChildDocument(file, file + "/child"));
+        assertFalse(provider.isChildDocument(null, file));
+        assertFalse(provider.isChildDocument(root.getPath(), folder + "/../project/ReadMe.txt"));
         try (Cursor children = provider.queryChildDocuments(folder, null, (String) null)) {
             assertEquals(2, children.getCount());
         }
