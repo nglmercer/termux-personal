@@ -2,9 +2,18 @@
 
 ## ADB access to a debug build
 
-On an authorized computer, `termux-adb` runs a shell as the app UID using Android's
-`run-as`; it requires ADB, Python 3, an unlocked/authorized device and a debuggable
-`com.termux` installation. This is independent of the optional local control socket:
+On an authorized computer, run a shell as the app UID using Android's
+`run-as`; it requires ADB, an unlocked/authorized device and a debuggable
+`com.termux` installation. Three clients share one CLI surface — pick the
+runtime you have:
+
+| Tool | Runtime | Modes |
+| ---- | ------- | ----- |
+| `python/termux-adb` | Python 3, no dependencies | `shell run exec focus open snapshot ipc` |
+| `js/termux-adb.mjs` | Node.js or Bun, no dependencies | `shell run exec focus open snapshot ipc` |
+| `sh/termux-adb.sh` | Bash only | `shell exec` (session IPC modes need one of the above) |
+
+This is independent of the optional local control socket:
 `termux-adb shell` opens an independent interactive shell, `termux-adb exec 'pwd; id'`
 runs an independent script and waits for its exit status. Shell commands have
 the app's permissions and access to its files. Use `-s SERIAL` before the command
