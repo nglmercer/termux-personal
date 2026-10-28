@@ -187,11 +187,16 @@ int main(void) {
     shell = open("/bin/sh", O_PATH | O_CLOEXEC);
     cwd = open("/tmp", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     require(shell >= 3 && cwd >= 3, "open launcher descriptors");
-    char *const launch_argv[] = {"sh", "-c", "read x; printf '%s' \"$x\"; printf error >&2; exit 9", NULL};
+    int unrelated = fcntl(cwd, F_DUPFD, 100);
+    require(unrelated >= 100 && !(fcntl(unrelated, F_GETFD) & FD_CLOEXEC), "create inheritable descriptor");
+    char script[160];
+    require(snprintf(script, sizeof(script), "test ! -e /proc/self/fd/%d || exit 42; read x; printf '%%s' \"$x\"; printf error >&2; exit 9", unrelated) > 0,
+        "format inheritance test");
+    char *const launch_argv[] = {"sh", "-c", script, NULL};
     char *const launch_env[] = {NULL};
     struct termux_managed_child managed_child;
     require(termux_managed_launch(shell, cwd, launch_argv, launch_env, &managed_child) == 0, "managed launch");
-    close(shell); close(cwd);
+    close(shell); close(cwd); close(unrelated);
     require(termux_managed_read_exec_status(managed_child.status_read, 2000, &exec_error) == 0, "managed exec status");
     close(managed_child.status_read);
     require(write(managed_child.stdin_write, "hello\n", 6) == 6, "managed stdin");

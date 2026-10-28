@@ -11,6 +11,11 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <time.h>
+#include <limits.h>
+
+#ifndef CLOSE_RANGE_CLOEXEC
+#define CLOSE_RANGE_CLOEXEC (1U << 2)
+#endif
 
 void termux_managed_pipes_close(struct termux_managed_pipes *pipes) {
     if (pipes == NULL) return;
@@ -97,9 +102,16 @@ void termux_managed_exec_child(int executable_fd, int cwd_fd, int error_fd,
     else if (dup2(stdin_fd, STDIN_FILENO) < 0 || dup2(stdout_fd, STDOUT_FILENO) < 0 ||
              dup2(stderr_fd, STDERR_FILENO) < 0 || fchdir(cwd_fd) < 0) failure = errno;
     else {
+#if defined(__NR_close_range)
+        if (syscall(__NR_close_range, 3U, UINT_MAX, CLOSE_RANGE_CLOEXEC) < 0) failure = errno;
+        else {
 #if defined(__NR_execveat)
-        syscall(__NR_execveat, executable_fd, "", argv, envp, AT_EMPTY_PATH);
-        failure = errno;
+            syscall(__NR_execveat, executable_fd, "", argv, envp, AT_EMPTY_PATH);
+            failure = errno;
+#else
+            failure = ENOSYS;
+#endif
+        }
 #else
         failure = ENOSYS;
 #endif

@@ -29,8 +29,9 @@ int termux_managed_launch(int executable_fd, int cwd_fd, char *const argv[], cha
                           struct termux_managed_child *child);
 
 /* Child-only: wire three descriptors, fchdir and exec a pinned executable.
- * All supplied descriptors must be >= 3 and CLOEXEC; error_fd must be distinct
- * from the other descriptors. On failure report errno and _exit(127). */
+ * All supplied descriptors must be >= 3; error_fd must be distinct from the
+ * other descriptors. Requires close_range(CLOEXEC); fails closed when absent.
+ * On failure report errno and _exit(127). */
 void termux_managed_exec_child(int executable_fd, int cwd_fd, int error_fd,
                                int stdin_fd, int stdout_fd, int stderr_fd,
                                char *const argv[], char *const envp[]);
