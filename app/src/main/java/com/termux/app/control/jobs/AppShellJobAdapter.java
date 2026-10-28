@@ -1,0 +1,99 @@
+package com.termux.app.control.jobs;
+
+import android.content.Context;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import com.termux.shared.shell.ShellUtils;
+import com.termux.shared.shell.command.ExecutionCommand;
+import com.termux.shared.shell.command.runner.app.AppShell;
+import com.termux.shared.termux.shell.TermuxShellManager;
+import com.termux.shared.termux.shell.command.environment.TermuxShellEnvironment;
+import java.util.HashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+/** Launches a previously admitted job on a worker using AppShell's managed capture path. */
+public final class AppShellJobAdapter {
+    interface Backend {
+        Process launch(JobSpec spec, String executable, String cwd, AppShellJobCapture capture, Completion completion);
+    }
+    interface Completion { void finished(Integer exitCode, boolean captureFailed); }
+
+    private final Backend mBackend;
+
+    public AppShellJobAdapter(Context context) {
+        if (context == null) throw new IllegalArgumentException("Missing application context");
+        mBackend = new AndroidBackend(context);
+    }
+
+    AppShellJobAdapter(Backend backend) {
+        if (backend == null) throw new IllegalArgumentException("Missing backend");
+        mBackend = backend;
+    }
+
+    /**
+     * The caller must authorize and resolve both absolute paths before calling this method. The
+     * returned owned handle is for the coordinator; it must never be replaced by a numeric PID.
+     * A callback may complete the already-published record before this method returns.
+     */
+    @Nullable public Process launch(JobRegistry.Entry entry, JobSpec spec, String executable, String cwd) {
+        if (entry == null || !entry.matches(spec) || !isNormalizedAbsolute(executable) || !isNormalizedAbsolute(cwd) ||
+            (spec.executable().startsWith("/") && !spec.executable().equals(executable)) ||
+            (spec.workingDirectory() != null && !spec.workingDirectory().equals(cwd)))
+            throw new IllegalArgumentException("Resolved absolute executable and cwd required");
+        JobRecord record = entry.record();
+        if (!record.begin()) return null;
+        AtomicBoolean completed = new AtomicBoolean();
+        Completion callback = (exitCode, captureFailed) -> {
+            if (!completed.compareAndSet(false, true)) return;
+            if (captureFailed || exitCode == null)
+                record.complete(JobRecord.State.FAILED, null, JobRecord.Failure.CAPTURE_FAILED, System.currentTimeMillis());
+            else record.complete(JobRecord.State.EXITED, exitCode, null, System.currentTimeMillis());
+        };
+        try {
+            Process process = mBackend.launch(spec, executable, cwd, entry.capture(), callback);
+            if (process == null) {
+                entry.capture().discardIfUnstarted();
+                if (completed.compareAndSet(false, true))
+                    record.complete(JobRecord.State.FAILED, null, JobRecord.Failure.START_FAILED, System.currentTimeMillis());
+                return null;
+            }
+            record.started(null, System.currentTimeMillis());
+            return process;
+        } catch (RuntimeException | Error e) {
+            entry.capture().discardIfUnstarted();
+            if (completed.compareAndSet(false, true))
+                record.complete(JobRecord.State.FAILED, null, JobRecord.Failure.START_FAILED, System.currentTimeMillis());
+            throw e;
+        }
+    }
+
+    private static boolean isNormalizedAbsolute(String path) {
+        if (path == null || !path.startsWith("/") || path.indexOf('\0') >= 0 || (path.length() > 1 && path.endsWith("/"))) return false;
+        if (path.length() == 1) return true;
+        for (String part : path.substring(1).split("/", -1))
+            if (part.isEmpty() || part.equals(".") || part.equals("..")) return false;
+        return true;
+    }
+
+    private static final class AndroidBackend implements Backend {
+        private final Context mContext;
+        AndroidBackend(Context context) { mContext = context; }
+
+        @Override public Process launch(JobSpec spec, String executable, String cwd,
+                                        AppShellJobCapture capture, Completion completion) {
+            ExecutionCommand command = new ExecutionCommand(TermuxShellManager.getNextShellId(), executable,
+                spec.arguments().toArray(new String[0]), null, cwd, ExecutionCommand.Runner.APP_SHELL.getName(), false);
+            command.setShellCommandShellEnvironment = true;
+            TermuxShellEnvironment environment = new TermuxShellEnvironment() {
+                @Override @NonNull public String[] setupShellCommandArguments(@NonNull String path, @Nullable String[] arguments) {
+                    return ShellUtils.setupShellCommandArguments(path, arguments);
+                }
+            };
+            AppShell shell = AppShell.executeManaged(mContext, command, finished -> {
+                ExecutionCommand result = finished.getExecutionCommand();
+                completion.finished(result.resultData.exitCode, result.isStateFailed());
+            }, environment, new HashMap<>(spec.environment()), capture);
+            return shell == null ? null : shell.getProcess();
+        }
+    }
+}

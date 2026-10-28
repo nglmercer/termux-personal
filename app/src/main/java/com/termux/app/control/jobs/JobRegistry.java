@@ -124,5 +124,11 @@ public final class JobRegistry implements AutoCloseable {
         public JobRecord record() { return mRecord; }
         public JobOutputStore.Output output() { return mOutput; }
         public AppShellJobCapture capture() { return mCapture; }
+        boolean matches(JobSpec spec) {
+            if (spec == null) return false;
+            byte[] fingerprint = spec.fingerprintCopy();
+            try { return MessageDigest.isEqual(mFingerprint, fingerprint); }
+            finally { Arrays.fill(fingerprint, (byte) 0); }
+        }
     }
 }
