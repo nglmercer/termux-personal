@@ -39,14 +39,16 @@ public final class AppShell {
     private final Process mProcess;
     private final ExecutionCommand mExecutionCommand;
     private final AppShellClient mAppShellClient;
+    private final ManagedCapture mManagedCapture;
 
     private static final String LOG_TAG = "AppShell";
 
     private AppShell(@NonNull final Process process, @NonNull final ExecutionCommand executionCommand,
-                     final AppShellClient appShellClient) {
+                     final AppShellClient appShellClient, @Nullable final ManagedCapture managedCapture) {
         this.mProcess = process;
         this.mExecutionCommand = executionCommand;
         this.mAppShellClient = appShellClient;
+        this.mManagedCapture = managedCapture;
     }
 
     /**
@@ -80,6 +82,27 @@ public final class AppShell {
                                    @NonNull final IShellEnvironment shellEnvironmentClient,
                                    @Nullable HashMap<String, String> additionalEnvironment,
                                    final boolean isSynchronous) {
+        return executeInternal(currentPackageContext, executionCommand, appShellClient, shellEnvironmentClient,
+            additionalEnvironment, isSynchronous, null);
+    }
+
+    /** Internal managed-job hook. The caller must publish its job record before starting on a worker. */
+    public static AppShell executeManaged(@NonNull final Context currentPackageContext, @NonNull ExecutionCommand executionCommand,
+                                          final AppShellClient appShellClient, @NonNull final IShellEnvironment shellEnvironmentClient,
+                                          @Nullable HashMap<String, String> additionalEnvironment,
+                                          @NonNull ManagedCapture managedCapture) {
+        if (managedCapture == null) throw new IllegalArgumentException("Managed capture required");
+        android.os.Looper main = android.os.Looper.getMainLooper();
+        if (main != null && android.os.Looper.myLooper() == main)
+            throw new IllegalStateException("Managed process launch must run off the main thread");
+        return executeInternal(currentPackageContext, executionCommand, appShellClient, shellEnvironmentClient,
+            additionalEnvironment, false, managedCapture);
+    }
+
+    private static AppShell executeInternal(@NonNull final Context currentPackageContext, @NonNull ExecutionCommand executionCommand,
+                                            final AppShellClient appShellClient, @NonNull final IShellEnvironment shellEnvironmentClient,
+                                            @Nullable HashMap<String, String> additionalEnvironment,
+                                            final boolean isSynchronous, @Nullable ManagedCapture managedCapture) {
         if (executionCommand.executable == null || executionCommand.executable.isEmpty()) {
             executionCommand.setStateFailed(Errno.ERRNO_FAILED.getCode(),
                 currentPackageContext.getString(R.string.error_executable_unset, executionCommand.getCommandIdAndLabelLogString()));
@@ -120,10 +143,12 @@ public final class AppShell {
         }
 
         // No need to log stdin if logging is disabled, like for app internal scripts
-        Logger.logDebugExtended(LOG_TAG, ExecutionCommand.getExecutionInputLogString(executionCommand,
-            true, Logger.shouldEnableLoggingForCustomLogLevel(executionCommand.backgroundCustomLogLevel)));
-        Logger.logVerboseExtended(LOG_TAG, "\"" + executionCommand.getCommandIdAndLabelLogString() + "\" AppShell Environment:\n" +
-            Joiner.on("\n").join(environmentArray));
+        if (managedCapture == null) {
+            Logger.logDebugExtended(LOG_TAG, ExecutionCommand.getExecutionInputLogString(executionCommand,
+                true, Logger.shouldEnableLoggingForCustomLogLevel(executionCommand.backgroundCustomLogLevel)));
+            Logger.logVerboseExtended(LOG_TAG, "\"" + executionCommand.getCommandIdAndLabelLogString() + "\" AppShell Environment:\n" +
+                Joiner.on("\n").join(environmentArray));
+        }
 
         // Exec the process
         final Process process;
@@ -135,7 +160,7 @@ public final class AppShell {
             return null;
         }
 
-        final AppShell appShell = new AppShell(process, executionCommand, appShellClient);
+        final AppShell appShell = new AppShell(process, executionCommand, appShellClient, managedCapture);
         if (isSynchronous) {
             try {
                 appShell.executeInner(currentPackageContext);
@@ -143,7 +168,7 @@ public final class AppShell {
                 // TODO: Should either of these be handled or returned?
             }
         } else {
-            new Thread() {
+            Thread worker = new Thread() {
                 @Override
                 public void run() {
                     try {
@@ -152,7 +177,18 @@ public final class AppShell {
                         // TODO: Should either of these be handled or returned?
                     }
                 }
-            }.start();
+            };
+            if (managedCapture == null) worker.start();
+            else {
+                try { worker.start(); }
+                catch (RuntimeException | Error e) {
+                    process.destroy();
+                    executionCommand.setStateFailed(Errno.ERRNO_FAILED.getCode(), "Managed worker unavailable");
+                    AppShell.processAppShellResult(null, executionCommand);
+                    if (e instanceof Error) throw (Error) e;
+                    return null;
+                }
+            }
         }
 
         return appShell;
@@ -168,6 +204,10 @@ public final class AppShell {
      * @param context The {@link Context} for operations.
      */
     private void executeInner(@NonNull final Context context) throws IllegalThreadStateException, InterruptedException {
+        if (mManagedCapture != null) {
+            executeManagedInner();
+            return;
+        }
         mExecutionCommand.mPid = ShellUtils.getPid(mProcess);
 
         Logger.logDebug(LOG_TAG, "Running \"" + mExecutionCommand.getCommandIdAndLabelLogString() + "\" AppShell with pid " + mExecutionCommand.mPid);
@@ -243,6 +283,33 @@ public final class AppShell {
             return;
 
         AppShell.processAppShellResult(this, null);
+    }
+
+    private void executeManagedInner() {
+        boolean notify = true;
+        Error fatal = null;
+        try {
+            int exitCode = mManagedCapture.captureAndWait(mProcess);
+            mExecutionCommand.resultData.exitCode = exitCode;
+            notify = mExecutionCommand.setState(ExecutionState.EXECUTED);
+        } catch (IOException | RuntimeException e) {
+            mExecutionCommand.setStateFailed(Errno.ERRNO_FAILED.getCode(), "Managed capture failed");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            mExecutionCommand.setStateFailed(Errno.ERRNO_FAILED.getCode(), "Managed capture interrupted");
+        } catch (Error e) {
+            mExecutionCommand.setStateFailed(Errno.ERRNO_FAILED.getCode(), "Managed capture failed");
+            fatal = e;
+        } finally {
+            mProcess.destroy();
+        }
+        if (notify) processAppShellResult(this, null);
+        if (fatal != null) throw fatal;
+    }
+
+    /** Runs on the AppShell worker and owns the child's three streams. Never log captured bytes. */
+    public interface ManagedCapture {
+        int captureAndWait(Process process) throws IOException, InterruptedException;
     }
 
     /**
