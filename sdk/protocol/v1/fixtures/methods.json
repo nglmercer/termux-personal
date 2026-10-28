@@ -1,0 +1,17 @@
+[
+  {"method":"system.hello","params":{"version":1},"result":{"version":1}},
+  {"method":"system.capabilities","params":{},"result":{"methods":["system.hello","session.list"]}},
+  {"method":"system.describe","params":{},"result":{"protocolVersion":1,"schemaRevision":"1.1","methods":[{"name":"session.list","scope":"SESSIONS_READ","scopes":["SESSIONS_READ"],"mutates":false,"binary":false,"binaryDirection":"none","available":true}],"limits":{"maxBinaryChunkBytes":65536}}},
+  {"method":"session.list","params":{},"result":{"sessions":[{"id":"s1","name":"Work","state":"running","pid":123}]}},
+  {"method":"session.create","params":{"columns":80,"rows":24},"result":{"id":"s1","name":null,"state":"starting","pid":null}},
+  {"method":"session.write","params":{"id":"s1","length":4},"result":{"ok":true},"requestBinaryHex":"00ff1b0a"},
+  {"method":"session.rename","params":{"id":"s1","name":"Work"},"result":{"ok":true}},
+  {"method":"session.resize","params":{"id":"s1","columns":80,"rows":24},"result":{"ok":true}},
+  {"method":"session.focus","params":{"id":"s1"},"result":{"ok":true}},
+  {"method":"session.snapshot","params":{"id":"s1"},"result":{"text":"screen"}},
+  {"method":"session.close","params":{"id":"s1"},"result":{"accepted":true}},
+  {"method":"session.output.subscribe","params":{"id":"s1"},"result":{"ok":true}},
+  {"method":"session.output.read","params":{"id":"s1","offset":0,"limit":4},"result":{"offset":0,"nextOffset":4,"endOffset":4,"gap":false,"length":4},"responseBinaryHex":"00ff1b0a"},
+  {"method":"session.output.unsubscribe","params":{"id":"s1"},"result":{"ok":true}},
+  {"method":"session.output.resume","params":{"id":"s1","token":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},"result":{"ok":true}}
+]

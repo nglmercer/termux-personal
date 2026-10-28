@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:termux-personal:control:v1:method-results",
+  "title": "v1 successful method result shapes",
+  "$defs": {
+    "session": {"type": "object", "properties": {"id": {"type": "string"}, "name": {"type": ["string", "null"]}, "state": {"enum": ["starting", "running", "exited"]}, "pid": {"type": ["integer", "null"]}}, "required": ["id", "name", "state", "pid"], "additionalProperties": false},
+    "ok": {"type": "object", "properties": {"ok": {"const": true}}, "required": ["ok"], "additionalProperties": false},
+    "system.hello": {"type": "object", "properties": {"version": {"const": 1}}, "required": ["version"], "additionalProperties": false},
+    "system.capabilities": {"type": "object", "properties": {"methods": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}}, "required": ["methods"], "additionalProperties": false},
+    "system.describe": {
+      "type": "object", "properties": {
+        "protocolVersion": {"const": 1}, "schemaRevision": {"type": "string"},
+        "methods": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "scope": {"type": ["string", "null"]}, "scopes": {"type": "array", "items": {"type": "string"}}, "mutates": {"type": "boolean"}, "binary": {"type": "boolean"}, "binaryDirection": {"enum": ["none", "request", "response"]}, "available": {"const": true}}, "required": ["name", "scope", "scopes", "mutates", "binary", "binaryDirection", "available"], "additionalProperties": true}},
+        "limits": {"type": "object"}
+      }, "required": ["protocolVersion", "schemaRevision", "methods", "limits"], "additionalProperties": true
+    },
+    "session.list": {"type": "object", "properties": {"sessions": {"type": "array", "maxItems": 128, "items": {"$ref": "#/$defs/session"}}}, "required": ["sessions"], "additionalProperties": false},
+    "session.create": {"$ref": "#/$defs/session"},
+    "session.write": {"$ref": "#/$defs/ok"},
+    "session.rename": {"$ref": "#/$defs/ok"},
+    "session.resize": {"$ref": "#/$defs/ok"},
+    "session.focus": {"$ref": "#/$defs/ok"},
+    "session.output.resume": {"$ref": "#/$defs/ok"},
+    "session.output.unsubscribe": {"$ref": "#/$defs/ok"},
+    "session.snapshot": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"], "additionalProperties": false},
+    "session.close": {"type": "object", "properties": {"accepted": {"const": true}}, "required": ["accepted"], "additionalProperties": false},
+    "session.output.subscribe": {"type": "object", "properties": {"ok": {"const": true}, "resumeToken": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}, "required": ["ok"], "additionalProperties": false},
+    "session.output.read": {"type": "object", "properties": {"offset": {"type": "integer", "minimum": 0}, "nextOffset": {"type": "integer", "minimum": 0}, "endOffset": {"type": "integer", "minimum": 0}, "gap": {"type": "boolean"}, "length": {"type": "integer", "minimum": 0, "maximum": 65536}}, "required": ["offset", "nextOffset", "endOffset", "gap", "length"], "additionalProperties": false}
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:termux-personal:control:v1:method-params",
+  "title": "v1 method-specific parameter shapes",
+  "description": "Select the definition named by the method. The server additionally applies authorization, state, byte and parser limits.",
+  "$defs": {
+    "id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "name": {"type": "string", "maxLength": 80, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$"},
+    "columns": {"type": "integer", "minimum": 2, "maximum": 500},
+    "rows": {"type": "integer", "minimum": 2, "maximum": 250},
+    "cell": {"type": "integer", "minimum": 0, "maximum": 4096},
+    "system.hello": {"type": "object", "properties": {"version": {"const": 1}}, "required": ["version"], "additionalProperties": false},
+    "system.capabilities": {"type": "object", "maxProperties": 0},
+    "system.describe": {"type": "object", "maxProperties": 0},
+    "session.list": {"type": "object", "maxProperties": 0},
+    "session.create": {
+      "type": "object", "properties": {"name": {"$ref": "#/$defs/name"}, "columns": {"$ref": "#/$defs/columns"}, "rows": {"$ref": "#/$defs/rows"}, "cellWidth": {"$ref": "#/$defs/cell"}, "cellHeight": {"$ref": "#/$defs/cell"}},
+      "required": ["columns", "rows"], "additionalProperties": false
+    },
+    "session.write": {"type": "object", "properties": {"id": {"$ref": "#/$defs/id"}, "length": {"type": "integer", "minimum": 1, "maximum": 65536}}, "required": ["id", "length"], "additionalProperties": false},
+    "session.rename": {"type": "object", "properties": {"id": {"$ref": "#/$defs/id"}, "name": {"$ref": "#/$defs/name"}}, "required": ["id", "name"], "additionalProperties": false},
+    "session.resize": {
+      "type": "object", "properties": {"id": {"$ref": "#/$defs/id"}, "columns": {"$ref": "#/$defs/columns"}, "rows": {"$ref": "#/$defs/rows"}, "cellWidth": {"$ref": "#/$defs/cell"}, "cellHeight": {"$ref": "#/$defs/cell"}},
+      "required": ["id", "columns", "rows"], "additionalProperties": false
+    },
+    "session.focus": {"$ref": "#/$defs/idParams"},
+    "session.snapshot": {"$ref": "#/$defs/idParams"},
+    "session.close": {"$ref": "#/$defs/idParams"},
+    "session.output.unsubscribe": {"$ref": "#/$defs/idParams"},
+    "idParams": {"type": "object", "properties": {"id": {"$ref": "#/$defs/id"}}, "required": ["id"], "additionalProperties": false},
+    "session.output.subscribe": {"type": "object", "properties": {"id": {"$ref": "#/$defs/id"}, "resumable": {"type": "boolean"}}, "required": ["id"], "additionalProperties": false},
+    "session.output.resume": {"type": "object", "properties": {"id": {"$ref": "#/$defs/id"}, "token": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}, "required": ["id", "token"], "additionalProperties": false},
+    "session.output.read": {"type": "object", "properties": {"id": {"$ref": "#/$defs/id"}, "offset": {"type": "integer", "minimum": 0}, "limit": {"type": "integer", "minimum": 1, "maximum": 65536}}, "required": ["id", "offset", "limit"], "additionalProperties": false}
+  }
+}

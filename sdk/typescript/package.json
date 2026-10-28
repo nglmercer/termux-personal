@@ -4,6 +4,13 @@
   "private": true,
   "type": "module",
   "exports": "./src/index.ts",
-  "scripts": {"check": "tsc --noEmit", "test": "node --test test/*.test.ts"},
-  "devDependencies": {"@types/node": "^22.0.0", "typescript": "^5.8.0"}
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --test test/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "ajv": "^8.20.0",
+    "typescript": "^5.8.0"
+  }
 }
