@@ -35,7 +35,12 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
 
     private static final String ALL_MIME_TYPES = "*/*";
 
-    private static final File BASE_DIR = TermuxConstants.TERMUX_HOME_DIR;
+    private final File mBaseDir;
+
+    public TermuxDocumentsProvider() { this(TermuxConstants.TERMUX_HOME_DIR); }
+
+    // Allows provider operations to be tested against an isolated temporary root.
+    TermuxDocumentsProvider(File baseDir) { mBaseDir = baseDir; }
 
 
     // The default columns to return information about a root if no specific
@@ -68,13 +73,13 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
         final String applicationName = getContext().getString(R.string.application_name);
 
         final MatrixCursor.RowBuilder row = result.newRow();
-        row.add(Root.COLUMN_ROOT_ID, getDocIdForFile(BASE_DIR));
-        row.add(Root.COLUMN_DOCUMENT_ID, getDocIdForFile(BASE_DIR));
+        row.add(Root.COLUMN_ROOT_ID, getDocIdForFile(mBaseDir));
+        row.add(Root.COLUMN_DOCUMENT_ID, getDocIdForFile(mBaseDir));
         row.add(Root.COLUMN_SUMMARY, null);
         row.add(Root.COLUMN_FLAGS, Root.FLAG_SUPPORTS_CREATE | Root.FLAG_SUPPORTS_SEARCH | Root.FLAG_SUPPORTS_IS_CHILD);
         row.add(Root.COLUMN_TITLE, applicationName);
         row.add(Root.COLUMN_MIME_TYPES, ALL_MIME_TYPES);
-        row.add(Root.COLUMN_AVAILABLE_BYTES, BASE_DIR.getFreeSpace());
+        row.add(Root.COLUMN_AVAILABLE_BYTES, mBaseDir.getFreeSpace());
         row.add(Root.COLUMN_ICON, R.mipmap.ic_launcher);
         return result;
     }
@@ -147,7 +152,7 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
     @Override
     public void deleteDocument(String documentId) throws FileNotFoundException {
         File file = getFileForDocId(documentId);
-        if (file.equals(BASE_DIR)) throw new FileNotFoundException("Cannot delete root");
+        if (file.equals(mBaseDir)) throw new FileNotFoundException("Cannot delete root");
         if (!file.delete()) {
             throw new FileNotFoundException("Failed to delete document with id " + documentId);
         }
@@ -163,7 +168,7 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
     public Cursor querySearchDocuments(String rootId, String query, String[] projection) throws FileNotFoundException {
         final MatrixCursor result = new MatrixCursor(projection != null ? projection : DEFAULT_DOCUMENT_PROJECTION);
         final File parent = getFileForDocId(rootId);
-        if (!parent.equals(BASE_DIR) || query == null) throw new FileNotFoundException("Invalid search root or query");
+        if (!parent.equals(mBaseDir) || query == null) throw new FileNotFoundException("Invalid search root or query");
         final String normalizedQuery = query.toLowerCase(Locale.ROOT);
 
         // This example implementation searches file names for the query and doesn't rank search
@@ -222,8 +227,8 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
     /**
      * Get the file given a document id (the reverse of {@link #getDocIdForFile(File)}).
      */
-    private static File getFileForDocId(String docId) throws FileNotFoundException {
-        return DocumentPathPolicy.existing(BASE_DIR, docId);
+    private File getFileForDocId(String docId) throws FileNotFoundException {
+        return DocumentPathPolicy.existing(mBaseDir, docId);
     }
 
     private static String getMimeType(File file) {
@@ -262,7 +267,7 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
         } else if (file.canWrite()) {
             flags |= Document.FLAG_SUPPORTS_WRITE;
         }
-        if (!file.equals(BASE_DIR) && file.getParentFile().canWrite()) flags |= Document.FLAG_SUPPORTS_DELETE;
+        if (!file.equals(mBaseDir) && file.getParentFile().canWrite()) flags |= Document.FLAG_SUPPORTS_DELETE;
 
         final String displayName = file.getName();
         final String mimeType = getMimeType(file);
