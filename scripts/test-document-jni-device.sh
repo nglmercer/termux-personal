@@ -7,13 +7,19 @@ cd "$project_dir"
 out=build/document-jni-device
 mkdir -p "$out/classes" "$out/dex"
 android_jar="$ANDROID_HOME/platforms/android-35/android.jar"
-javac -source 8 -target 8 -cp "$android_jar" -d "$out/classes" \
+javac -source 8 -target 8 -cp "$android_jar:app/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes" -d "$out/classes" \
     app/src/main/java/com/termux/filepicker/SafeDocumentOpen.java \
-    app/src/test/device/com/termux/filepicker/DocumentJniSmoke.java
+    app/src/test/device/com/termux/filepicker/DocumentJniSmoke.java \
+    app/src/test/device/com/termux/filepicker/DocumentProviderRace.java
+unzip -p app/build/intermediates/compile_and_runtime_not_namespaced_r_class_jar/debug/processDebugResources/R.jar 'com/termux/R$mipmap.class' > "$out/classes/com/termux/R\$mipmap.class"
 "$ANDROID_HOME/build-tools/35.0.0/d8" --min-api 21 --lib "$android_jar" --output "$out/dex" \
     "$out/classes/com/termux/filepicker/SafeDocumentOpen.class" \
     "$out/classes/com/termux/filepicker/SafeDocumentOpen\$Entry.class" \
-    "$out/classes/com/termux/filepicker/DocumentJniSmoke.class"
+    "$out/classes/com/termux/filepicker/DocumentJniSmoke.class" \
+    "$out/classes/com/termux/filepicker/DocumentProviderRace.class" \
+    "$out/classes/com/termux/R\$mipmap.class" \
+    app/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/termux/filepicker/DocumentPathPolicy.class \
+    app/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/termux/filepicker/TermuxDocumentsProvider*.class
 python3 - "$out/dex/classes.dex" app/build/intermediates/merged_native_libs/debug/mergeDebugNativeLibs/out/lib/arm64-v8a/libtermux-document-path.so <<'PY'
 import base64
 import pathlib
@@ -28,6 +34,7 @@ printf %s 'DEX' | base64 -d > "$d/classes.dex"
 printf %s 'LIB' | base64 -d > "$d/libtermux-document-path.so"
 chmod 400 "$d/classes.dex"
 CLASSPATH="$d/classes.dex" app_process -Djava.library.path="$d" /system/bin com.termux.filepicker.DocumentJniSmoke
+CLASSPATH="$d/classes.dex" app_process -Djava.library.path="$d" /system/bin com.termux.filepicker.DocumentProviderRace
 """.replace("DEX", dex).replace("LIB", library)
 sys.exit(subprocess.call(["python3", "tools/termux-control/python/termux-adb", "exec", script]))
 PY
