@@ -37,12 +37,14 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
 
     private final File mBaseDir;
     private final Creator mCreator;
+    private final Deleter mDeleter;
     interface Creator { int create(File root, String id, boolean directory) throws FileNotFoundException; }
+    interface Deleter { void delete(File root, String id) throws FileNotFoundException; }
 
-    public TermuxDocumentsProvider() { this(TermuxConstants.TERMUX_HOME_DIR, SafeDocumentOpen::create); }
+    public TermuxDocumentsProvider() { this(TermuxConstants.TERMUX_HOME_DIR, SafeDocumentOpen::create, SafeDocumentOpen::delete); }
 
     // Allows provider operations to be tested against an isolated temporary root.
-    TermuxDocumentsProvider(File baseDir, Creator creator) { mBaseDir = baseDir; mCreator = creator; }
+    TermuxDocumentsProvider(File baseDir, Creator creator, Deleter deleter) { mBaseDir = baseDir; mCreator = creator; mDeleter = deleter; }
 
 
     // The default columns to return information about a root if no specific
@@ -140,9 +142,7 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
     public void deleteDocument(String documentId) throws FileNotFoundException {
         File file = getFileForDocId(documentId);
         if (file.equals(mBaseDir)) throw new FileNotFoundException("Cannot delete root");
-        if (!file.delete()) {
-            throw new FileNotFoundException("Failed to delete document with id " + documentId);
-        }
+        mDeleter.delete(mBaseDir, file.getAbsolutePath());
     }
 
     @Override

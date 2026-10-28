@@ -32,7 +32,7 @@ public class TermuxDocumentsProviderTest {
                 if (!created) throw new FileNotFoundException();
                 return 0;
             } catch (java.io.IOException e) { throw new FileNotFoundException(); }
-        });
+        }, (base, id) -> { if (!new File(id).delete()) throw new FileNotFoundException(); });
     }
 
     @Test public void normalDocumentsKeepAbsoluteIdsAndEnforceAncestry() throws Exception {

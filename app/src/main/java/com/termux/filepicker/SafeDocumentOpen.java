@@ -43,4 +43,13 @@ final class SafeDocumentOpen {
         return result;
     }
     private static native int createNative(byte[] root, byte[] path, boolean directory);
+
+    static void delete(File root, String id) throws FileNotFoundException {
+        String prefix = root.getAbsolutePath() + File.separator;
+        if (!AVAILABLE || id == null || !id.startsWith(prefix) ||
+            deleteNative(root.getAbsolutePath().getBytes(StandardCharsets.UTF_8),
+                id.substring(prefix.length()).getBytes(StandardCharsets.UTF_8)) != 0)
+            throw new FileNotFoundException("Cannot delete document");
+    }
+    private static native int deleteNative(byte[] root, byte[] path);
 }

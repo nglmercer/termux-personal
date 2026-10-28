@@ -65,6 +65,48 @@ static int create_document(const char *root, char *path, int directory) {
     close(dir); return result;
 }
 
+static int delete_document(const char *root, char *path) {
+    int dir = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    if (dir < 0) return -1;
+    int result = -1;
+    char *part = path;
+    while (*part) {
+        char *slash = strchr(part, '/');
+        if (slash) *slash = 0;
+        if (!*part || !strcmp(part, ".") || !strcmp(part, "..")) break;
+        if (slash) {
+            int next = openat(dir, part, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+            if (next < 0) break;
+            close(dir); dir = next; part = slash + 1;
+        } else {
+            struct stat st;
+            if (fstatat(dir, part, &st, AT_SYMLINK_NOFOLLOW) == 0 &&
+                (S_ISREG(st.st_mode) || S_ISDIR(st.st_mode)))
+                result = unlinkat(dir, part, S_ISDIR(st.st_mode) ? AT_REMOVEDIR : 0);
+            break;
+        }
+    }
+    close(dir); return result;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_termux_filepicker_SafeDocumentOpen_deleteNative(JNIEnv *env, jclass cls,
+                                                          jbyteArray root_bytes, jbyteArray relative_bytes) {
+    (void) cls;
+    jsize root_len = (*env)->GetArrayLength(env, root_bytes);
+    jsize path_len = (*env)->GetArrayLength(env, relative_bytes);
+    if (root_len <= 0 || path_len <= 0 || path_len > 4096) return -1;
+    char *root = malloc((size_t) root_len + 1), *path = malloc((size_t) path_len + 1);
+    if (!root || !path) { free(root); free(path); return -1; }
+    (*env)->GetByteArrayRegion(env, root_bytes, 0, root_len, (jbyte *) root);
+    (*env)->GetByteArrayRegion(env, relative_bytes, 0, path_len, (jbyte *) path);
+    root[root_len] = 0; path[path_len] = 0;
+    int result = -1;
+    if (!(*env)->ExceptionCheck(env) && !memchr(root, 0, (size_t) root_len) && !memchr(path, 0, (size_t) path_len))
+        result = delete_document(root, path);
+    free(root); free(path); return result;
+}
+
 JNIEXPORT jint JNICALL
 Java_com_termux_filepicker_SafeDocumentOpen_createNative(JNIEnv *env, jclass cls,
                                                           jbyteArray root_bytes, jbyteArray relative_bytes,

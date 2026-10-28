@@ -16,6 +16,10 @@ static int try_create(const char *root, const char *name, int directory) {
     char path[4097]; assert(strlen(name) < sizeof(path)); strcpy(path, name);
     return create_document(root, path, directory);
 }
+static int try_delete(const char *root, const char *name) {
+    char path[4097]; assert(strlen(name) < sizeof(path)); strcpy(path, name);
+    return delete_document(root, path);
+}
 
 struct swap_state { const char *dir; const char *held; atomic_int stop; };
 static void *swap_directory(void *arg) {
@@ -60,6 +64,9 @@ int main(void) {
     assert(try_create(root, "../created", 0) < 0);
     assert(try_create(root, "dir/newdir", 1) == 0);
     assert(try_create(root, "dir/newdir", 1) == 1);
+    assert(try_delete(root, "link/secret") < 0);
+    assert(try_delete(root, "../secret") < 0);
+    assert(try_delete(root, "link") < 0);
     fd = open(inner, O_CREAT | O_WRONLY | O_EXCL, 0600); assert(fd >= 0); close(fd);
     struct swap_state state = {dir, held, ATOMIC_VAR_INIT(0)};
     pthread_t thread; assert(pthread_create(&thread, NULL, swap_directory, &state) == 0);
@@ -68,6 +75,8 @@ int main(void) {
         if (fd >= 0) close(fd);
         int create_result = try_create(root, "dir/created", 0);
         assert(create_result == -1 || create_result == 0 || create_result == 1);
+        int delete_result = try_delete(root, "dir/secret");
+        assert(delete_result == -1 || delete_result == 0);
     }
     atomic_store(&state.stop, 1);
     assert(pthread_join(thread, NULL) == 0);
@@ -75,9 +84,10 @@ int main(void) {
     struct stat st; assert(!stat(outside, &st) && st.st_size == 4);
     fd = try_open(root, "dir/file", 2, 1); assert(fd >= 0); close(fd);
     assert(!stat(file, &st) && st.st_size == 0);
-    char newdir[1024]; snprintf(newdir, sizeof(newdir), "%s/root/dir/newdir", base);
     if (access(created, F_OK) == 0) assert(!unlink(created));
-    assert(!unlink(link) && !unlink(file) && !unlink(inner) && !rmdir(newdir) && !rmdir(dir) && !rmdir(root) && !unlink(outside) && !rmdir(base));
+    if (access(inner, F_OK) == 0) assert(!unlink(inner));
+    assert(try_delete(root, "dir/newdir") == 0);
+    assert(!unlink(link) && !unlink(file) && !rmdir(dir) && !rmdir(root) && !unlink(outside) && !rmdir(base));
     puts("descriptor-relative document open passed");
     return 0;
 }

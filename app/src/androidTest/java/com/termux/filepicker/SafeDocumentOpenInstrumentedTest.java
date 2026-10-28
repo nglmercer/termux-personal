@@ -30,7 +30,11 @@ public class SafeDocumentOpenInstrumentedTest {
             reject(root, new File(link, "ñ.txt").getPath(), "w");
             assertEquals(0, SafeDocumentOpen.create(root, new File(dir, "new").getPath(), false));
             assertEquals(1, SafeDocumentOpen.create(root, new File(dir, "new").getPath(), false));
+            SafeDocumentOpen.delete(root, new File(dir, "new").getPath());
+            assertFalse(new File(dir, "new").exists());
             try { SafeDocumentOpen.create(root, new File(link, "escape").getPath(), false); fail(); }
+            catch (FileNotFoundException expected) { }
+            try { SafeDocumentOpen.delete(root, new File(link, "ñ.txt").getPath()); fail(); }
             catch (FileNotFoundException expected) { }
             assertFalse(new File(dir, "escape").exists());
             reject(root, new File(root, "../outside").getPath(), "r");
