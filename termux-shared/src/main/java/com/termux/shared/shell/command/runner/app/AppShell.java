@@ -182,7 +182,9 @@ public final class AppShell {
             else {
                 try { worker.start(); }
                 catch (RuntimeException | Error e) {
-                    process.destroy();
+                    // No identity-safe signal is available here. Keep the child accounted for
+                    // on this worker until it exits instead of signalling a recyclable PID.
+                    waitForManagedChild(process);
                     executionCommand.setStateFailed(Errno.ERRNO_FAILED.getCode(), "Managed worker unavailable");
                     AppShell.processAppShellResult(null, executionCommand);
                     if (e instanceof Error) throw (Error) e;
@@ -301,10 +303,22 @@ public final class AppShell {
             mExecutionCommand.setStateFailed(Errno.ERRNO_FAILED.getCode(), "Managed capture failed");
             fatal = e;
         } finally {
-            mProcess.destroy();
+            // Wait on the owned child even if capture failed before it could wait. Android's
+            // Process.destroy() may use a recyclable PID and must not be called after exit.
+            waitForManagedChild(mProcess);
         }
         if (notify) processAppShellResult(this, null);
         if (fatal != null) throw fatal;
+    }
+
+    private static void waitForManagedChild(Process process) {
+        boolean interrupted = Thread.interrupted();
+        try {
+            for (;;) {
+                try { process.waitFor(); return; }
+                catch (InterruptedException e) { interrupted = true; }
+            }
+        } finally { if (interrupted) Thread.currentThread().interrupt(); }
     }
 
     /** Runs on the AppShell worker and owns the child's three streams. Never log captured bytes. */

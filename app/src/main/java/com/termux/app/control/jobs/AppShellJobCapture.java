@@ -46,11 +46,12 @@ public final class AppShellJobCapture implements AppShell.ManagedCapture {
     /** Called on the AppShell worker, never the Android service thread. */
     @Override public int captureAndWait(Process process) throws IOException, InterruptedException {
         if (process == null || !mStarted.compareAndSet(false, true)) throw new IllegalStateException("Capture already used or missing process");
-        JobStreamPump stdout = new JobStreamPump(process.getInputStream(), mOutput, JobOutputStore.Stream.STDOUT);
-        JobStreamPump stderr = new JobStreamPump(process.getErrorStream(), mOutput, JobOutputStore.Stream.STDERR);
         AtomicInteger inputState = new AtomicInteger(0); // 0 = pending, 1 = writer owns bytes, 2 = wiped before start
         Future<?> outFuture = null, errFuture = null, inputFuture = null;
+        boolean exited = false;
         try {
+            JobStreamPump stdout = new JobStreamPump(process.getInputStream(), mOutput, JobOutputStore.Stream.STDOUT);
+            JobStreamPump stderr = new JobStreamPump(process.getErrorStream(), mOutput, JobOutputStore.Stream.STDERR);
             outFuture = mIoWorkers.submit(stdout);
             errFuture = mIoWorkers.submit(stderr);
             inputFuture = mIoWorkers.submit(() -> {
@@ -61,6 +62,7 @@ public final class AppShellJobCapture implements AppShell.ManagedCapture {
                 return null;
             });
             int exitCode = process.waitFor();
+            exited = true;
             long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(mDrainTimeoutMillis);
             await(inputFuture, deadline);
             await(outFuture, deadline);
@@ -72,6 +74,9 @@ public final class AppShellJobCapture implements AppShell.ManagedCapture {
         } catch (RejectedExecutionException | CancellationException e) {
             throw new IOException("Managed I/O workers unavailable", e);
         } finally {
+            // Do not release the job reservation while a child may still be running. On a capture
+            // failure there is currently no verified identity-safe way to terminate it on Android.
+            if (!exited) awaitExitUninterruptibly(process);
             if (outFuture != null && !outFuture.isDone()) outFuture.cancel(true);
             if (errFuture != null && !errFuture.isDone()) errFuture.cancel(true);
             if (inputFuture != null && !inputFuture.isDone()) inputFuture.cancel(true);
@@ -79,6 +84,16 @@ public final class AppShellJobCapture implements AppShell.ManagedCapture {
             mOutput.finish();
             mIoWorkers.shutdown();
         }
+    }
+
+    private static void awaitExitUninterruptibly(Process process) {
+        boolean interrupted = Thread.interrupted();
+        try {
+            for (;;) {
+                try { process.waitFor(); return; }
+                catch (InterruptedException e) { interrupted = true; }
+            }
+        } finally { if (interrupted) Thread.currentThread().interrupt(); }
     }
 
     private static void await(Future<?> future, long deadline) throws IOException, InterruptedException {

@@ -53,18 +53,26 @@ public class AppShellManagedCaptureTest {
         assertEquals(0, command.resultData.stdout.length()); assertEquals(0, command.resultData.stderr.length());
     }
 
-    @Test public void captureFailureReportsSingleFailureAndDestroysOwnedProcess() throws Exception {
-        ExecutionCommand command = new ExecutionCommand(2, "/bin/sh", new String[]{"-c", "sleep 30"}, null, "/tmp", "app-shell", false);
-        CountDownLatch done = new CountDownLatch(1);
+    @Test public void captureFailureWaitsForChildBeforeReportingFailure() throws Exception {
+        ExecutionCommand command = new ExecutionCommand(2, "/bin/sh", new String[]{"-c", "IFS= read -r line"}, null, "/tmp", "app-shell", false);
+        CountDownLatch done = new CountDownLatch(1), captureFailed = new CountDownLatch(1);
         AtomicInteger calls = new AtomicInteger();
         AtomicReference<AppShell> shell = new AtomicReference<>();
         Thread launcher = new Thread(() -> shell.set(AppShell.executeManaged(RuntimeEnvironment.getApplication(), command,
-            appShell -> { calls.incrementAndGet(); done.countDown(); }, ENV, null, process -> { throw new IOException("secret must not be copied"); })));
+            appShell -> { calls.incrementAndGet(); done.countDown(); }, ENV, null, process -> {
+                captureFailed.countDown(); throw new IOException("secret must not be copied");
+            })));
         launcher.start(); launcher.join(5000);
-        assertFalse(launcher.isAlive()); assertNotNull(shell.get()); assertTrue(done.await(5, TimeUnit.SECONDS));
-        assertTrue(command.isStateFailed()); assertEquals(1, calls.get());
-        assertTrue(shell.get().getProcess().waitFor(5, TimeUnit.SECONDS));
-        assertFalse(command.resultData.errorsList.toString().contains("secret must not be copied"));
+        assertFalse(launcher.isAlive()); assertNotNull(shell.get());
+        try {
+            assertTrue(captureFailed.await(5, TimeUnit.SECONDS));
+            assertFalse(done.await(100, TimeUnit.MILLISECONDS));
+            shell.get().getProcess().getOutputStream().close();
+            assertTrue(done.await(5, TimeUnit.SECONDS));
+            assertTrue(command.isStateFailed()); assertEquals(1, calls.get());
+            assertTrue(shell.get().getProcess().waitFor(5, TimeUnit.SECONDS));
+            assertFalse(command.resultData.errorsList.toString().contains("secret must not be copied"));
+        } finally { shell.get().getProcess().destroyForcibly(); }
     }
 
     @Test public void legacyAppShellStillPopulatesItsResultBuffers() throws Exception {

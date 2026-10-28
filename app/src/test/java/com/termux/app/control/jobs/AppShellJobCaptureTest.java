@@ -7,7 +7,11 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PipedInputStream;
 import java.io.PipedOutputStream;
+import java.io.ByteArrayInputStream;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.Assert.*;
 
 public class AppShellJobCaptureTest {
@@ -28,7 +32,7 @@ public class AppShellJobCaptureTest {
         JobIoPool.Lease lease = io.tryReserve(); lease.shutdown();
         JobOutputStore store = new JobOutputStore(32, 1, 64);
         JobOutputStore.Output output = store.reserve("job");
-        Process process = new ProcessBuilder("/bin/sh", "-c", "sleep 30").start();
+        Process process = new ProcessBuilder("/bin/sh", "-c", "exit 0").start();
         try {
             AppShellJobCapture capture = new AppShellJobCapture(lease, output, new byte[]{1}, 1000);
             try { capture.captureAndWait(process); fail(); } catch (IOException expected) { }
@@ -87,5 +91,40 @@ public class AppShellJobCaptureTest {
             assertTrue(lease.awaitTermination(5, TimeUnit.SECONDS)); io.close();
             store.close();
         }
+    }
+
+    @Test public void interruptedCaptureRetainsQuotaUntilChildExit() throws Exception {
+        JobIoPool io = new JobIoPool(1);
+        JobIoPool.Lease lease = io.tryReserve();
+        JobOutputStore store = new JobOutputStore(32, 1, 64);
+        JobOutputStore.Output output = store.reserve("job");
+        CountDownLatch waitingForExit = new CountDownLatch(1), childExited = new CountDownLatch(1);
+        AtomicInteger waits = new AtomicInteger();
+        AtomicReference<Throwable> result = new AtomicReference<>();
+        Process process = new Process() {
+            @Override public OutputStream getOutputStream() { return new ByteArrayOutputStream(); }
+            @Override public InputStream getInputStream() { return new ByteArrayInputStream(new byte[0]); }
+            @Override public InputStream getErrorStream() { return new ByteArrayInputStream(new byte[0]); }
+            @Override public int waitFor() throws InterruptedException {
+                if (waits.getAndIncrement() == 0) throw new InterruptedException();
+                waitingForExit.countDown(); childExited.await(); return 0;
+            }
+            @Override public int exitValue() { if (childExited.getCount() > 0) throw new IllegalThreadStateException(); return 0; }
+            @Override public void destroy() { fail("capture must not signal the process"); }
+        };
+        Thread worker = new Thread(() -> {
+            try { new AppShellJobCapture(lease, output, null, 1000).captureAndWait(process); }
+            catch (Throwable e) { result.set(e); }
+        });
+        try {
+            worker.start(); assertTrue(waitingForExit.await(2, TimeUnit.SECONDS));
+            assertNull(io.tryReserve());
+            assertFalse(output.isFinished());
+            childExited.countDown(); worker.join(2000); assertFalse(worker.isAlive());
+            assertTrue(result.get() instanceof InterruptedException);
+            assertTrue(output.isFinished());
+            assertTrue(lease.awaitTermination(2, TimeUnit.SECONDS));
+            JobIoPool.Lease next = io.tryReserve(); assertNotNull(next); next.close();
+        } finally { childExited.countDown(); worker.join(2000); io.close(); store.close(); }
     }
 }
