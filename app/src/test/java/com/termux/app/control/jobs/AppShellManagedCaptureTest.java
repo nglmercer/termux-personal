@@ -15,6 +15,9 @@ import java.io.InputStream;
 import java.util.HashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.Assert.*;
@@ -78,6 +81,34 @@ public class AppShellManagedCaptureTest {
         assertEquals(Integer.valueOf(7), command.resultData.exitCode);
         assertEquals("abc\n", command.resultData.stdout.toString());
         assertEquals("err\n", command.resultData.stderr.toString());
+    }
+
+    @Test public void boundedCaptureHandlesExactStdinAndLargeSeparateStreams() throws Exception {
+        String script = "import os,sys,threading; data=sys.stdin.buffer.read(); " +
+            "a=threading.Thread(target=lambda:os.write(1,b'\\x00\\xff'*131072)); a.start(); " +
+            "os.write(2,b'\\xfe\\x01'*131072); a.join(); raise SystemExit(7 if data==b'\\x00\\xff\\x0a' else 19)";
+        ExecutionCommand command = new ExecutionCommand(4, "/usr/bin/python3", new String[]{"-c", script}, null, "/tmp", "app-shell", false);
+        ExecutorService io = new ThreadPoolExecutor(3, 3, 0, TimeUnit.SECONDS, new SynchronousQueue<>());
+        JobOutputStore store = new JobOutputStore(1024, 1, 2048);
+        JobOutputStore.Output output = store.reserve("job");
+        CountDownLatch done = new CountDownLatch(1);
+        AtomicReference<AppShell> shell = new AtomicReference<>();
+        try {
+            AppShellJobCapture capture = new AppShellJobCapture(io, output, new byte[]{0, (byte)255, 10}, 5000);
+            Thread launcher = new Thread(() -> shell.set(AppShell.executeManaged(RuntimeEnvironment.getApplication(), command,
+                appShell -> done.countDown(), ENV, null, capture)));
+            launcher.start(); launcher.join(5000);
+            assertFalse(launcher.isAlive()); assertNotNull(shell.get()); assertTrue(done.await(10, TimeUnit.SECONDS));
+            assertEquals(Integer.valueOf(7), command.resultData.exitCode);
+            assertTrue(output.isFinished());
+            com.termux.terminal.OutputReplayBuffer.ReadResult stdout = output.read(JobOutputStore.Stream.STDOUT, 0, 1024);
+            com.termux.terminal.OutputReplayBuffer.ReadResult stderr = output.read(JobOutputStore.Stream.STDERR, 0, 1024);
+            assertTrue(stdout.gap); assertTrue(stderr.gap);
+            assertEquals(262144, stdout.endOffset); assertEquals(262144, stderr.endOffset);
+            assertEquals((byte) 0, stdout.data[0]); assertEquals((byte) 255, stdout.data[1]);
+            assertEquals((byte) 254, stderr.data[0]); assertEquals((byte) 1, stderr.data[1]);
+            assertEquals(0, command.resultData.stdout.length()); assertEquals(0, command.resultData.stderr.length());
+        } finally { io.shutdownNow(); store.close(); }
     }
 
     private static byte[] readAll(InputStream input) throws IOException {
