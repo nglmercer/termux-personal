@@ -92,7 +92,7 @@ public final class AppShellJobAdapter {
             throw new IllegalArgumentException("Resolved absolute executable and cwd required");
     }
 
-    private static boolean isNormalizedAbsolute(String path) {
+    static boolean isNormalizedAbsolute(String path) {
         if (path == null || !path.startsWith("/") || path.indexOf('\0') >= 0 || (path.length() > 1 && path.endsWith("/"))) return false;
         if (path.length() == 1) return true;
         for (String part : path.substring(1).split("/", -1))
