@@ -8,3 +8,9 @@ include $(CLEAR_VARS)
 LOCAL_MODULE := libtermux-document-path
 LOCAL_SRC_FILES := document-path.c
 include $(BUILD_SHARED_LIBRARY)
+
+# Internal managed-job primitives; no JNI entry points or enabled job API yet.
+include $(CLEAR_VARS)
+LOCAL_MODULE := libtermux-managed-job
+LOCAL_SRC_FILES := managed-fork.c managed-path.c
+include $(BUILD_SHARED_LIBRARY)

@@ -44,3 +44,5 @@ The child now requests `close_range(CLOSE_RANGE_CLOEXEC)` before exec and fails 
 The native prototype exposes TERM, KILL and INT through the owned pidfd only. Its host test signals a launched child and confirms that a later signal to the same handle fails after exit. Descriptor lifetime must be synchronized by the eventual coordinator; this helper does not implement the cancellation state machine or prove Android support.
 
 A worker-only wait helper distinguishes a normal exit code from termination by signal and reports duplicate reaping as an error. Its caller must ensure a single owner for waiting and preserve the pidfd independently for signaling; this helper does not make numeric PIDs an authorization mechanism.
+
+The app's ndk-build configuration now builds the internal primitives as `libtermux-managed-job.so` for arm64-v8a, armeabi-v7a, x86 and x86_64. `:app:externalNativeBuildDebug` succeeded for all four on the Linux host with NDK 29. The library has no JNI entry points and does not enable managed jobs. APK packaging and device execution are not verified by this native-build check.
