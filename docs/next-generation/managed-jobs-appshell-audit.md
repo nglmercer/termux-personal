@@ -34,3 +34,5 @@ The native prototype now has a child-only `fchdir`/`execveat` helper that report
 A parent-side status reader bounds the wait and rejects partial error messages. EOF with no error is deliberately reported only as pipe closure: a child can die before reporting an error, so EOF alone does not prove execution. Callers must retain ownership of the child and reconcile its actual outcome. The helper requires a single reader and correct closure of other pipe writers.
 
 The child helper now duplicates supplied stdin, stdout and stderr descriptors before execution; a host test checks separate output streams. Its caller must arrange close-on-exec for every inherited descriptor and close unused pipe ends. Parent-side pipe creation and integration still need implementation and device verification.
+
+The native prototype can now reserve four close-on-exec pipes and clean up partial allocations. Host tests check descriptor flags and allocation failure under a reduced descriptor limit. The future launcher must close the unused ends in each process and transfer ownership explicitly; creating the pipes does not integrate them with AppShell or establish Android support.

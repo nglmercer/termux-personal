@@ -13,6 +13,11 @@
  */
 pid_t termux_managed_fork_pidfd(int *pidfd);
 
+/* Pipes are [read, write]. All descriptors are >= 3 and close-on-exec. */
+struct termux_managed_pipes { int input[2], output[2], error[2], status[2]; };
+int termux_managed_pipes_open(struct termux_managed_pipes *pipes);
+void termux_managed_pipes_close(struct termux_managed_pipes *pipes);
+
 /* Child-only: wire three descriptors, fchdir and exec a pinned executable.
  * All supplied descriptors must be >= 3 and CLOEXEC; error_fd must be distinct
  * from the other descriptors. On failure report errno and _exit(127). */

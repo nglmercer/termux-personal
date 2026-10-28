@@ -9,6 +9,7 @@
 #include <string.h>
 #include <sys/syscall.h>
 #include <sys/stat.h>
+#include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -25,6 +26,28 @@ static void require(int condition, const char *message) {
 }
 
 int main(void) {
+    struct termux_managed_pipes managed_pipes;
+    require(termux_managed_pipes_open(NULL) == -1 && errno == EINVAL, "reject missing pipe storage");
+    require(termux_managed_pipes_open(&managed_pipes) == 0, "open managed pipes");
+    int *all_pipes[] = {managed_pipes.input, managed_pipes.output, managed_pipes.error, managed_pipes.status};
+    for (size_t i = 0; i < 4; i++) for (size_t j = 0; j < 2; j++)
+        require(all_pipes[i][j] >= 3 && (fcntl(all_pipes[i][j], F_GETFD) & FD_CLOEXEC), "protected pipe descriptor");
+    termux_managed_pipes_close(&managed_pipes);
+    for (size_t i = 0; i < 4; i++) for (size_t j = 0; j < 2; j++)
+        require(all_pipes[i][j] == -1, "closed pipe descriptor invalidated");
+    termux_managed_pipes_close(&managed_pipes);
+    pid_t limited = fork();
+    require(limited >= 0, "fork pipe quota test");
+    if (limited == 0) {
+        struct rlimit limit = { .rlim_cur = 7, .rlim_max = 7 };
+        if (setrlimit(RLIMIT_NOFILE, &limit) < 0) _exit(1);
+        if (termux_managed_pipes_open(&managed_pipes) != -1 || errno != EMFILE) _exit(2);
+        for (int fd = 3; fd < 7; fd++) if (fcntl(fd, F_GETFD) != -1 || errno != EBADF) _exit(3);
+        _exit(0);
+    }
+    int limited_status;
+    require(waitpid(limited, &limited_status, 0) == limited && WIFEXITED(limited_status) && WEXITSTATUS(limited_status) == 0,
+        "pipe allocation failure closes partial descriptors");
     int handle = -1;
     errno = 0;
     require(termux_managed_fork_pidfd(NULL) == -1 && errno == EINVAL, "reject missing handle");

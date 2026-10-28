@@ -12,6 +12,38 @@
 #include <poll.h>
 #include <time.h>
 
+void termux_managed_pipes_close(struct termux_managed_pipes *pipes) {
+    if (pipes == NULL) return;
+    int *pairs[] = {pipes->input, pipes->output, pipes->error, pipes->status};
+    for (size_t i = 0; i < 4; i++) for (size_t j = 0; j < 2; j++) {
+        if (pairs[i][j] >= 0) close(pairs[i][j]);
+        pairs[i][j] = -1;
+    }
+}
+
+int termux_managed_pipes_open(struct termux_managed_pipes *pipes) {
+    if (pipes == NULL) { errno = EINVAL; return -1; }
+    int *pairs[] = {pipes->input, pipes->output, pipes->error, pipes->status};
+    for (size_t i = 0; i < 4; i++) pairs[i][0] = pairs[i][1] = -1;
+    for (size_t i = 0; i < 4; i++) {
+        if (pipe2(pairs[i], O_CLOEXEC) < 0) goto fail;
+        for (size_t j = 0; j < 2; j++) {
+            if (pairs[i][j] < 3) {
+                int replacement = fcntl(pairs[i][j], F_DUPFD_CLOEXEC, 3);
+                if (replacement < 0) goto fail;
+                close(pairs[i][j]); pairs[i][j] = replacement;
+            }
+        }
+    }
+    return 0;
+fail: {
+        int saved = errno;
+        termux_managed_pipes_close(pipes);
+        errno = saved;
+        return -1;
+    }
+}
+
 pid_t termux_managed_fork_pidfd(int *pidfd) {
     if (pidfd == NULL) { errno = EINVAL; return -1; }
     *pidfd = -1;
