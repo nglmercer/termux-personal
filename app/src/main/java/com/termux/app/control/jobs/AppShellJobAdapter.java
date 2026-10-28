@@ -41,13 +41,19 @@ public final class AppShellJobAdapter {
 
     @Nullable public Process launch(JobRegistry.Entry entry, JobSpec spec, String executable, String cwd,
                                     @Nullable OwnedProcessControl control) {
-        if (entry == null || !entry.matches(spec) || !isNormalizedAbsolute(executable) || !isNormalizedAbsolute(cwd) ||
-            (spec.executable().startsWith("/") && !spec.executable().equals(executable)) ||
-            (spec.workingDirectory() != null && !spec.workingDirectory().equals(cwd)) ||
-            (control != null && !control.owns(entry.record())))
-            throw new IllegalArgumentException("Resolved absolute executable and cwd required");
+        validate(entry, spec, executable, cwd, control);
+        if (!entry.record().begin()) return null;
+        return launchBegun(entry, spec, executable, cwd, control);
+    }
+
+    /** Coordinator must have atomically moved the published record to STARTING. */
+    @Nullable Process launchBegun(JobRegistry.Entry entry, JobSpec spec, String executable, String cwd,
+                                  @Nullable OwnedProcessControl control) {
+        validate(entry, spec, executable, cwd, control);
         JobRecord record = entry.record();
-        if (!record.begin()) return null;
+        JobRecord.State state = record.snapshot().state;
+        if (state != JobRecord.State.STARTING && state != JobRecord.State.CANCELLING)
+            throw new IllegalStateException("Job was not prepared for launch");
         AtomicBoolean completed = new AtomicBoolean();
         Completion callback = (exitCode, captureFailed) -> {
             if (!completed.compareAndSet(false, true)) return;
@@ -75,6 +81,15 @@ public final class AppShellJobAdapter {
             if (control != null) control.completed();
             throw e;
         }
+    }
+
+    private static void validate(JobRegistry.Entry entry, JobSpec spec, String executable, String cwd,
+                                 OwnedProcessControl control) {
+        if (entry == null || !entry.matches(spec) || !isNormalizedAbsolute(executable) || !isNormalizedAbsolute(cwd) ||
+            (spec.executable().startsWith("/") && !spec.executable().equals(executable)) ||
+            (spec.workingDirectory() != null && !spec.workingDirectory().equals(cwd)) ||
+            (control != null && !control.owns(entry.record())))
+            throw new IllegalArgumentException("Resolved absolute executable and cwd required");
     }
 
     private static boolean isNormalizedAbsolute(String path) {
