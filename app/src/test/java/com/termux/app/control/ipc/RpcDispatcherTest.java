@@ -2,6 +2,8 @@ package com.termux.app.control.ipc;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.JsonArray;
+import java.io.InputStreamReader;
 import com.termux.app.control.ControlCore;
 import junit.framework.TestCase;
 import java.nio.charset.StandardCharsets;
@@ -45,6 +47,18 @@ public class RpcDispatcherTest extends TestCase {
     private void hello() throws Exception {
         JsonObject response = object(send("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"system.hello\",\"params\":{\"version\":1}}", Collections.emptySet()));
         assertEquals(1, response.getAsJsonObject("result").get("version").getAsInt());
+    }
+
+    public void testReadOnlyV1GoldenConversation() throws Exception {
+        try (InputStreamReader reader = new InputStreamReader(
+                getClass().getResourceAsStream("/control/v1-read-only.json"), StandardCharsets.UTF_8)) {
+            JsonArray cases = JsonParser.parseReader(reader).getAsJsonArray();
+            for (com.google.gson.JsonElement element : cases) {
+                JsonObject entry = element.getAsJsonObject();
+                JsonObject response = object(send(entry.get("request").toString(), EnumSet.of(ControlCore.Scope.SESSIONS_READ)));
+                assertEquals(entry.get("response"), response);
+            }
+        }
     }
 
     public void testHandshakeAuthorizationAndList() throws Exception {
