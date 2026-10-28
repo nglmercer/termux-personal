@@ -106,16 +106,13 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
 
     @Override
     public ParcelFileDescriptor openDocument(final String documentId, String mode, CancellationSignal signal) throws FileNotFoundException {
-        final File file = getFileForDocId(documentId);
-        final int accessMode = ParcelFileDescriptor.parseMode(mode);
-        return ParcelFileDescriptor.open(file, accessMode);
+        return SafeDocumentOpen.open(mBaseDir, documentId, mode);
     }
 
     @Override
     public AssetFileDescriptor openDocumentThumbnail(String documentId, Point sizeHint, CancellationSignal signal) throws FileNotFoundException {
-        final File file = getFileForDocId(documentId);
-        final ParcelFileDescriptor pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY);
-        return new AssetFileDescriptor(pfd, 0, file.length());
+        final ParcelFileDescriptor pfd = SafeDocumentOpen.open(mBaseDir, documentId, "r");
+        return new AssetFileDescriptor(pfd, 0, pfd.getStatSize());
     }
 
     @Override
