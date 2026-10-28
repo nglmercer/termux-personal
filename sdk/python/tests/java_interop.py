@@ -18,8 +18,7 @@ with tempfile.TemporaryDirectory(prefix="termux-python-java-") as directory:
             description = client.describe()
             assert description["protocolVersion"] == 1
             assert "session.write" in [method["name"] for method in description["methods"]]
-            result, _ = client.request("session.write", {"id": "session-1", "length": 4}, binary=b"\x00\xff\x1b\n")
-            assert result == {"ok": True}
+            client.sessions.write("session-1", b"\x00\xff\x1b\n")
         stdout, stderr = server.communicate(timeout=10)
         assert server.returncode == 0 and "OK" in stdout, stderr
     finally:

@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 import unittest
 
-from termux_personal import RpcError, SocketTransport, TermuxClient, TransportError
+from termux_personal import ProtocolError, RpcError, SocketTransport, TermuxClient, TransportError, UnavailableError
 
 
 def read_exact(sock, length):
@@ -151,6 +151,70 @@ class ClientTest(unittest.TestCase):
                 TermuxClient.connect_adb(adb_path=str(adb), timeout=0.1)
             self.assertFalse(error.exception.outcome_unknown)
             self.assertLess(time.monotonic() - start, 2)
+
+    def test_session_helpers_discover_methods_and_report_gap(self):
+        def server(sock):
+            methods = ["session.list", "session.write", "session.output.read"]
+            for method in ("session.list", "session.write", "session.output.read"):
+                request = json.loads(read_frame(sock))
+                self.assertEqual("system.capabilities", request["method"])
+                respond(sock, request, {"methods": methods})
+                request = json.loads(read_frame(sock))
+                self.assertEqual(method, request["method"])
+                if method == "session.list":
+                    respond(sock, request, {"sessions": [{"id": "s1", "name": None, "state": "running", "pid": 42}]})
+                elif method == "session.write":
+                    self.assertEqual(b"\x00\xff", read_frame(sock))
+                    respond(sock, request, {"ok": True})
+                else:
+                    respond(sock, request, {"offset": 2, "nextOffset": 4, "endOffset": 4, "gap": True, "length": 2})
+                    send_frame(sock, b"\x03\x04")
+            request = json.loads(read_frame(sock))
+            self.assertEqual("system.capabilities", request["method"])
+            respond(sock, request, {"methods": methods})
+        client = self.pair(server)
+        self.assertEqual("s1", client.sessions.list()[0].id)
+        client.sessions.write("s1", b"\x00\xff")
+        chunk = client.sessions.read_output("s1", 0, 2)
+        self.assertEqual((2, 4, 4, True, b"\x03\x04"), (chunk.offset, chunk.next_offset, chunk.end_offset, chunk.gap, chunk.data))
+        with self.assertRaises(UnavailableError):
+            client.sessions.close("s1")
+
+    def test_session_helper_rejects_inconsistent_offsets(self):
+        def server(sock):
+            request = json.loads(read_frame(sock))
+            respond(sock, request, {"methods": ["session.output.read"]})
+            request = json.loads(read_frame(sock))
+            respond(sock, request, {"offset": 2, "nextOffset": 9, "endOffset": 9, "gap": True, "length": 1})
+            send_frame(sock, b"x")
+        client = self.pair(server)
+        with self.assertRaises(ProtocolError):
+            client.sessions.read_output("s1", 0, 1)
+
+    def test_malformed_mutation_acknowledgement_is_unknown(self):
+        def server(sock):
+            request = json.loads(read_frame(sock))
+            respond(sock, request, {"methods": ["session.rename"]})
+            request = json.loads(read_frame(sock))
+            respond(sock, request, {"unexpected": True})
+        client = self.pair(server)
+        with self.assertRaises(ProtocolError) as error:
+            client.sessions.rename("s1", "x")
+        self.assertTrue(error.exception.outcome_unknown)
+
+    def test_ordinary_subscription_omits_optional_resume_parameter(self):
+        def server(sock):
+            request = json.loads(read_frame(sock))
+            respond(sock, request, {"methods": ["session.output.subscribe"]})
+            request = json.loads(read_frame(sock))
+            self.assertEqual({"id": "s1"}, request["params"])
+            respond(sock, request, {"ok": True})
+            request = json.loads(read_frame(sock))
+            respond(sock, request, {"methods": ["session.output.subscribe"]})
+        client = self.pair(server)
+        self.assertIsNone(client.sessions.subscribe("s1"))
+        with self.assertRaises(UnavailableError):
+            client.sessions.subscribe("s1", resumable=True)
 
 
 if __name__ == "__main__":

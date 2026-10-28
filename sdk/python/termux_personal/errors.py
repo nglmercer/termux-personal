@@ -6,7 +6,13 @@ class ControlError(Exception):
 
 
 class ProtocolError(ControlError):
-    pass
+    def __init__(self, message: str, *, outcome_unknown: bool = False):
+        super().__init__(message)
+        self.outcome_unknown = outcome_unknown
+
+
+class UnavailableError(ControlError):
+    """The current server does not advertise the requested method."""
 
 
 class TransportError(ControlError):

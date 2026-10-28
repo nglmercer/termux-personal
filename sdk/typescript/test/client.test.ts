@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { TermuxClient, TransportError, type ByteTransport } from "../src/index.ts";
+import { TermuxClient, TransportError, UnavailableError, ProtocolError, type ByteTransport } from "../src/index.ts";
 
 class MockTransport implements ByteTransport {
   readonly requests: Array<Record<string, unknown>> = [];
@@ -95,4 +95,53 @@ test("aborting an in-flight mutation reports an unknown outcome", async () => {
   abort.abort();
   await assert.rejects(pending, (error: unknown) => error instanceof TransportError && error.outcomeUnknown);
   assert.equal(peer.closed, true);
+});
+
+test("session helpers discover capabilities and return typed metadata and gaps", async () => {
+  const peer = new MockTransport((request, transport) => {
+    if (request.method === "system.capabilities") transport.reply(request, { methods: ["session.list", "session.write", "session.output.read"] });
+    else if (request.method === "session.list") transport.reply(request, { sessions: [{ id: "s1", name: null, state: "running", pid: 42 }] });
+    else if (request.method === "session.write") { transport.awaitingBinary = true; transport.reply(request, { ok: true }); }
+    else if (request.method === "session.output.read") { transport.reply(request, { offset: 2, nextOffset: 4, endOffset: 4, gap: true, length: 2 }); transport.responses.push(new Uint8Array([3, 4])); }
+    else throw new Error("Unexpected method");
+  });
+  const client = await TermuxClient.fromTransport(peer);
+  assert.deepEqual(await client.sessions.list(), [{ id: "s1", name: null, state: "running", pid: 42 }]);
+  await client.sessions.write("s1", new Uint8Array([0, 255]));
+  assert.deepEqual(peer.binary, new Uint8Array([0, 255]));
+  assert.deepEqual(await client.sessions.readOutput("s1", 0, 2), { offset: 2, nextOffset: 4, endOffset: 4, gap: true, data: new Uint8Array([3, 4]) });
+  await assert.rejects(client.sessions.close("s1"), UnavailableError);
+  assert.equal(peer.requests.some(r => r.method === "session.close"), false);
+  client.close();
+});
+
+test("session output helper rejects inconsistent offsets", async () => {
+  const peer = new MockTransport((request, transport) => {
+    if (request.method === "system.capabilities") transport.reply(request, { methods: ["session.output.read"] });
+    else { transport.reply(request, { offset: 2, nextOffset: 9, endOffset: 9, gap: true, length: 1 }); transport.responses.push(new Uint8Array([1])); }
+  });
+  const client = await TermuxClient.fromTransport(peer);
+  await assert.rejects(client.sessions.readOutput("s1", 0, 1), ProtocolError);
+  client.close();
+});
+
+test("malformed mutation acknowledgement reports an unknown outcome", async () => {
+  const peer = new MockTransport((request, transport) => {
+    if (request.method === "system.capabilities") transport.reply(request, { methods: ["session.rename"] });
+    else transport.reply(request, { unexpected: true });
+  });
+  const client = await TermuxClient.fromTransport(peer);
+  await assert.rejects(client.sessions.rename("s1", "x"), (error: unknown) => error instanceof ProtocolError && error.outcomeUnknown);
+  client.close();
+});
+
+test("ordinary subscription omits the optional resumable parameter", async () => {
+  const peer = new MockTransport((request, transport) => {
+    if (request.method === "system.capabilities") transport.reply(request, { methods: ["session.output.subscribe"] });
+    else { assert.deepEqual(request.params, { id: "s1" }); transport.reply(request, { ok: true }); }
+  });
+  const client = await TermuxClient.fromTransport(peer);
+  assert.equal(await client.sessions.subscribe("s1"), null);
+  await assert.rejects(client.sessions.subscribe("s1", { resumable: true }), UnavailableError);
+  client.close();
 });

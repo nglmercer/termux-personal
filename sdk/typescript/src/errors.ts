@@ -1,4 +1,8 @@
-export class ProtocolError extends Error {}
+export class ProtocolError extends Error {
+  readonly outcomeUnknown: boolean;
+  constructor(message: string, outcomeUnknown = false) { super(message); this.outcomeUnknown = outcomeUnknown; }
+}
+export class UnavailableError extends Error {}
 export class TransportError extends Error {
   readonly outcomeUnknown: boolean;
   constructor(message: string, outcomeUnknown = false, options?: ErrorOptions) {

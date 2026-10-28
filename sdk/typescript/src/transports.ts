@@ -119,8 +119,16 @@ export class AdbTransport extends FramedStreamTransport {
     catch (error) { throw await this.bridgeError(error); }
   }
   override async writeFrame(bytes: Uint8Array): Promise<void> {
-    try { await super.writeFrame(bytes); }
+    let onExit: (() => void) | undefined;
+    try {
+      await Promise.race([super.writeFrame(bytes), new Promise<never>((_resolve, reject) => {
+        onExit = () => reject(new Error("ADB process exited"));
+        this.child.once("exit", onExit); this.child.once("error", onExit);
+        if (this.child.exitCode !== null || this.child.signalCode !== null) onExit();
+      })]);
+    }
     catch (error) { throw await this.bridgeError(error); }
+    finally { if (onExit) { this.child.off("exit", onExit); this.child.off("error", onExit); } }
   }
   private async bridgeError(error: unknown): Promise<Error> {
     // ADB can close stdout or stdin just before its stderr diagnostic is delivered.

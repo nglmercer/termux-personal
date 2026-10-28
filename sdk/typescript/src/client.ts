@@ -1,5 +1,6 @@
 import { ProtocolError, RpcError, TransportError } from "./errors.ts";
 import { MAX_CHUNK, UnixSocketTransport, type ByteTransport } from "./transports.ts";
+import { Sessions } from "./sessions.ts";
 
 const readOnly = new Set(["system.hello", "system.capabilities", "system.describe", "session.list", "session.snapshot", "session.output.read"]);
 type JsonObject = Record<string, unknown>;
@@ -10,7 +11,8 @@ export class TermuxClient {
   private tail: Promise<void> = Promise.resolve();
   private closed = false;
   private readonly transport: ByteTransport;
-  private constructor(transport: ByteTransport) { this.transport = transport; }
+  readonly sessions: Sessions;
+  private constructor(transport: ByteTransport) { this.transport = transport; this.sessions = new Sessions(this); }
 
   static async fromTransport(transport: ByteTransport): Promise<TermuxClient> {
     const client = new TermuxClient(transport);

@@ -8,11 +8,13 @@ import { TermuxClient } from "./src/index.ts";
 const client = await TermuxClient.connect("/data/data/com.termux/files/control-ipc/control.sock");
 try {
   const capabilities = await client.describe();
-  const { result } = await client.request("session.list");
+  const sessions = await client.sessions.list();
 } finally { client.close(); }
 ```
 
-`AbortSignal` can cancel a request. Once a mutation has begun, a transport failure or cancellation produces `TransportError.outcomeUnknown`; do not blindly retry it. `RpcError.outcomeUnknown` also reports server-side uncertainty. Job, file, process and workspace APIs are not implemented yet. The Unix socket adapter requires a runtime with Node-compatible filesystem sockets.
+`AbortSignal` can cancel a request. Once a mutation has begun, a transport failure or cancellation produces `TransportError.outcomeUnknown`; do not blindly retry it. `RpcError.outcomeUnknown` reports server-side uncertainty, and `ProtocolError.outcomeUnknown` marks invalid mutation results. Job, file, process and workspace APIs are not implemented yet. The Unix socket adapter requires a runtime with Node-compatible filesystem sockets.
+
+Session helpers check advertised capabilities on each operation and throw `UnavailableError` for absent methods. `sessions.write()` sends exact bytes to a PTY; it does not wait for a command or report an exit code. `sessions.readOutput()` returns offsets, bytes and a gap flag.
 
 For a debuggable device, use `await TermuxClient.fromTransport(AdbTransport.connect({ serial }))`. This requires an authorized ADB device, local control already enabled, and a compatible native `termux-control-adb` bridge already installed at the app-private path. It does not work on a non-debuggable installation and does not enable any permission.
 

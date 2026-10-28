@@ -43,8 +43,10 @@ test("ADB reports a non-debuggable installation without exposing stderr", async 
   await writeFile(adb, "#!/bin/sh\necho 'run-as: package not debuggable: private detail' >&2\nexit 1\n");
   await chmod(adb, 0o700);
   try {
+    const start = Date.now();
     await assert.rejects(TermuxClient.fromTransport(AdbTransport.connect({ adbPath: adb })), (error: unknown) =>
       error instanceof TransportError && error.message === "ADB run-as requires a debuggable Termux installation" && !error.outcomeUnknown);
+    assert.ok(Date.now() - start < 2000);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 

@@ -5,6 +5,7 @@ from typing import Any, Mapping, Optional
 
 from .errors import ControlError, ProtocolError, RpcError, TransportError
 from .transport import AdbTransport, FrameTransport, MAX_MESSAGE, SocketTransport
+from .sessions import Sessions
 
 _READ_ONLY = frozenset({"system.hello", "system.capabilities", "system.describe", "session.list", "session.snapshot", "session.output.read"})
 
@@ -28,6 +29,7 @@ class TermuxClient:
         self._lock = threading.Lock()
         self._next_id = 1
         self._closed = False
+        self.sessions = Sessions(self)
         try:
             hello, _ = self.request("system.hello", {"version": 1})
             if hello != {"version": 1}:
