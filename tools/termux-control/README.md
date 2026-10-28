@@ -1,5 +1,31 @@
 # termux-control prototype
 
+## ADB access to a debug build
+
+On an authorized computer, `termux-adb` runs a shell as the app UID using Android's
+`run-as`; it requires ADB, Python 3, an unlocked/authorized device and a debuggable
+`com.termux` installation. This is independent of the optional local control socket:
+`termux-adb shell` opens an interactive shell, `termux-adb run 'pwd; id'` runs a
+script, and `termux-adb run < script.sh` reads one from stdin. Shell commands have
+the app's permissions and access to its files. Use `-s SERIAL` before the command
+when multiple devices are connected. ADB's shell exit status is propagated.
+
+For IPC, enable Local control from Settings or the terminal's context menu, then
+run `termux-adb ipc capabilities` or `termux-adb ipc list`. Write and output access
+must be selected in the dialog. The IPC client is separate from the APK. For an
+arm64 device, build with an Android NDK and install the client for the debug app:
+
+```
+"$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang" -O2 -std=c11 -Wall -Wextra -Werror tools/termux-control/termux-control.c -o /tmp/termux-control-adb
+adb push /tmp/termux-control-adb /data/local/tmp/termux-control-adb
+adb shell run-as com.termux cp /data/local/tmp/termux-control-adb files/termux-control-adb
+adb shell run-as com.termux chmod 700 files/termux-control-adb
+```
+
+The listener is temporary and must be enabled again after the service stops. ADB
+shell access through `run-as` does not depend on that setting and works only for
+debuggable installations; it is not an SSH server or a remote network service.
+
 A small native client for the opt-in local control socket. It is not included in the APK, bootstrap or a released Termux package yet. The listener is disabled by default; the terminal context menu's Local control action offers read-only or read/write access until the service stops. All processes running under the app UID share the selected access. The Android socket and menu still need device testing. The client can send bounded binary input, follow newly captured output, or interactively attach to a specific session. The interactive path is a draft and has not been tested on Android devices.
 
 Build locally with `make -C tools/termux-control` using a native Android/Termux C toolchain. The default socket path is `$HOME/../control-ipc/control.sock`; use `--socket PATH` or `TERMUX_CONTROL_SOCKET` if the home directory is nonstandard. Commands are `capabilities`, `list`, `create COLS ROWS [NAME]`, `rename ID NAME`, `resize ID COLS ROWS`, `close ID`, and `write ID` (reads 1–65536 bytes from stdin), `follow ID` (writes captured output bytes to stdout), and `attach ID` (interactive raw-terminal input/output). `write` sends the supplied bytes exactly and does not add Enter; bytes supplied by the caller may themselves contain command-executing control characters. Other command results are JSON; errors go to stderr and return a nonzero exit status. The client checks that the socket peer has the same UID. A timeout after a request is sent may mean its outcome is unknown; inspect session state before retrying a mutating request.

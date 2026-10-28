@@ -237,6 +237,7 @@
 
     <string name="terminal_input_queue_full">Terminal input was not sent. The input buffer is full or the session is closed. Wait and try again.</string>
     <string name="action_local_control">Local control</string>
+    <string name="local_control_settings_summary">Configure access to terminal sessions for local clients</string>
     <string name="local_control_explanation">Allow local processes running as the Termux app UID to access the control socket. Read-only allows session names and process IDs. Read/write also permits creating and renaming sessions, resizing background sessions, and sending terminal input. The listener stops with the service.</string>
     <string name="local_control_output_enabled">Terminal output access is enabled.</string>
     <string name="local_control_resume_enabled">Brief output retention after disconnect is enabled.</string>

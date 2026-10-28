@@ -242,6 +242,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private static final String ARG_ACTIVITY_RECREATED = "activity_recreated";
 
     private static final String LOG_TAG = "TermuxActivity";
+    public static final String EXTRA_SHOW_LOCAL_CONTROL = "com.termux.app.SHOW_LOCAL_CONTROL";
+    private boolean mShowLocalControlPending;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -268,6 +270,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         setActivityTheme();
 
         super.onCreate(savedInstanceState);
+        mShowLocalControlPending = getIntent() != null && getIntent().getBooleanExtra(EXTRA_SHOW_LOCAL_CONTROL, false);
 
         setContentView(R.layout.activity_termux);
 
@@ -380,11 +383,16 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         mIsOnResumeAfterOnCreate = false;
         consumeImageShareWhenReady();
         consumePendingImagePickerWhenReady();
+        showPendingLocalControl();
     }
 
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        if (intent.getBooleanExtra(EXTRA_SHOW_LOCAL_CONTROL, false)) {
+            mShowLocalControlPending = true;
+            showPendingLocalControl();
+        }
         if (isImageShare(intent)) {
             setIntent(intent);
             consumeImageShareWhenReady();
@@ -504,6 +512,14 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         mTermuxService.setTermuxTerminalSessionClient(mTermuxTerminalSessionActivityClient);
         consumeImageShareWhenReady();
         consumePendingImagePickerWhenReady();
+        showPendingLocalControl();
+    }
+
+    private void showPendingLocalControl() {
+        if (mShowLocalControlPending && mIsVisible && mTermuxService != null) {
+            mShowLocalControlPending = false;
+            showLocalControlDialog();
+        }
     }
 
     @Override

@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+"""Run a Termux shell or the local control client through a debug ADB connection."""
+import argparse
+import shlex
+import subprocess
+import sys
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('-s', '--serial', help='ADB device serial')
+sub = parser.add_subparsers(dest='mode', required=True)
+sub.add_parser('shell', help='interactive Termux shell')
+run = sub.add_parser('run', help='run a shell script; read stdin if SCRIPT is omitted')
+run.add_argument('script', nargs='?')
+ipc = sub.add_parser('ipc', help='run an installed termux-control client')
+ipc.add_argument('arguments', nargs=argparse.REMAINDER)
+args = parser.parse_args()
+
+adb = ['adb'] + (['-s', args.serial] if args.serial else [])
+root = '/data/data/com.termux/files'
+env = ['env', 'HOME=' + root + '/home', 'PREFIX=' + root + '/usr',
+       'PATH=' + root + '/usr/bin:/system/bin', 'TMPDIR=' + root + '/usr/tmp', 'LANG=C.UTF-8']
+if args.mode == 'ipc':
+    remote = ['run-as', 'com.termux', root + '/termux-control-adb', '--socket',
+              root + '/control-ipc/control.sock'] + args.arguments
+elif args.mode == 'shell':
+    remote = ['run-as', 'com.termux'] + env + [root + '/usr/bin/bash', '-c',
+              'cd "$HOME" && exec "$PREFIX/bin/bash" -l']
+else:
+    remote = ['run-as', 'com.termux'] + env + [root + '/usr/bin/bash', '-c',
+              'cd "$HOME" && exec "$PREFIX/bin/bash" -s']
+interactive = args.mode == 'shell' or (args.mode == 'ipc' and 'attach' in args.arguments)
+command = adb + (['shell', '-t'] if interactive else ['shell', '-T']) + [
+    ' '.join(shlex.quote(part) for part in remote)]
+data = args.script.encode() + b'\n' if args.mode == 'run' and args.script is not None else None
+try:
+    result = subprocess.run(command, input=data)
+    sys.exit(result.returncode)
+except FileNotFoundError:
+    sys.exit('adb was not found in PATH')
