@@ -36,11 +36,13 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
     private static final String ALL_MIME_TYPES = "*/*";
 
     private final File mBaseDir;
+    private final Creator mCreator;
+    interface Creator { int create(File root, String id, boolean directory) throws FileNotFoundException; }
 
-    public TermuxDocumentsProvider() { this(TermuxConstants.TERMUX_HOME_DIR); }
+    public TermuxDocumentsProvider() { this(TermuxConstants.TERMUX_HOME_DIR, SafeDocumentOpen::create); }
 
     // Allows provider operations to be tested against an isolated temporary root.
-    TermuxDocumentsProvider(File baseDir) { mBaseDir = baseDir; }
+    TermuxDocumentsProvider(File baseDir, Creator creator) { mBaseDir = baseDir; mCreator = creator; }
 
 
     // The default columns to return information about a root if no specific
@@ -125,25 +127,13 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
         File parent = getFileForDocId(parentDocumentId);
         if (!parent.isDirectory() || !DocumentPathPolicy.validName(displayName))
             throw new FileNotFoundException("Invalid document name");
-        File newFile = new File(parent, displayName);
-        int noConflictId = 2;
-        while (newFile.exists()) {
-            newFile = new File(parent, displayName + " (" + noConflictId++ + ")");
+        for (int index = 1; index <= 1000; index++) {
+            String name = index == 1 ? displayName : displayName + " (" + index + ")";
+            File newFile = new File(parent, name);
+            if (mCreator.create(mBaseDir, newFile.getAbsolutePath(), Document.MIME_TYPE_DIR.equals(mimeType)) == 0)
+                return newFile.getAbsolutePath();
         }
-        try {
-            boolean succeeded;
-            if (Document.MIME_TYPE_DIR.equals(mimeType)) {
-                succeeded = newFile.mkdir();
-            } else {
-                succeeded = newFile.createNewFile();
-            }
-            if (!succeeded) {
-                throw new FileNotFoundException("Failed to create document with id " + newFile.getPath());
-            }
-        } catch (IOException e) {
-            throw new FileNotFoundException("Failed to create document with id " + newFile.getPath());
-        }
-        return newFile.getPath();
+        throw new FileNotFoundException("Too many conflicting documents");
     }
 
     @Override

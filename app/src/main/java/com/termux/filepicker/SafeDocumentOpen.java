@@ -33,4 +33,14 @@ final class SafeDocumentOpen {
         return ParcelFileDescriptor.adoptFd(fd);
     }
     private static native int openNative(byte[] root, byte[] path, int access, boolean truncate, boolean append);
+
+    static int create(File root, String id, boolean directory) throws FileNotFoundException {
+        String prefix = root.getAbsolutePath() + File.separator;
+        if (!AVAILABLE || id == null || !id.startsWith(prefix)) throw new FileNotFoundException("Invalid document");
+        int result = createNative(root.getAbsolutePath().getBytes(StandardCharsets.UTF_8),
+            id.substring(prefix.length()).getBytes(StandardCharsets.UTF_8), directory);
+        if (result < 0) throw new FileNotFoundException("Cannot create document");
+        return result;
+    }
+    private static native int createNative(byte[] root, byte[] path, boolean directory);
 }

@@ -24,7 +24,15 @@ public class TermuxDocumentsProviderTest {
 
     @Before public void setUp() throws Exception {
         root = temporary.newFolder("home");
-        provider = new TermuxDocumentsProvider(root);
+        provider = new TermuxDocumentsProvider(root, (base, id, directory) -> {
+            File file = new File(id);
+            if (file.exists()) return 1;
+            try {
+                boolean created = directory ? file.mkdir() : file.createNewFile();
+                if (!created) throw new FileNotFoundException();
+                return 0;
+            } catch (java.io.IOException e) { throw new FileNotFoundException(); }
+        });
     }
 
     @Test public void normalDocumentsKeepAbsoluteIdsAndEnforceAncestry() throws Exception {

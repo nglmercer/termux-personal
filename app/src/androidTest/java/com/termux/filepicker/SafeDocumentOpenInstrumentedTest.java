@@ -28,6 +28,11 @@ public class SafeDocumentOpenInstrumentedTest {
                 assertEquals(3, fd.getStatSize());
             }
             reject(root, new File(link, "ñ.txt").getPath(), "w");
+            assertEquals(0, SafeDocumentOpen.create(root, new File(dir, "new").getPath(), false));
+            assertEquals(1, SafeDocumentOpen.create(root, new File(dir, "new").getPath(), false));
+            try { SafeDocumentOpen.create(root, new File(link, "escape").getPath(), false); fail(); }
+            catch (FileNotFoundException expected) { }
+            assertFalse(new File(dir, "escape").exists());
             reject(root, new File(root, "../outside").getPath(), "r");
             reject(root, dir.getPath(), "r");
             assertEquals(3, file.length());
@@ -35,7 +40,7 @@ public class SafeDocumentOpenInstrumentedTest {
                 assertEquals(0, fd.getStatSize());
             }
         } finally {
-            link.delete(); file.delete(); dir.delete(); root.delete();
+            link.delete(); new File(dir, "new").delete(); file.delete(); dir.delete(); root.delete();
         }
     }
 
