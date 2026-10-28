@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "managed-path.h"
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -10,6 +11,14 @@
 
 static void require(int condition, const char *message) {
     if (!condition) { perror(message); exit(1); }
+}
+static int descriptor_count(void) {
+    DIR *directory = opendir("/proc/self/fd");
+    require(directory != NULL, "open descriptor list");
+    int count = 0;
+    while (readdir(directory) != NULL) count++;
+    require(closedir(directory) == 0, "close descriptor list");
+    return count;
 }
 int main(void) {
     char temporary[] = "/tmp/termux-managed-path-XXXXXX";
@@ -39,6 +48,16 @@ int main(void) {
     require(termux_managed_open_relative(root, "", TERMUX_MANAGED_EXECUTABLE) == -1, "reject empty executable");
     require(termux_managed_open_relative(root, "project", TERMUX_MANAGED_EXECUTABLE) == -1, "reject non-regular executable");
     require(termux_managed_open_relative(root, "fifo", TERMUX_MANAGED_EXECUTABLE) == -1, "reject fifo without opening it");
+    int before = descriptor_count();
+    for (int i = 0; i < 1000; i++) {
+        require(termux_managed_open_relative(root, "project/../missing", TERMUX_MANAGED_EXECUTABLE) == -1,
+            "reject repeated invalid traversal");
+        require(termux_managed_open_relative(root, "link/secret", TERMUX_MANAGED_EXECUTABLE) == -1,
+            "reject repeated symlink traversal");
+        require(termux_managed_open_relative(root, "missing/entry", TERMUX_MANAGED_EXECUTABLE) == -1,
+            "reject repeated missing path");
+    }
+    require(descriptor_count() == before, "failed traversal leaks no descriptors");
     int pinned = termux_managed_open_relative(root, "program", TERMUX_MANAGED_EXECUTABLE);
     require(pinned >= 0 && (fcntl(pinned, F_GETFD) & FD_CLOEXEC), "open pinned executable");
     struct stat original, after_swap;
