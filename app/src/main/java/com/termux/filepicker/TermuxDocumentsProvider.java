@@ -90,8 +90,11 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
     public Cursor queryChildDocuments(String parentDocumentId, String[] projection, String sortOrder) throws FileNotFoundException {
         final MatrixCursor result = new MatrixCursor(projection != null ? projection : DEFAULT_DOCUMENT_PROJECTION);
         final File parent = getFileForDocId(parentDocumentId);
-        for (File file : parent.listFiles()) {
-            includeFile(result, null, file);
+        File[] children = parent.listFiles();
+        if (children == null) throw new FileNotFoundException("Cannot list directory");
+        for (File file : children) {
+            try { includeFile(result, null, getFileForDocId(file.getAbsolutePath())); }
+            catch (FileNotFoundException ignored) { /* Skip inaccessible or linked entries. */ }
         }
         return result;
     }
@@ -117,10 +120,13 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
 
     @Override
     public String createDocument(String parentDocumentId, String mimeType, String displayName) throws FileNotFoundException {
-        File newFile = new File(parentDocumentId, displayName);
+        File parent = getFileForDocId(parentDocumentId);
+        if (!parent.isDirectory() || !DocumentPathPolicy.validName(displayName))
+            throw new FileNotFoundException("Invalid document name");
+        File newFile = new File(parent, displayName);
         int noConflictId = 2;
         while (newFile.exists()) {
-            newFile = new File(parentDocumentId, displayName + " (" + noConflictId++ + ")");
+            newFile = new File(parent, displayName + " (" + noConflictId++ + ")");
         }
         try {
             boolean succeeded;
@@ -141,6 +147,7 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
     @Override
     public void deleteDocument(String documentId) throws FileNotFoundException {
         File file = getFileForDocId(documentId);
+        if (file.equals(BASE_DIR)) throw new FileNotFoundException("Cannot delete root");
         if (!file.delete()) {
             throw new FileNotFoundException("Failed to delete document with id " + documentId);
         }
@@ -165,19 +172,18 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
         pending.add(parent);
 
         final int MAX_SEARCH_RESULTS = 50;
-        while (!pending.isEmpty() && result.getCount() < MAX_SEARCH_RESULTS) {
+        int visited = 0;
+        while (!pending.isEmpty() && result.getCount() < MAX_SEARCH_RESULTS && visited++ < 10000) {
             final File file = pending.removeFirst();
             // Avoid directories outside the $HOME directory linked with symlinks (to avoid e.g. search
             // through the whole SD card).
             boolean isInsideHome;
-            try {
-                isInsideHome = file.getCanonicalPath().startsWith(TermuxConstants.TERMUX_HOME_DIR_PATH);
-            } catch (IOException e) {
-                isInsideHome = true;
-            }
+            try { getFileForDocId(file.getAbsolutePath()); isInsideHome = true; }
+            catch (FileNotFoundException e) { isInsideHome = false; }
             if (isInsideHome) {
                 if (file.isDirectory()) {
-                    Collections.addAll(pending, file.listFiles());
+                    File[] children = file.listFiles();
+                    if (children != null) Collections.addAll(pending, children);
                 } else {
                     if (file.getName().toLowerCase().contains(query)) {
                         includeFile(result, null, file);
@@ -191,7 +197,11 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
 
     @Override
     public boolean isChildDocument(String parentDocumentId, String documentId) {
-        return documentId.startsWith(parentDocumentId);
+        try {
+            String parent = getFileForDocId(parentDocumentId).getCanonicalPath();
+            String child = getFileForDocId(documentId).getCanonicalPath();
+            return child.startsWith(parent + File.separator);
+        } catch (IOException | RuntimeException e) { return false; }
     }
 
     /**
@@ -208,9 +218,7 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
      * Get the file given a document id (the reverse of {@link #getDocIdForFile(File)}).
      */
     private static File getFileForDocId(String docId) throws FileNotFoundException {
-        final File f = new File(docId);
-        if (!f.exists()) throw new FileNotFoundException(f.getAbsolutePath() + " not found");
-        return f;
+        return DocumentPathPolicy.existing(BASE_DIR, docId);
     }
 
     private static String getMimeType(File file) {

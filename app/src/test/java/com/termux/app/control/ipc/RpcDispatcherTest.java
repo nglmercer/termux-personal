@@ -74,7 +74,13 @@ public class RpcDispatcherTest extends TestCase {
         JsonObject response = object(send("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"session.write\",\"params\":{}}", EnumSet.of(ControlCore.Scope.SESSIONS_WRITE)));
         assertEquals(-32602, response.getAsJsonObject("error").get("code").getAsInt());
         JsonObject caps = object(send("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"system.capabilities\"}", Collections.emptySet()));
-        assertTrue(caps.getAsJsonObject("result").toString().contains("session.write"));
+        assertFalse(caps.getAsJsonObject("result").toString().contains("session.write"));
+        assertFalse(caps.getAsJsonObject("result").toString().contains("session.list"));
+        JsonObject readCaps = object(send("{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"system.capabilities\"}", EnumSet.of(ControlCore.Scope.SESSIONS_READ)));
+        String readMethods = readCaps.getAsJsonObject("result").toString();
+        assertTrue(readMethods.contains("session.list"));
+        for (String method : new String[]{"session.create", "session.write", "session.rename", "session.resize", "session.focus", "session.close", "session.snapshot"})
+            assertFalse(readMethods.contains(method));
         assertFalse(caps.getAsJsonObject("result").toString().contains("session.close"));
     }
 

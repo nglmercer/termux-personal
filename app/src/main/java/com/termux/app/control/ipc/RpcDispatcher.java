@@ -87,6 +87,11 @@ public final class RpcDispatcher {
             case "system.capabilities":
                 parameters(request.params);
                 List<String> methods = new ArrayList<>(mCore.capabilities());
+                if (scopes == null || !scopes.contains(ControlCore.Scope.SESSIONS_READ)) methods.remove("session.list");
+                if (scopes == null || !scopes.contains(ControlCore.Scope.SESSIONS_WRITE)) {
+                    methods.remove("session.create"); methods.remove("session.write");
+                    methods.remove("session.rename"); methods.remove("session.resize"); methods.remove("session.focus");
+                }
                 if (scopes == null || !scopes.contains(ControlCore.Scope.SESSIONS_WRITE) ||
                     !scopes.contains(ControlCore.Scope.SESSIONS_CLOSE)) methods.remove("session.close");
                 if (scopes == null || !scopes.contains(ControlCore.Scope.SESSIONS_OUTPUT)) methods.remove("session.snapshot");

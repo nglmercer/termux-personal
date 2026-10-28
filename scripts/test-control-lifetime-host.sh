@@ -8,4 +8,4 @@ app_classes="$project_dir/app/build/intermediates/javac/debug/compileDebugJavaWi
 out_dir="$project_dir/build/control-lifetime-host"
 mkdir -p "$out_dir/classes"
 javac -cp "$app_classes:$GSON_JAR" -d "$out_dir/classes" app/src/test/host/com/termux/app/control/ipc/HostLifetimeSocketSmoke.java
-python tools/termux-control/test-lifetime-host.py "$out_dir/classes:$app_classes:$GSON_JAR" "${TMPDIR:-/tmp}"
+python tools/termux-control/python/test-lifetime-host.py "$out_dir/classes:$app_classes:$GSON_JAR" "${TMPDIR:-/tmp}"

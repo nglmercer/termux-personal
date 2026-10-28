@@ -9,4 +9,4 @@ terminal_classes="$project_dir/terminal-emulator/build/intermediates/javac/debug
 out_dir="$project_dir/build/control-resume-host"
 mkdir -p "$out_dir/classes"
 javac -cp "$app_classes:$terminal_classes:$GSON_JAR" -d "$out_dir/classes" app/src/test/host/com/termux/app/control/ipc/HostResumeSocketSmoke.java
-python tools/termux-control/test-resume-host.py "$out_dir/classes:$app_classes:$terminal_classes:$GSON_JAR" "${TMPDIR:-/tmp}"
+python tools/termux-control/python/test-resume-host.py "$out_dir/classes:$app_classes:$terminal_classes:$GSON_JAR" "${TMPDIR:-/tmp}"
