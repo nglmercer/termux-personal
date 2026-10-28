@@ -46,3 +46,5 @@ The native prototype exposes TERM, KILL and INT through the owned pidfd only. It
 A worker-only wait helper distinguishes a normal exit code from termination by signal and reports duplicate reaping as an error. Its caller must ensure a single owner for waiting and preserve the pidfd independently for signaling; this helper does not make numeric PIDs an authorization mechanism.
 
 The app's ndk-build configuration now builds the internal primitives as `libtermux-managed-job.so` for arm64-v8a, armeabi-v7a, x86 and x86_64. `:app:externalNativeBuildDebug` and `:app:assembleDebug` succeeded on the Linux host with NDK 29; inspection of the universal debug APK found the library under all four ABI paths. An internal JNI ABI marker checks library loading, but does not probe kernel or seccomp support or enable managed jobs. Installation, loading and device execution remain unverified.
+
+`ManagedNativeInstrumentedTest` checks that the packaged library loads and reports its expected ABI marker. `:app:assembleDebugAndroidTest` succeeded on the host; the test has not been run on a device. It does not establish support for clone3, pidfd signals, close_range or execveat.
