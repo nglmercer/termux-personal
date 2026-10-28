@@ -12,9 +12,12 @@ export interface ByteTransport {
 export class UnixSocketTransport implements ByteTransport {
   private readonly iterator: AsyncIterator<Buffer>;
   private readonly socket: net.Socket;
+  private failure?: Error;
   private pending = Buffer.alloc(0);
   private constructor(socket: net.Socket) {
     this.socket = socket;
+    // Keep an error listener installed even between requests; idle timeouts must not crash the host.
+    socket.on("error", error => { this.failure = error; });
     this.iterator = socket[Symbol.asyncIterator]() as AsyncIterator<Buffer>;
   }
 
@@ -30,6 +33,7 @@ export class UnixSocketTransport implements ByteTransport {
 
   async writeFrame(bytes: Uint8Array): Promise<void> {
     if (!bytes.length || bytes.length > MAX_CHUNK) throw new ProtocolError("Invalid frame length");
+    if (this.socket.destroyed) throw this.failure ?? new Error("Connection closed");
     const header = Buffer.alloc(4); header.writeUInt32BE(bytes.length);
     await new Promise<void>((resolve, reject) => {
       this.socket.write(Buffer.concat([header, bytes]), (error) => error ? reject(error) : resolve());
