@@ -12,6 +12,7 @@
 #include <poll.h>
 #include <time.h>
 #include <limits.h>
+#include <sys/wait.h>
 
 #ifndef CLOSE_RANGE_CLOEXEC
 #define CLOSE_RANGE_CLOEXEC (1U << 2)
@@ -101,6 +102,18 @@ int termux_managed_signal(int pidfd, int signal_number) {
 #else
     errno = ENOSYS; return -1;
 #endif
+}
+
+int termux_managed_wait(pid_t pid, struct termux_managed_result *result) {
+    if (pid <= 0 || result == NULL) { errno = EINVAL; return -1; }
+    memset(result, 0, sizeof(*result));
+    int status;
+    pid_t waited;
+    do { waited = waitpid(pid, &status, 0); } while (waited < 0 && errno == EINTR);
+    if (waited < 0) return -1;
+    if (WIFEXITED(status)) { result->exited = 1; result->exit_code = WEXITSTATUS(status); return 0; }
+    if (WIFSIGNALED(status)) { result->signaled = 1; result->signal_number = WTERMSIG(status); return 0; }
+    errno = EPROTO; return -1;
 }
 
 void termux_managed_exec_child(int executable_fd, int cwd_fd, int error_fd,

@@ -42,3 +42,5 @@ The native prototype can now reserve four close-on-exec pipes and clean up parti
 The child now requests `close_range(CLOSE_RANGE_CLOEXEC)` before exec and fails closed if the syscall is unavailable or denied. A host test verifies that a deliberately inheritable unrelated descriptor is absent in the executed child. This adds another kernel and seccomp compatibility requirement; availability on supported Android devices remains unverified.
 
 The native prototype exposes TERM, KILL and INT through the owned pidfd only. Its host test signals a launched child and confirms that a later signal to the same handle fails after exit. Descriptor lifetime must be synchronized by the eventual coordinator; this helper does not implement the cancellation state machine or prove Android support.
+
+A worker-only wait helper distinguishes a normal exit code from termination by signal and reports duplicate reaping as an error. Its caller must ensure a single owner for waiting and preserve the pidfd independently for signaling; this helper does not make numeric PIDs an authorization mechanism.

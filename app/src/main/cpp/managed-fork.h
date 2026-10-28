@@ -32,6 +32,11 @@ int termux_managed_launch(int executable_fd, int cwd_fd, char *const argv[], cha
  * descriptor lifetime with this call; never pass a recycled descriptor. */
 int termux_managed_signal(int pidfd, int signal_number);
 
+/* Worker-only; call once for the still-owned, unreaped child. Exactly one of
+ * exited and signaled is true on success. No descriptor is closed here. */
+struct termux_managed_result { int exited, exit_code, signaled, signal_number; };
+int termux_managed_wait(pid_t pid, struct termux_managed_result *result);
+
 /* Child-only: wire three descriptors, fchdir and exec a pinned executable.
  * All supplied descriptors must be >= 3; error_fd must be distinct from the
  * other descriptors. Requires close_range(CLOEXEC); fails closed when absent.

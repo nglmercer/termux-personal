@@ -199,8 +199,11 @@ int main(void) {
     require(read(managed_child.stdout_read, launch_output, 5) == 5 && memcmp(launch_output, "hello", 5) == 0, "managed stdout");
     require(read(managed_child.stderr_read, launch_output, 5) == 5 && memcmp(launch_output, "error", 5) == 0, "managed stderr");
     close(managed_child.stdout_read); close(managed_child.stderr_read);
-    require(waitpid(managed_child.pid, &status, 0) == managed_child.pid && WIFEXITED(status) && WEXITSTATUS(status) == 9,
+    struct termux_managed_result result;
+    require(termux_managed_wait(managed_child.pid, &result) == 0 && result.exited && result.exit_code == 9 && !result.signaled,
         "managed exit status");
+    errno = 0;
+    require(termux_managed_wait(managed_child.pid, &result) == -1 && errno == ECHILD, "reject duplicate reap");
     close(managed_child.pidfd);
 
     shell = open("/bin/sh", O_PATH | O_CLOEXEC);
@@ -210,7 +213,7 @@ int main(void) {
     close(shell); close(cwd);
     require(termux_managed_read_exec_status(managed_child.status_read, 2000, &exec_error) == 0, "cancellable exec status");
     require(termux_managed_signal(managed_child.pidfd, SIGTERM) == 0, "signal launched child handle");
-    require(waitpid(managed_child.pid, &status, 0) == managed_child.pid && WIFSIGNALED(status) && WTERMSIG(status) == SIGTERM,
+    require(termux_managed_wait(managed_child.pid, &result) == 0 && result.signaled && result.signal_number == SIGTERM && !result.exited,
         "observe signalled child");
     errno = 0;
     require(termux_managed_signal(managed_child.pidfd, SIGKILL) == -1 && errno == ESRCH, "reject post-exit signal");
