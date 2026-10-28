@@ -59,6 +59,8 @@ int main(void) {
 
     int pipe_fds[2];
     require(pipe2(pipe_fds, O_CLOEXEC) == 0, "create exec pipe");
+    int errors[2];
+    require(pipe2(errors, O_CLOEXEC) == 0, "create exec error pipe");
     char temporary[] = "/tmp/termux-managed-exec-XXXXXX";
     require(mkdtemp(temporary) != NULL, "create executable directory");
     int directory = open(temporary, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
@@ -87,18 +89,18 @@ int main(void) {
     require(child >= 0, "exec clone3");
     if (child == 0) {
         close(pipe_fds[0]);
+        close(errors[0]);
         if (dup2(pipe_fds[1], STDOUT_FILENO) < 0) _exit(72);
         close(pipe_fds[1]);
         char *const argv[] = {"/bin/echo", "exact argument", NULL};
-#if defined(__NR_execveat)
         char *const environment[] = {NULL};
-        syscall(__NR_execveat, executable, "", argv, environment, AT_EMPTY_PATH);
-#else
-        errno = ENOSYS;
-#endif
-        _exit(73);
+        termux_managed_exec_child(executable, directory, errors[1], argv, environment);
     }
     close(executable);
+    close(errors[1]);
+    int exec_error;
+    require(read(errors[0], &exec_error, sizeof(exec_error)) == 0, "exec succeeded without error");
+    close(errors[0]);
     close(pipe_fds[1]);
     char output[32];
     size_t count = 0;
@@ -115,6 +117,22 @@ int main(void) {
     require(close(handle) == 0, "close exec pidfd");
     require(unlinkat(directory, "program", 0) == 0 && close(directory) == 0 && rmdir(temporary) == 0,
         "remove executable test directory");
+
+    require(pipe2(errors, O_CLOEXEC) == 0, "create failure pipe");
+    child = termux_managed_fork_pidfd(&handle);
+    require(child >= 0, "failure clone3");
+    if (child == 0) {
+        close(errors[0]);
+        char *const argv[] = {"missing", NULL};
+        char *const environment[] = {NULL};
+        termux_managed_exec_child(-1, -1, errors[1], argv, environment);
+    }
+    close(errors[1]);
+    require(read(errors[0], &exec_error, sizeof(exec_error)) == sizeof(exec_error) && exec_error == EBADF,
+        "child reports cwd failure");
+    close(errors[0]);
+    require(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 127, "failure exit");
+    require(close(handle) == 0, "close failure pidfd");
 
     for (int i = 0; i < 100; i++) {
         handle = -1;

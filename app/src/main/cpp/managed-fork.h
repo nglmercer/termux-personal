@@ -13,4 +13,9 @@
  */
 pid_t termux_managed_fork_pidfd(int *pidfd);
 
+/* Child-only: fchdir and exec a pinned executable. On failure write errno to an
+ * already-open error pipe and _exit(127). The error pipe must be CLOEXEC. */
+void termux_managed_exec_child(int executable_fd, int cwd_fd, int error_fd,
+                               char *const argv[], char *const envp[]);
+
 #endif
