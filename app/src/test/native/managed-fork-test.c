@@ -184,6 +184,26 @@ int main(void) {
     require(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0, "stream child exit");
     close(handle);
 
+    shell = open("/bin/sh", O_PATH | O_CLOEXEC);
+    cwd = open("/tmp", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    require(shell >= 3 && cwd >= 3, "open launcher descriptors");
+    char *const launch_argv[] = {"sh", "-c", "read x; printf '%s' \"$x\"; printf error >&2; exit 9", NULL};
+    char *const launch_env[] = {NULL};
+    struct termux_managed_child managed_child;
+    require(termux_managed_launch(shell, cwd, launch_argv, launch_env, &managed_child) == 0, "managed launch");
+    close(shell); close(cwd);
+    require(termux_managed_read_exec_status(managed_child.status_read, 2000, &exec_error) == 0, "managed exec status");
+    close(managed_child.status_read);
+    require(write(managed_child.stdin_write, "hello\n", 6) == 6, "managed stdin");
+    close(managed_child.stdin_write);
+    char launch_output[6] = {0};
+    require(read(managed_child.stdout_read, launch_output, 5) == 5 && memcmp(launch_output, "hello", 5) == 0, "managed stdout");
+    require(read(managed_child.stderr_read, launch_output, 5) == 5 && memcmp(launch_output, "error", 5) == 0, "managed stderr");
+    close(managed_child.stdout_read); close(managed_child.stderr_read);
+    require(waitpid(managed_child.pid, &status, 0) == managed_child.pid && WIFEXITED(status) && WEXITSTATUS(status) == 9,
+        "managed exit status");
+    close(managed_child.pidfd);
+
     require(pipe2(errors, O_CLOEXEC) == 0, "create timeout pipe");
     errno = 0;
     require(termux_managed_read_exec_status(errors[0], 20, &exec_error) == -1 && errno == ETIMEDOUT, "bounded status wait");

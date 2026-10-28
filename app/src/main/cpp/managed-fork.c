@@ -62,6 +62,31 @@ pid_t termux_managed_fork_pidfd(int *pidfd) {
 #endif
 }
 
+int termux_managed_launch(int executable_fd, int cwd_fd, char *const argv[], char *const envp[],
+                          struct termux_managed_child *child) {
+    if (child == NULL || executable_fd < 3 || cwd_fd < 3 || argv == NULL || argv[0] == NULL || envp == NULL) {
+        errno = EINVAL; return -1;
+    }
+    child->pid = -1;
+    child->pidfd = child->stdin_write = child->stdout_read = child->stderr_read = child->status_read = -1;
+    struct termux_managed_pipes pipes;
+    if (termux_managed_pipes_open(&pipes) < 0) return -1;
+    int pidfd;
+    pid_t pid = termux_managed_fork_pidfd(&pidfd);
+    if (pid < 0) {
+        int saved = errno; termux_managed_pipes_close(&pipes); errno = saved; return -1;
+    }
+    if (pid == 0) {
+        close(pipes.input[1]); close(pipes.output[0]); close(pipes.error[0]); close(pipes.status[0]);
+        termux_managed_exec_child(executable_fd, cwd_fd, pipes.status[1], pipes.input[0], pipes.output[1], pipes.error[1], argv, envp);
+    }
+    close(pipes.input[0]); close(pipes.output[1]); close(pipes.error[1]); close(pipes.status[1]);
+    child->pid = pid; child->pidfd = pidfd;
+    child->stdin_write = pipes.input[1]; child->stdout_read = pipes.output[0];
+    child->stderr_read = pipes.error[0]; child->status_read = pipes.status[0];
+    return 0;
+}
+
 void termux_managed_exec_child(int executable_fd, int cwd_fd, int error_fd,
                                int stdin_fd, int stdout_fd, int stderr_fd,
                                char *const argv[], char *const envp[]) {

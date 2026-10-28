@@ -18,6 +18,16 @@ struct termux_managed_pipes { int input[2], output[2], error[2], status[2]; };
 int termux_managed_pipes_open(struct termux_managed_pipes *pipes);
 void termux_managed_pipes_close(struct termux_managed_pipes *pipes);
 
+/* On success caller owns pidfd and the four retained pipe ends, and must reap
+ * pid exactly once. pid is for waitpid only, never authority for signalling.
+ * On failure no child exists and no descriptors are retained. */
+struct termux_managed_child {
+    pid_t pid;
+    int pidfd, stdin_write, stdout_read, stderr_read, status_read;
+};
+int termux_managed_launch(int executable_fd, int cwd_fd, char *const argv[], char *const envp[],
+                          struct termux_managed_child *child);
+
 /* Child-only: wire three descriptors, fchdir and exec a pinned executable.
  * All supplied descriptors must be >= 3 and CLOEXEC; error_fd must be distinct
  * from the other descriptors. On failure report errno and _exit(127). */
