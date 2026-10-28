@@ -31,6 +31,7 @@ Java_com_termux_app_control_jobs_ManagedNative_nativeProbePidfd(JNIEnv *env, jcl
     pid_t waited;
     do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
     if (waited < 0 && error == 0) error = errno;
+    if (waited > 0 && (!WIFEXITED(status) || WEXITSTATUS(status) != 0) && error == 0) error = EIO;
     close(fd);
     return error ? -error : 0;
 }

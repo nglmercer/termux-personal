@@ -1,6 +1,9 @@
 package com.termux.app.control.jobs;
 
 import androidx.test.ext.junit.runners.AndroidJUnit4;
+import androidx.test.platform.app.InstrumentationRegistry;
+import android.os.Build;
+import android.os.Bundle;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import static org.junit.Assert.assertTrue;
@@ -19,5 +22,10 @@ public class ManagedNativeInstrumentedTest {
         worker.start(); worker.join(5000);
         assertTrue("Kernel probe did not finish", !worker.isAlive());
         assertTrue("Probe must return success or negative errno", result.get() <= 0);
+        Bundle evidence = new Bundle();
+        evidence.putInt("pidfd_probe_result", result.get());
+        evidence.putInt("android_api", Build.VERSION.SDK_INT);
+        evidence.putString("supported_abis", android.text.TextUtils.join(",", Build.SUPPORTED_ABIS));
+        InstrumentationRegistry.getInstrumentation().sendStatus(0, evidence);
     }
 }
