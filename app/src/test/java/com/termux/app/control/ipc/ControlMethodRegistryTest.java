@@ -35,4 +35,11 @@ public class ControlMethodRegistryTest {
             }
         }
     }
+
+    @Test public void binaryRequestRoutesMatchRegistry() {
+        Set<String> requests = new HashSet<>();
+        for (ControlMethodRegistry.Descriptor descriptor : ControlMethodRegistry.all())
+            if ("request".equals(descriptor.binary)) requests.add(descriptor.name);
+        assertEquals(requests, BinaryPayloadRouter.requestMethods());
+    }
 }

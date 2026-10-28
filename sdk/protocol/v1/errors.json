@@ -1,0 +1,15 @@
+{
+  "protocolVersion": 1,
+  "legacy": [
+    {"code": -32700, "message": "Parse error"},
+    {"code": -32600, "message": "Invalid Request"},
+    {"code": -32601, "message": "Method not found"},
+    {"code": -32602, "message": "Invalid params"},
+    {"code": -32603, "message": "Internal error"},
+    {"code": -32000, "message": "Response limit exceeded"},
+    {"code": -32001, "message": "Application error name"},
+    {"code": -32002, "message": "Dispatch failure name"}
+  ],
+  "reservedDomainCodes": ["DENIED", "NOT_FOUND", "INVALID_REQUEST", "CONFLICT", "UNAVAILABLE", "UNSUPPORTED", "STALE_REVISION", "GAP", "LIMIT_REACHED", "BACKPRESSURE", "TIMED_OUT", "OUTCOME_UNKNOWN", "PERMISSION_REQUIRED", "RESOURCE_LIMITED"],
+  "notes": "Reserved domain names are not a claim that new domain APIs exist. OUTCOME_UNKNOWN may have executed and must not be blindly retried. Legacy errors do not gain data fields."
+}

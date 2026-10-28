@@ -193,7 +193,7 @@ public final class RpcDispatcher {
     }
 
     /** Metadata and authorization are checked before reading a separate binary frame. */
-    BinaryPreparation prepareBinary(RpcRequestParser.Request request, Set<ControlCore.Scope> scopes) {
+    BinaryPreparation prepareSessionWrite(RpcRequestParser.Request request, Set<ControlCore.Scope> scopes) {
         if (!mNegotiation.isReady()) return BinaryPreparation.rejected(request, -32600, "Invalid Request");
         if (scopes == null || !scopes.contains(ControlCore.Scope.SESSIONS_WRITE))
             return BinaryPreparation.rejected(request, -32001, "DENIED");

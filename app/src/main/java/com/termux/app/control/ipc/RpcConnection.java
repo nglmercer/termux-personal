@@ -65,8 +65,8 @@ final class RpcConnection {
                 return;
             }
             byte[] binary = null;
-            if ("session.write".equals(request.method)) {
-                RpcDispatcher.BinaryPreparation preparation = dispatcher.prepareBinary(request, mScopes);
+            if (BinaryPayloadRouter.expectsRequestFrame(request.method)) {
+                RpcDispatcher.BinaryPreparation preparation = BinaryPayloadRouter.prepare(dispatcher, request, mScopes);
                 if (preparation.length == 0) {
                     if (preparation.error != null) frames.write(output, preparation.error);
                     return;

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:termux-personal:control:v1:response",
+  "title": "Termux control v1 JSON-RPC response",
+  "type": "object",
+  "required": ["jsonrpc", "id"],
+  "properties": {
+    "jsonrpc": {"const": "2.0"},
+    "id": {"type": ["string", "number", "null"]},
+    "result": {},
+    "error": {
+      "type": "object", "required": ["code", "message"],
+      "properties": {"code": {"type": "integer"}, "message": {"type": "string"}, "data": {}},
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [{"required": ["result"], "not": {"required": ["error"]}}, {"required": ["error"], "not": {"required": ["result"]}}],
+  "additionalProperties": false
+}

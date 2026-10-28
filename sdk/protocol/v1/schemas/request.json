@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:termux-personal:control:v1:request",
+  "title": "Termux control v1 JSON-RPC request",
+  "type": "object",
+  "required": ["jsonrpc", "method"],
+  "properties": {
+    "jsonrpc": {"const": "2.0"},
+    "id": {"type": ["string", "number", "null"]},
+    "method": {"type": "string", "minLength": 1, "maxLength": 128},
+    "params": {"type": ["object", "array"]}
+  },
+  "description": "Single request only. Transport limits and method-specific validation also apply."
+}
