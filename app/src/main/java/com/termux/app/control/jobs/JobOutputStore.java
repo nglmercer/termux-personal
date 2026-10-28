@@ -72,6 +72,18 @@ public final class JobOutputStore implements AutoCloseable {
             return buffer(stream).read(offset, limit);
         }
 
+        /** Couple the finished flag and end offset so a caller cannot miss a final append. */
+        public synchronized Read readSnapshot(Stream stream, long offset, int limit) {
+            if (mClosed) throw new IllegalStateException("Output removed");
+            return new Read(buffer(stream).read(offset, limit), mFinished);
+        }
+
+        /** Offset metadata is separate from permission to read retained output. */
+        public synchronized Offsets offsets() {
+            if (mClosed) throw new IllegalStateException("Output removed");
+            return new Offsets(mStdout.endOffset(), mStderr.endOffset());
+        }
+
         /** Freeze writes only after both stream readers have finished. */
         public synchronized void finish() { if (!mClosed) mFinished = true; }
         public synchronized boolean isFinished() { return mFinished; }
@@ -86,5 +98,17 @@ public final class JobOutputStore implements AutoCloseable {
             mClosed = true;
             mStdout.close(); mStderr.close();
         }
+    }
+
+    public static final class Offsets {
+        public final long stdoutEndOffset, stderrEndOffset;
+        private Offsets(long stdoutEndOffset, long stderrEndOffset) {
+            this.stdoutEndOffset = stdoutEndOffset; this.stderrEndOffset = stderrEndOffset;
+        }
+    }
+
+    public static final class Read {
+        public final OutputReplayBuffer.ReadResult data; public final boolean finished;
+        private Read(OutputReplayBuffer.ReadResult data, boolean finished) { this.data = data; this.finished = finished; }
     }
 }

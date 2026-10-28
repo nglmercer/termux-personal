@@ -79,6 +79,11 @@ public final class JobRegistry implements AutoCloseable {
         return entry != null && entry.mRecord.snapshot().authorizationEpoch == authorizationEpoch ? entry : null;
     }
 
+    /** Internal views still require the current coordinator's permission check. */
+    synchronized Entry getRetained(String id) { return mEntries.get(id); }
+
+    synchronized List<Entry> retainedEntries() { return new ArrayList<>(mEntries.values()); }
+
     public synchronized List<JobRecord.Snapshot> list(long authorizationEpoch) {
         List<JobRecord.Snapshot> records = new ArrayList<>();
         for (Entry entry : mEntries.values()) {

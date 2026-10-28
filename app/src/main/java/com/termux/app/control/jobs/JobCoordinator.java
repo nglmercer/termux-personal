@@ -1,8 +1,12 @@
 package com.termux.app.control.jobs;
 
 import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import com.termux.terminal.OutputReplayBuffer;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
@@ -13,6 +17,7 @@ import java.util.concurrent.TimeUnit;
 public final class JobCoordinator {
     public enum StartStatus { ACCEPTED, REPLAY, CONFLICT, DENIED, LIMIT_REACHED, UNSUPPORTED, UNAVAILABLE }
     public enum CancelStatus { ACCEPTED, DENIED, NOT_FOUND, FINISHED, ALREADY_REQUESTED, UNSUPPORTED }
+    public enum ReadStatus { OK, DENIED, NOT_FOUND, INVALID_REQUEST, UNAVAILABLE }
 
     /** Implementations must check server-derived authority and resolve executable and cwd on this worker. */
     public interface Policy { Resolution authorizeAndResolve(JobSpec spec, long authorizationEpoch); }
@@ -24,6 +29,27 @@ public final class JobCoordinator {
         public final StartStatus status;
         public final JobRecord.Snapshot job;
         private StartResult(StartStatus status, JobRecord.Snapshot job) { this.status = status; this.job = job; }
+    }
+    public static final class JobView {
+        public final JobRecord.Snapshot job;
+        public final JobOutputStore.Offsets output;
+        private JobView(JobRegistry.Entry entry) { job = entry.record().snapshot(); output = entry.output().offsets(); }
+    }
+    public static final class GetResult {
+        public final ReadStatus status; public final JobView job;
+        private GetResult(ReadStatus status, JobView job) { this.status = status; this.job = job; }
+    }
+    public static final class ListResult {
+        public final ReadStatus status; public final List<JobView> jobs; public final Integer nextCursor;
+        private ListResult(ReadStatus status, List<JobView> jobs, Integer nextCursor) {
+            this.status = status; this.jobs = jobs; this.nextCursor = nextCursor;
+        }
+    }
+    public static final class OutputResult {
+        public final ReadStatus status; public final OutputReplayBuffer.ReadResult output; public final boolean finished;
+        private OutputResult(ReadStatus status, OutputReplayBuffer.ReadResult output, boolean finished) {
+            this.status = status; this.output = output; this.finished = finished;
+        }
     }
 
     private final JobRegistry mRegistry;
@@ -105,6 +131,50 @@ public final class JobCoordinator {
             }
         }
     }
+
+    /** Current read consent permits metadata for retained jobs, including earlier consent epochs. */
+    public synchronized GetResult get(String id, JobAuthority.Lease lease) {
+        if (!mAuthority.allows(lease, JobAuthority.Permission.READ)) return new GetResult(ReadStatus.DENIED, null);
+        if (mClosed) return new GetResult(ReadStatus.UNAVAILABLE, null);
+        if (!validId(id)) return new GetResult(ReadStatus.INVALID_REQUEST, null);
+        JobRegistry.Entry entry = mRegistry.getRetained(id);
+        return entry == null ? new GetResult(ReadStatus.NOT_FOUND, null) : new GetResult(ReadStatus.OK, new JobView(entry));
+    }
+
+    /** Stable insertion-order page; retained records are never evicted during this registry lifetime. */
+    public synchronized ListResult list(JobAuthority.Lease lease, int cursor, int limit, String workspaceId) {
+        if (!mAuthority.allows(lease, JobAuthority.Permission.READ)) return listError(ReadStatus.DENIED);
+        if (mClosed) return listError(ReadStatus.UNAVAILABLE);
+        if (cursor < 0 || limit < 1 || limit > JobOutputStore.DEFAULT_RECORD_LIMIT ||
+            (workspaceId != null && (workspaceId.isEmpty() || workspaceId.length() > 64))) return listError(ReadStatus.INVALID_REQUEST);
+        List<JobView> matches = new ArrayList<>();
+        for (JobRegistry.Entry entry : mRegistry.retainedEntries()) {
+            JobRecord.Snapshot snapshot = entry.record().snapshot();
+            if (workspaceId == null || workspaceId.equals(snapshot.workspaceId)) matches.add(new JobView(entry));
+        }
+        if (cursor > matches.size()) return listError(ReadStatus.INVALID_REQUEST);
+        int end = Math.min(matches.size(), cursor + limit);
+        return new ListResult(ReadStatus.OK, Collections.unmodifiableList(new ArrayList<>(matches.subList(cursor, end))),
+            end < matches.size() ? end : null);
+    }
+
+    /** Output requires its own consent; it is independent of metadata read permission. */
+    public synchronized OutputResult readOutput(String id, JobAuthority.Lease lease, JobOutputStore.Stream stream, long offset, int limit) {
+        if (!mAuthority.allows(lease, JobAuthority.Permission.OUTPUT)) return outputError(ReadStatus.DENIED);
+        if (mClosed) return outputError(ReadStatus.UNAVAILABLE);
+        if (!validId(id) || stream == null || offset < 0 || limit < 1 || limit > OutputReplayBuffer.MAX_READ)
+            return outputError(ReadStatus.INVALID_REQUEST);
+        JobRegistry.Entry entry = mRegistry.getRetained(id);
+        if (entry == null) return outputError(ReadStatus.NOT_FOUND);
+        try {
+            JobOutputStore.Read read = entry.output().readSnapshot(stream, offset, limit);
+            return new OutputResult(ReadStatus.OK, read.data, read.finished);
+        } catch (IllegalArgumentException e) { return outputError(ReadStatus.INVALID_REQUEST); }
+    }
+
+    private static boolean validId(String id) { return id != null && !id.isEmpty() && id.length() <= 128; }
+    private static ListResult listError(ReadStatus status) { return new ListResult(status, Collections.emptyList(), null); }
+    private static OutputResult outputError(ReadStatus status) { return new OutputResult(status, null, false); }
 
     /** Stop admission and abandon only queued work. Live children are never forgotten or signalled by PID. */
     public synchronized void stopAccepting() {

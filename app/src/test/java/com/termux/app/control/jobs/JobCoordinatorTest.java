@@ -123,6 +123,67 @@ public class JobCoordinatorTest {
         } finally { release.countDown(); coordinator.stopAccepting(); closeEventually(coordinator); }
     }
 
+    @Test public void metadataAndOutputUseIndependentCurrentPermissionsAndReportGaps() throws Exception {
+        JobRegistry registry = registry(); JobAuthority authority = new JobAuthority();
+        JobAuthority.Lease execute = authority.grant(EnumSet.of(JobAuthority.Permission.EXECUTE));
+        CountDownLatch launched = new CountDownLatch(1), release = new CountDownLatch(1);
+        AppShellJobAdapter adapter = new AppShellJobAdapter((job, exe, cwd, capture, callback) -> {
+            launched.countDown(); await(release); capture.discardBeforeLaunch(); callback.finished(0, false); return new FakeProcess();
+        });
+        JobCoordinator coordinator = new JobCoordinator(registry, adapter,
+            (job, epoch) -> new JobCoordinator.Resolution("/bin/echo", "/home"), authority);
+        try {
+            JobCoordinator.StartResult started = coordinator.start(spec("run", 0), execute);
+            assertTrue(launched.await(2, TimeUnit.SECONDS));
+            JobRegistry.Entry entry = registry.get(started.job.id, execute.epoch());
+            byte[] bytes = new byte[24]; for (int i = 0; i < bytes.length; i++) bytes[i] = (byte) i;
+            assertTrue(entry.output().append(JobOutputStore.Stream.STDOUT, bytes, 0, bytes.length));
+
+            JobAuthority.Lease metadata = authority.grant(EnumSet.of(JobAuthority.Permission.READ));
+            JobCoordinator.GetResult info = coordinator.get(started.job.id, metadata);
+            assertEquals(JobCoordinator.ReadStatus.OK, info.status);
+            assertEquals(24, info.job.output.stdoutEndOffset);
+            assertEquals(JobCoordinator.ReadStatus.DENIED, coordinator.readOutput(started.job.id, metadata, JobOutputStore.Stream.STDOUT, 0, 16).status);
+            assertEquals(JobCoordinator.ReadStatus.DENIED, coordinator.get(started.job.id, execute).status);
+            assertEquals(1, coordinator.list(metadata, 0, 1, null).jobs.size());
+            assertEquals(JobCoordinator.ReadStatus.INVALID_REQUEST, coordinator.list(metadata, 0, 33, null).status);
+
+            JobAuthority.Lease output = authority.grant(EnumSet.of(JobAuthority.Permission.OUTPUT));
+            assertEquals(JobCoordinator.ReadStatus.DENIED, coordinator.get(started.job.id, output).status);
+            JobCoordinator.OutputResult chunk = coordinator.readOutput(started.job.id, output, JobOutputStore.Stream.STDOUT, 0, 16);
+            assertEquals(JobCoordinator.ReadStatus.OK, chunk.status);
+            assertTrue(chunk.output.gap); assertEquals(8, chunk.output.offset); assertEquals(24, chunk.output.nextOffset);
+            assertEquals((byte) 8, chunk.output.data[0]); assertFalse(chunk.finished);
+            assertEquals(JobCoordinator.ReadStatus.INVALID_REQUEST, coordinator.readOutput(started.job.id, output, JobOutputStore.Stream.STDOUT, 25, 16).status);
+            assertEquals(JobCoordinator.ReadStatus.INVALID_REQUEST, coordinator.readOutput(started.job.id, output, JobOutputStore.Stream.STDOUT, 0, 65537).status);
+            release.countDown(); waitForTerminal(entry.record());
+            JobCoordinator.OutputResult finalRead = coordinator.readOutput(started.job.id, output, JobOutputStore.Stream.STDOUT, 24, 16);
+            assertTrue(finalRead.finished); assertEquals(24, finalRead.output.endOffset); assertEquals(0, finalRead.output.data.length);
+        } finally { release.countDown(); coordinator.stopAccepting(); closeEventually(coordinator); }
+    }
+
+    @Test public void listPaginatesRetainedRecordsInAdmissionOrder() throws Exception {
+        JobRegistry registry = registry(); JobAuthority authority = new JobAuthority();
+        JobAuthority.Lease lease = authority.grant(EnumSet.of(JobAuthority.Permission.EXECUTE, JobAuthority.Permission.READ));
+        AppShellJobAdapter adapter = new AppShellJobAdapter((job, exe, cwd, capture, callback) -> {
+            capture.discardBeforeLaunch(); callback.finished(0, false); return new FakeProcess();
+        });
+        JobCoordinator coordinator = new JobCoordinator(registry, adapter,
+            (job, epoch) -> new JobCoordinator.Resolution("/bin/echo", "/home"), authority);
+        try {
+            JobCoordinator.StartResult first = coordinator.start(spec("one", 0), lease);
+            waitForTerminal(registry.get(first.job.id, lease.epoch()).record());
+            JobCoordinator.StartResult second = coordinator.start(spec("two", 0), lease);
+            waitForTerminal(registry.get(second.job.id, lease.epoch()).record());
+            JobCoordinator.ListResult page = coordinator.list(lease, 0, 1, null);
+            assertEquals(first.job.id, page.jobs.get(0).job.id); assertEquals(Integer.valueOf(1), page.nextCursor);
+            JobCoordinator.ListResult next = coordinator.list(lease, page.nextCursor, 1, null);
+            assertEquals(second.job.id, next.jobs.get(0).job.id); assertNull(next.nextCursor);
+            assertTrue(coordinator.list(lease, 0, 1, "different-workspace").jobs.isEmpty());
+            assertEquals(JobCoordinator.ReadStatus.INVALID_REQUEST, coordinator.list(lease, 3, 1, null).status);
+        } finally { coordinator.stopAccepting(); closeEventually(coordinator); }
+    }
+
     private static void waitForTerminal(JobRecord record) throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
         while (!JobRecord.isTerminal(record.snapshot().state) && System.nanoTime() < deadline) Thread.yield();

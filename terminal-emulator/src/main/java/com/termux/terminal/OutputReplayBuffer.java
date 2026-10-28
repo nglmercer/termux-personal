@@ -44,6 +44,12 @@ public final class OutputReplayBuffer {
         }
     }
 
+    /** Current absolute end offset without exposing any retained bytes. */
+    public synchronized long endOffset() {
+        if (!mOpen) throw new IllegalStateException("Buffer closed");
+        return mEnd;
+    }
+
     /** Return up to limit bytes from an absolute offset; gap means older data was overwritten. */
     public synchronized ReadResult read(long offset, int limit) {
         if (!mOpen) throw new IllegalStateException("Buffer closed");
