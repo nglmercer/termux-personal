@@ -513,7 +513,7 @@ static int attach_loop(int *fd, const char *id, const char *path, const char *to
 }
 
 static void usage(void) {
-    fprintf(stderr, "Usage: termux-control [--socket PATH] [--resume] capabilities|list|create COLS ROWS [NAME]|rename ID NAME|resize ID COLS ROWS|close ID|write ID < FILE|follow ID|attach ID\n");
+    fprintf(stderr, "Usage: termux-control [--socket PATH] [--resume] capabilities|list|create COLS ROWS [NAME]|rename ID NAME|resize ID COLS ROWS|focus ID|snapshot ID|close ID|write ID < FILE|follow ID|attach ID\n");
 }
 int main(int argc, char **argv) {
     const char *path = getenv("TERMUX_CONTROL_SOCKET"); char default_path[sizeof(((struct sockaddr_un *)0)->sun_path)];
@@ -537,6 +537,8 @@ int main(int argc, char **argv) {
     else if (!strcmp(cmd, "capabilities") && count == 0) method = "system.capabilities";
     else if (!strcmp(cmd, "create") && (count == 2 || count == 3) && number(argv[i], 2, 500) && number(argv[i + 1], 2, 250)) method = "session.create";
     else if (!strcmp(cmd, "rename") && count == 2) method = "session.rename";
+    else if (!strcmp(cmd, "focus") && count == 1) method = "session.focus";
+    else if (!strcmp(cmd, "snapshot") && count == 1) method = "session.snapshot";
     else if (!strcmp(cmd, "resize") && count == 3 && number(argv[i + 1], 2, 500) && number(argv[i + 2], 2, 250)) method = "session.resize";
     else if (!strcmp(cmd, "close") && count == 1) method = "session.close";
     else if (!strcmp(cmd, "write") && count == 1) method = "session.write";
@@ -553,7 +555,7 @@ int main(int argc, char **argv) {
         }
     }
     if (append(req, sizeof(req), &used, "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":") || quoted(req, sizeof(req), &used, method) || append(req, sizeof(req), &used, ",\"params\":{")) goto too_long;
-    if (!strcmp(cmd, "rename") || !strcmp(cmd, "resize") || !strcmp(cmd, "close") || !strcmp(cmd, "write") || !strcmp(cmd, "follow") || !strcmp(cmd, "attach")) {
+    if (!strcmp(cmd, "rename") || !strcmp(cmd, "resize") || !strcmp(cmd, "close") || !strcmp(cmd, "write") || !strcmp(cmd, "follow") || !strcmp(cmd, "attach") || !strcmp(cmd, "focus") || !strcmp(cmd, "snapshot")) {
         if (append(req, sizeof(req), &used, "\"id\":") || quoted(req, sizeof(req), &used, argv[i])) goto too_long;
     }
     if (!strcmp(cmd, "write")) {

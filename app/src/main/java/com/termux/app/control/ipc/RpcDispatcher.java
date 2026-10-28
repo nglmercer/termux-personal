@@ -89,6 +89,7 @@ public final class RpcDispatcher {
                 List<String> methods = new ArrayList<>(mCore.capabilities());
                 if (scopes == null || !scopes.contains(ControlCore.Scope.SESSIONS_WRITE) ||
                     !scopes.contains(ControlCore.Scope.SESSIONS_CLOSE)) methods.remove("session.close");
+                if (scopes == null || !scopes.contains(ControlCore.Scope.SESSIONS_OUTPUT)) methods.remove("session.snapshot");
                 if (mOutput != null && scopes != null && scopes.contains(ControlCore.Scope.SESSIONS_OUTPUT)) {
                     methods.add("session.output.subscribe"); methods.add("session.output.read"); methods.add("session.output.unsubscribe");
                     if (scopes.contains(ControlCore.Scope.SESSIONS_OUTPUT_RESUME)) methods.add("session.output.resume");
@@ -118,6 +119,15 @@ public final class RpcDispatcher {
                 Map<?, ?> p = parameters(request.params, "id", "name");
                 mCore.renameSession(scopes, string(p, "id"), string(p, "name"));
                 return Collections.singletonMap("ok", true);
+            }
+            case "session.focus": {
+                Map<?, ?> p = parameters(request.params, "id");
+                mCore.focusSession(scopes, string(p, "id"));
+                return Collections.singletonMap("ok", true);
+            }
+            case "session.snapshot": {
+                Map<?, ?> p = parameters(request.params, "id");
+                return Collections.singletonMap("text", mCore.snapshotSession(scopes, string(p, "id")));
             }
             case "session.resize": {
                 Map<?, ?> p = parameters(request.params, "id", "columns", "rows", "cellWidth", "cellHeight");

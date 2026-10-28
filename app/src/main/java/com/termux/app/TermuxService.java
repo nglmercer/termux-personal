@@ -1047,6 +1047,15 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
             && mTermuxTerminalSessionActivityClient.isSessionVisible(session);
     }
 
+    /** Select a session without bringing the activity to the foreground. */
+    public void focusSessionForControl(TerminalSession session) {
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper() || !mControlAvailable)
+            throw new IllegalStateException("Control service unavailable on this thread");
+        setCurrentStoredTerminalSession(session);
+        if (mTermuxTerminalSessionActivityClient != null)
+            mTermuxTerminalSessionActivityClient.setCurrentSession(session);
+    }
+
     /** Rename an existing session on the main thread and refresh the session list. */
     public boolean renameSessionForControl(String id, String name) {
         if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper() || !mControlAvailable)

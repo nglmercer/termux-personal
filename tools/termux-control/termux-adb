@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Run a Termux shell or the local control client through a debug ADB connection."""
+"""Control a debuggable Termux installation through an authorized ADB device."""
 import argparse
+import base64
+import json
 import shlex
 import subprocess
 import sys
@@ -8,10 +10,19 @@ import sys
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('-s', '--serial', help='ADB device serial')
 sub = parser.add_subparsers(dest='mode', required=True)
-sub.add_parser('shell', help='interactive Termux shell')
-run = sub.add_parser('run', help='run a shell script; read stdin if SCRIPT is omitted')
-run.add_argument('script', nargs='?')
-ipc = sub.add_parser('ipc', help='run an installed termux-control client')
+sub.add_parser('shell', help='independent interactive Termux shell')
+run = sub.add_parser('run', help='send a script to a shared Termux session')
+run.add_argument('--session', help='reuse a session by exact name or ID')
+run.add_argument('--name', default='adb', help='name for a newly created session')
+run.add_argument('--focus', action='store_true', help='select the session in Termux')
+run.add_argument('--open', action='store_true', help='select and open Termux')
+run.add_argument('script', nargs='?', help='shell script; otherwise read stdin')
+independent = sub.add_parser('exec', help='execute independently and wait for exit status')
+independent.add_argument('script', nargs='?')
+for mode in ('focus', 'open', 'snapshot'):
+    p = sub.add_parser(mode, help=mode + ' a session by exact name or ID')
+    p.add_argument('session')
+ipc = sub.add_parser('ipc', help='run the native termux-control client')
 ipc.add_argument('arguments', nargs=argparse.REMAINDER)
 args = parser.parse_args()
 
@@ -19,21 +30,56 @@ adb = ['adb'] + (['-s', args.serial] if args.serial else [])
 root = '/data/data/com.termux/files'
 env = ['env', 'HOME=' + root + '/home', 'PREFIX=' + root + '/usr',
        'PATH=' + root + '/usr/bin:/system/bin', 'TMPDIR=' + root + '/usr/tmp', 'LANG=C.UTF-8']
-if args.mode == 'ipc':
-    remote = ['run-as', 'com.termux', root + '/termux-control-adb', '--socket',
-              root + '/control-ipc/control.sock'] + args.arguments
-elif args.mode == 'shell':
-    remote = ['run-as', 'com.termux'] + env + [root + '/usr/bin/bash', '-c',
-              'cd "$HOME" && exec "$PREFIX/bin/bash" -l']
-else:
-    remote = ['run-as', 'com.termux'] + env + [root + '/usr/bin/bash', '-c',
-              'cd "$HOME" && exec "$PREFIX/bin/bash" -s']
-interactive = args.mode == 'shell' or (args.mode == 'ipc' and 'attach' in args.arguments)
-command = adb + (['shell', '-t'] if interactive else ['shell', '-T']) + [
-    ' '.join(shlex.quote(part) for part in remote)]
-data = args.script.encode() + b'\n' if args.mode == 'run' and args.script is not None else None
+client = ['run-as', 'com.termux', root + '/termux-control-adb', '--socket', root + '/control-ipc/control.sock']
+def command(remote, interactive=False):
+    return adb + ['shell', '-t' if interactive else '-T', ' '.join(shlex.quote(x) for x in remote)]
+def call_ipc(*parts, data=None):
+    result = subprocess.run(command(client + list(parts)), input=data, stdout=subprocess.PIPE)
+    if result.returncode:
+        raise SystemExit(result.returncode)
+    try:
+        return json.loads(result.stdout)['result']
+    except (ValueError, KeyError):
+        raise SystemExit('Invalid response from termux-control')
+def resolve(selector):
+    sessions = call_ipc('list')['sessions']
+    matches = [s for s in sessions if s['id'] == selector or s['name'] == selector]
+    if len(matches) != 1:
+        raise SystemExit('Session not found or name is ambiguous; use its ID')
+    return matches[0]['id']
+def focus(session_id, open_app):
+    call_ipc('focus', session_id)
+    if open_app:
+        subprocess.run(adb + ['shell', 'am', 'start', '-n', 'com.termux/.app.TermuxActivity'], check=True, stdout=subprocess.DEVNULL)
+
 try:
-    result = subprocess.run(command, input=data)
-    sys.exit(result.returncode)
+    if args.mode == 'ipc':
+        sys.exit(subprocess.run(command(client + args.arguments, 'attach' in args.arguments)).returncode)
+    if args.mode == 'shell':
+        remote = ['run-as', 'com.termux'] + env + [root + '/usr/bin/bash', '-c', 'cd "$HOME" && exec "$PREFIX/bin/bash" -l']
+        sys.exit(subprocess.run(command(remote, True)).returncode)
+    if args.mode == 'exec':
+        remote = ['run-as', 'com.termux'] + env + [root + '/usr/bin/bash', '-c', 'cd "$HOME" && exec "$PREFIX/bin/bash" -s']
+        data = args.script.encode() + b'\n' if args.script is not None else None
+        sys.exit(subprocess.run(command(remote), input=data).returncode)
+    if args.mode == 'run':
+        script = args.script.encode() if args.script is not None else sys.stdin.buffer.read()
+        if not script:
+            raise SystemExit('Empty script')
+        encoded = base64.b64encode(script).decode('ascii')
+        payload = ("printf %s " + shlex.quote(encoded) + " | base64 -d | bash\n").encode()
+        if len(payload) > 3000:
+            raise SystemExit('Script is too long for a terminal input line; use exec for larger scripts')
+        session_id = resolve(args.session) if args.session else call_ipc('create', '80', '24', args.name)['id']
+        print('Session: ' + session_id, file=sys.stderr, flush=True)
+        if args.focus or args.open:
+            focus(session_id, args.open)
+        call_ipc('write', session_id, data=payload)
+    elif args.mode in ('focus', 'open'):
+        focus(resolve(args.session), args.mode == 'open')
+    else:
+        print(call_ipc('snapshot', resolve(args.session))['text'])
 except FileNotFoundError:
     sys.exit('adb was not found in PATH')
+except subprocess.CalledProcessError as exc:
+    sys.exit(exc.returncode)

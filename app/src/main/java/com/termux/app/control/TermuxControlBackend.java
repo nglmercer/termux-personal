@@ -70,6 +70,23 @@ public final class TermuxControlBackend implements ControlCore.Backend {
     }
 
     @Override
+    public void focus(String id) throws ControlCore.ControlException {
+        checkAvailable();
+        mService.focusSessionForControl(findSession(id));
+    }
+
+    @Override
+    public String snapshot(String id) throws ControlCore.ControlException {
+        checkAvailable();
+        TerminalSession session = findSession(id);
+        if (session.getEmulator() == null) throw new ControlCore.ControlException(ControlCore.Error.NOT_RUNNING);
+        String text = session.getEmulator().getScreen().getTranscriptText();
+        int start = Math.max(0, text.length() - 8000);
+        if (start > 0 && Character.isLowSurrogate(text.charAt(start))) start++;
+        return text.substring(start);
+    }
+
+    @Override
     public void write(String id, byte[] data) throws ControlCore.ControlException {
         checkAvailable();
         TerminalSession target = findSession(id);

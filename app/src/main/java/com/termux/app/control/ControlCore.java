@@ -41,6 +41,8 @@ public final class ControlCore {
         void rename(String id, String name) throws ControlException;
         void close(String id) throws ControlException;
         void resize(String id, int columns, int rows, int cellWidth, int cellHeight) throws ControlException;
+        default void focus(String id) throws ControlException { throw new ControlException(Error.UNAVAILABLE); }
+        default String snapshot(String id) throws ControlException { throw new ControlException(Error.UNAVAILABLE); }
     }
 
     private final Backend mBackend;
@@ -66,6 +68,8 @@ public final class ControlCore {
         methods.add("session.write");
         methods.add("session.rename");
         methods.add("session.resize");
+        methods.add("session.focus");
+        methods.add("session.snapshot");
         if (mBackend.isCloseEnabled()) methods.add("session.close");
         return Collections.unmodifiableList(methods);
     }
@@ -115,6 +119,18 @@ public final class ControlCore {
         require(scopes, Scope.SESSIONS_WRITE);
         if (!validId(id) || !validName(name)) throw new ControlException(Error.INVALID_REQUEST);
         mBackend.rename(id, name);
+    }
+
+    public void focusSession(Set<Scope> scopes, String id) throws ControlException {
+        require(scopes, Scope.SESSIONS_WRITE);
+        if (!validId(id)) throw new ControlException(Error.INVALID_REQUEST);
+        mBackend.focus(id);
+    }
+
+    public String snapshotSession(Set<Scope> scopes, String id) throws ControlException {
+        require(scopes, Scope.SESSIONS_OUTPUT);
+        if (!validId(id)) throw new ControlException(Error.INVALID_REQUEST);
+        return mBackend.snapshot(id);
     }
 
     private static boolean validGeometry(int columns, int rows, int cellWidth, int cellHeight) {

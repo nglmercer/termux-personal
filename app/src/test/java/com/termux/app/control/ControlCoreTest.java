@@ -25,9 +25,24 @@ public class ControlCoreTest extends TestCase {
         @Override public void write(String id, byte[] data) { calls++; target = id; received = data; }
         @Override public void close(String id) { calls++; target = id; }
         @Override public void rename(String id, String name) { calls++; target = id; this.name = name; }
+        @Override public void focus(String id) { calls++; target = id; }
+        @Override public String snapshot(String id) { calls++; target = id; return "screen"; }
         @Override public void resize(String id, int columns, int rows, int cellWidth, int cellHeight) {
             calls++; target = id; this.columns = columns; this.rows = rows;
         }
+    }
+
+    public void testFocusAndSnapshotRequireTheirOwnScopes() throws Exception {
+        FakeBackend backend = new FakeBackend();
+        ControlCore core = new ControlCore(backend);
+        try { core.focusSession(EnumSet.of(ControlCore.Scope.SESSIONS_READ), "s"); fail(); }
+        catch (ControlCore.ControlException e) { assertEquals(ControlCore.Error.DENIED, e.code); }
+        try { core.snapshotSession(EnumSet.of(ControlCore.Scope.SESSIONS_WRITE), "s"); fail(); }
+        catch (ControlCore.ControlException e) { assertEquals(ControlCore.Error.DENIED, e.code); }
+        assertEquals(0, backend.calls);
+        core.focusSession(EnumSet.of(ControlCore.Scope.SESSIONS_WRITE), "s");
+        assertEquals("s", backend.target);
+        assertEquals("screen", core.snapshotSession(EnumSet.of(ControlCore.Scope.SESSIONS_OUTPUT), "s"));
     }
 
     public void testAuthorizationPrecedesBackendAccess() throws Exception {
