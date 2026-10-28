@@ -15,9 +15,6 @@ import java.io.InputStream;
 import java.util.HashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.SynchronousQueue;
-import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.Assert.*;
@@ -88,13 +85,13 @@ public class AppShellManagedCaptureTest {
             "a=threading.Thread(target=lambda:os.write(1,b'\\x00\\xff'*131072)); a.start(); " +
             "os.write(2,b'\\xfe\\x01'*131072); a.join(); raise SystemExit(7 if data==b'\\x00\\xff\\x0a' else 19)";
         ExecutionCommand command = new ExecutionCommand(4, "/usr/bin/python3", new String[]{"-c", script}, null, "/tmp", "app-shell", false);
-        ExecutorService io = new ThreadPoolExecutor(3, 3, 0, TimeUnit.SECONDS, new SynchronousQueue<>());
+        JobIoPool io = new JobIoPool(1);
         JobOutputStore store = new JobOutputStore(1024, 1, 2048);
         JobOutputStore.Output output = store.reserve("job");
         CountDownLatch done = new CountDownLatch(1);
         AtomicReference<AppShell> shell = new AtomicReference<>();
         try {
-            AppShellJobCapture capture = new AppShellJobCapture(io, output, new byte[]{0, (byte)255, 10}, 5000);
+            AppShellJobCapture capture = new AppShellJobCapture(io.tryReserve(), output, new byte[]{0, (byte)255, 10}, 5000);
             Thread launcher = new Thread(() -> shell.set(AppShell.executeManaged(RuntimeEnvironment.getApplication(), command,
                 appShell -> done.countDown(), ENV, null, capture)));
             launcher.start(); launcher.join(5000);
@@ -108,7 +105,7 @@ public class AppShellManagedCaptureTest {
             assertEquals((byte) 0, stdout.data[0]); assertEquals((byte) 255, stdout.data[1]);
             assertEquals((byte) 254, stderr.data[0]); assertEquals((byte) 1, stderr.data[1]);
             assertEquals(0, command.resultData.stdout.length()); assertEquals(0, command.resultData.stderr.length());
-        } finally { io.shutdownNow(); store.close(); }
+        } finally { io.close(); store.close(); }
     }
 
     private static byte[] readAll(InputStream input) throws IOException {

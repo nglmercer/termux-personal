@@ -6,7 +6,6 @@ import java.io.OutputStream;
 import java.util.Arrays;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -17,13 +16,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 /** Managed AppShell byte capture. The caller must reserve three non-starving I/O worker slots. */
 public final class AppShellJobCapture implements AppShell.ManagedCapture {
     public static final int MAX_STDIN_BYTES = 64 * 1024;
-    private final ExecutorService mIoWorkers;
+    private final JobIoPool.Lease mIoWorkers;
     private final JobOutputStore.Output mOutput;
     private final byte[] mStdin;
     private final long mDrainTimeoutMillis;
     private final AtomicBoolean mStarted = new AtomicBoolean();
 
-    public AppShellJobCapture(ExecutorService ioWorkers, JobOutputStore.Output output, byte[] stdin, long drainTimeoutMillis) {
+    public AppShellJobCapture(JobIoPool.Lease ioWorkers, JobOutputStore.Output output, byte[] stdin, long drainTimeoutMillis) {
         if (ioWorkers == null || output == null || (stdin != null && stdin.length > MAX_STDIN_BYTES) ||
             drainTimeoutMillis < 1 || drainTimeoutMillis > 30000) throw new IllegalArgumentException("Invalid managed capture configuration");
         mIoWorkers = ioWorkers; mOutput = output; mStdin = stdin == null ? new byte[0] : stdin.clone();
@@ -35,6 +34,7 @@ public final class AppShellJobCapture implements AppShell.ManagedCapture {
         if (!mStarted.compareAndSet(false, true)) throw new IllegalStateException("Capture already used");
         Arrays.fill(mStdin, (byte) 0);
         mOutput.finish();
+        mIoWorkers.shutdown();
     }
 
     /** Called on the AppShell worker, never the Android service thread. */
@@ -71,6 +71,7 @@ public final class AppShellJobCapture implements AppShell.ManagedCapture {
             if (inputFuture != null && !inputFuture.isDone()) inputFuture.cancel(true);
             if (inputState.compareAndSet(0, 2)) Arrays.fill(mStdin, (byte) 0);
             mOutput.finish();
+            mIoWorkers.shutdown();
         }
     }
 
