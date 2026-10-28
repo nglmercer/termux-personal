@@ -36,6 +36,9 @@ public class TermuxDocumentsProviderTest {
             File[] files = new File(id).listFiles();
             if (files == null) throw new FileNotFoundException();
             return files;
+        }, (base, id) -> {
+            File file = DocumentPathPolicy.existing(base, id);
+            return new SafeDocumentOpen.Entry(file.isDirectory(), file.length(), file.lastModified(), file.canWrite());
         });
     }
 

@@ -12,6 +12,7 @@ javac -source 8 -target 8 -cp "$android_jar" -d "$out/classes" \
     app/src/test/device/com/termux/filepicker/DocumentJniSmoke.java
 "$ANDROID_HOME/build-tools/35.0.0/d8" --min-api 21 --lib "$android_jar" --output "$out/dex" \
     "$out/classes/com/termux/filepicker/SafeDocumentOpen.class" \
+    "$out/classes/com/termux/filepicker/SafeDocumentOpen\$Entry.class" \
     "$out/classes/com/termux/filepicker/DocumentJniSmoke.class"
 python3 - "$out/dex/classes.dex" app/build/intermediates/merged_native_libs/debug/mergeDebugNativeLibs/out/lib/arm64-v8a/libtermux-document-path.so <<'PY'
 import base64

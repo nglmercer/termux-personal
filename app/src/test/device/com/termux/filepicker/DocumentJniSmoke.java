@@ -19,7 +19,12 @@ public final class DocumentJniSmoke {
             Os.symlink("dir", link.getAbsolutePath());
             check(SafeDocumentOpen.list(root, root.getAbsolutePath()).length == 2);
             check(SafeDocumentOpen.list(root, dir.getAbsolutePath()).length == 1);
+            check(SafeDocumentOpen.stat(root, dir.getAbsolutePath()).directory);
+            check(!SafeDocumentOpen.stat(root, file.getAbsolutePath()).directory);
+            check(SafeDocumentOpen.stat(root, file.getAbsolutePath()).size == 3);
             try { SafeDocumentOpen.list(root, link.getAbsolutePath()); throw new AssertionError(); }
+            catch (FileNotFoundException expected) { }
+            try { SafeDocumentOpen.stat(root, new File(link, "ñ.txt").getAbsolutePath()); throw new AssertionError(); }
             catch (FileNotFoundException expected) { }
             try (ParcelFileDescriptor fd = SafeDocumentOpen.open(root, file.getAbsolutePath(), "r")) {
                 check(fd.getStatSize() == 3);

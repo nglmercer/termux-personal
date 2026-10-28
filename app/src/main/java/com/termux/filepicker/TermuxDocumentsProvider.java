@@ -39,14 +39,16 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
     private final Creator mCreator;
     private final Deleter mDeleter;
     private final Lister mLister;
+    private final Statter mStatter;
     interface Creator { int create(File root, String id, boolean directory) throws FileNotFoundException; }
     interface Deleter { void delete(File root, String id) throws FileNotFoundException; }
     interface Lister { File[] list(File root, String id) throws FileNotFoundException; }
+    interface Statter { SafeDocumentOpen.Entry stat(File root, String id) throws FileNotFoundException; }
 
-    public TermuxDocumentsProvider() { this(TermuxConstants.TERMUX_HOME_DIR, SafeDocumentOpen::create, SafeDocumentOpen::delete, SafeDocumentOpen::list); }
+    public TermuxDocumentsProvider() { this(TermuxConstants.TERMUX_HOME_DIR, SafeDocumentOpen::create, SafeDocumentOpen::delete, SafeDocumentOpen::list, SafeDocumentOpen::stat); }
 
     // Allows provider operations to be tested against an isolated temporary root.
-    TermuxDocumentsProvider(File baseDir, Creator creator, Deleter deleter, Lister lister) { mBaseDir = baseDir; mCreator = creator; mDeleter = deleter; mLister = lister; }
+    TermuxDocumentsProvider(File baseDir, Creator creator, Deleter deleter, Lister lister, Statter statter) { mBaseDir = baseDir; mCreator = creator; mDeleter = deleter; mLister = lister; mStatter = statter; }
 
 
     // The default columns to return information about a root if no specific
@@ -149,7 +151,7 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
     @Override
     public String getDocumentType(String documentId) throws FileNotFoundException {
         File file = getFileForDocId(documentId);
-        return getMimeType(file);
+        return getMimeType(file, mStatter.stat(mBaseDir, file.getAbsolutePath()).directory);
     }
 
     @Override
@@ -172,23 +174,20 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
             final File file = pending.removeFirst();
             // Avoid directories outside the $HOME directory linked with symlinks (to avoid e.g. search
             // through the whole SD card).
-            boolean isInsideHome;
-            try { getFileForDocId(file.getAbsolutePath()); isInsideHome = true; }
-            catch (FileNotFoundException e) { isInsideHome = false; }
-            if (isInsideHome) {
-                if (file.isDirectory()) {
-                    File[] children;
-                    try { children = mLister.list(mBaseDir, file.getAbsolutePath()); }
-                    catch (FileNotFoundException ignored) { continue; }
-                    for (File child : children) {
-                        if (pending.size() + visited >= 10000) break;
-                        pending.add(child);
-                    }
-                } else {
-                    if (file.getName().toLowerCase(Locale.ROOT).contains(normalizedQuery)) {
-                        includeFile(result, null, file);
-                    }
+            SafeDocumentOpen.Entry entry;
+            try { entry = mStatter.stat(mBaseDir, file.getAbsolutePath()); }
+            catch (FileNotFoundException e) { continue; }
+            if (entry.directory) {
+                File[] children;
+                try { children = mLister.list(mBaseDir, file.getAbsolutePath()); }
+                catch (FileNotFoundException ignored) { continue; }
+                for (File child : children) {
+                    if (pending.size() + visited >= 10000) break;
+                    pending.add(child);
                 }
+            } else if (file.getName().toLowerCase(Locale.ROOT).contains(normalizedQuery)) {
+                try { includeFile(result, null, file); }
+                catch (FileNotFoundException ignored) { /* Entry changed while searching. */ }
             }
         }
 
@@ -221,8 +220,8 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
         return DocumentPathPolicy.existing(mBaseDir, docId);
     }
 
-    private static String getMimeType(File file) {
-        if (file.isDirectory()) {
+    private static String getMimeType(File file, boolean directory) {
+        if (directory) {
             return Document.MIME_TYPE_DIR;
         } else {
             final String name = file.getName();
@@ -251,24 +250,28 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
             file = getFileForDocId(docId);
         }
 
+        SafeDocumentOpen.Entry entry = mStatter.stat(mBaseDir, docId);
         int flags = 0;
-        if (file.isDirectory()) {
-            if (file.canWrite()) flags |= Document.FLAG_DIR_SUPPORTS_CREATE;
-        } else if (file.canWrite()) {
+        if (entry.directory) {
+            if (entry.writable) flags |= Document.FLAG_DIR_SUPPORTS_CREATE;
+        } else if (entry.writable) {
             flags |= Document.FLAG_SUPPORTS_WRITE;
         }
-        if (!file.equals(mBaseDir) && file.getParentFile().canWrite()) flags |= Document.FLAG_SUPPORTS_DELETE;
+        if (!file.equals(mBaseDir)) {
+            try { if (mStatter.stat(mBaseDir, file.getParent()).writable) flags |= Document.FLAG_SUPPORTS_DELETE; }
+            catch (FileNotFoundException ignored) { }
+        }
 
         final String displayName = file.getName();
-        final String mimeType = getMimeType(file);
+        final String mimeType = getMimeType(file, entry.directory);
         if (mimeType.startsWith("image/")) flags |= Document.FLAG_SUPPORTS_THUMBNAIL;
 
         final MatrixCursor.RowBuilder row = result.newRow();
         row.add(Document.COLUMN_DOCUMENT_ID, docId);
         row.add(Document.COLUMN_DISPLAY_NAME, displayName);
-        row.add(Document.COLUMN_SIZE, file.length());
+        row.add(Document.COLUMN_SIZE, entry.size);
         row.add(Document.COLUMN_MIME_TYPE, mimeType);
-        row.add(Document.COLUMN_LAST_MODIFIED, file.lastModified());
+        row.add(Document.COLUMN_LAST_MODIFIED, entry.modified);
         row.add(Document.COLUMN_FLAGS, flags);
         row.add(Document.COLUMN_ICON, R.mipmap.ic_launcher);
     }

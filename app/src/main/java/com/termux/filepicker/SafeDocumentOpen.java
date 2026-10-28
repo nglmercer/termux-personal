@@ -1,6 +1,10 @@
 package com.termux.filepicker;
 
 import android.os.ParcelFileDescriptor;
+import android.system.ErrnoException;
+import android.system.Os;
+import android.system.OsConstants;
+import android.system.StructStat;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -70,4 +74,27 @@ final class SafeDocumentOpen {
         } catch (IOException e) { throw new FileNotFoundException("Cannot close directory"); }
     }
     private static native int directoryNative(byte[] root, byte[] path);
+
+    static final class Entry {
+        final boolean directory, writable;
+        final long size, modified;
+        Entry(boolean directory, long size, long modified, boolean writable) {
+            this.directory = directory; this.size = size; this.modified = modified; this.writable = writable;
+        }
+    }
+
+    static Entry stat(File root, String id) throws FileNotFoundException {
+        String base = root.getAbsolutePath(), prefix = base + File.separator;
+        if (!AVAILABLE || id == null || (!id.equals(base) && !id.startsWith(prefix)))
+            throw new FileNotFoundException("Invalid document");
+        String relative = id.equals(base) ? "" : id.substring(prefix.length());
+        int raw = directoryNative(base.getBytes(StandardCharsets.UTF_8), relative.getBytes(StandardCharsets.UTF_8));
+        ParcelFileDescriptor fd = raw >= 0 ? ParcelFileDescriptor.adoptFd(raw) : open(root, id, "r");
+        try (ParcelFileDescriptor descriptor = fd) {
+            StructStat stat = Os.fstat(descriptor.getFileDescriptor());
+            int writeBit = stat.st_uid == Os.geteuid() ? 0200 : stat.st_gid == Os.getegid() ? 0020 : 0002;
+            return new Entry(OsConstants.S_ISDIR(stat.st_mode), stat.st_size,
+                stat.st_mtime * 1000L, (stat.st_mode & writeBit) != 0);
+        } catch (ErrnoException | IOException e) { throw new FileNotFoundException("Cannot stat document"); }
+    }
 }
