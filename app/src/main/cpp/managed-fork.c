@@ -31,9 +31,14 @@ pid_t termux_managed_fork_pidfd(int *pidfd) {
 }
 
 void termux_managed_exec_child(int executable_fd, int cwd_fd, int error_fd,
+                               int stdin_fd, int stdout_fd, int stderr_fd,
                                char *const argv[], char *const envp[]) {
     int failure;
-    if (fchdir(cwd_fd) < 0) failure = errno;
+    if (executable_fd < 3 || cwd_fd < 3 || error_fd < 3 || stdin_fd < 3 || stdout_fd < 3 || stderr_fd < 3 ||
+        error_fd == executable_fd || error_fd == cwd_fd || error_fd == stdin_fd || error_fd == stdout_fd || error_fd == stderr_fd)
+        failure = EINVAL;
+    else if (dup2(stdin_fd, STDIN_FILENO) < 0 || dup2(stdout_fd, STDOUT_FILENO) < 0 ||
+             dup2(stderr_fd, STDERR_FILENO) < 0 || fchdir(cwd_fd) < 0) failure = errno;
     else {
 #if defined(__NR_execveat)
         syscall(__NR_execveat, executable_fd, "", argv, envp, AT_EMPTY_PATH);

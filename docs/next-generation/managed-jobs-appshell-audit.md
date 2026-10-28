@@ -32,3 +32,5 @@ The host pidfd test also exercises `execveat(AT_EMPTY_PATH)` on a close-on-exec 
 The native prototype now has a child-only `fchdir`/`execveat` helper that reports pre-exec errors over a close-on-exec pipe and exits without returning to Java. Its host test covers successful execution and a working-directory failure; all four ABI compilers accept it. Parent-side launch, pipe ownership, integration and Android validation are still absent.
 
 A parent-side status reader bounds the wait and rejects partial error messages. EOF with no error is deliberately reported only as pipe closure: a child can die before reporting an error, so EOF alone does not prove execution. Callers must retain ownership of the child and reconcile its actual outcome. The helper requires a single reader and correct closure of other pipe writers.
+
+The child helper now duplicates supplied stdin, stdout and stderr descriptors before execution; a host test checks separate output streams. Its caller must arrange close-on-exec for every inherited descriptor and close unused pipe ends. Parent-side pipe creation and integration still need implementation and device verification.

@@ -61,6 +61,9 @@ int main(void) {
     require(pipe2(pipe_fds, O_CLOEXEC) == 0, "create exec pipe");
     int errors[2];
     require(pipe2(errors, O_CLOEXEC) == 0, "create exec error pipe");
+    int input = open("/dev/null", O_RDONLY | O_CLOEXEC);
+    int error_output = open("/dev/null", O_WRONLY | O_CLOEXEC);
+    require(input >= 3 && error_output >= 3, "open child streams");
     char temporary[] = "/tmp/termux-managed-exec-XXXXXX";
     require(mkdtemp(temporary) != NULL, "create executable directory");
     int directory = open(temporary, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
@@ -90,12 +93,11 @@ int main(void) {
     if (child == 0) {
         close(pipe_fds[0]);
         close(errors[0]);
-        if (dup2(pipe_fds[1], STDOUT_FILENO) < 0) _exit(72);
-        close(pipe_fds[1]);
         char *const argv[] = {"/bin/echo", "exact argument", NULL};
         char *const environment[] = {NULL};
-        termux_managed_exec_child(executable, directory, errors[1], argv, environment);
+        termux_managed_exec_child(executable, directory, errors[1], input, pipe_fds[1], error_output, argv, environment);
     }
+    close(input); close(error_output);
     close(executable);
     close(errors[1]);
     int exec_error;
@@ -125,14 +127,39 @@ int main(void) {
         close(errors[0]);
         char *const argv[] = {"missing", NULL};
         char *const environment[] = {NULL};
-        termux_managed_exec_child(-1, -1, errors[1], argv, environment);
+        termux_managed_exec_child(-1, -1, errors[1], -1, -1, -1, argv, environment);
     }
     close(errors[1]);
-    require(termux_managed_read_exec_status(errors[0], 2000, &exec_error) == 1 && exec_error == EBADF,
-        "child reports cwd failure");
+    require(termux_managed_read_exec_status(errors[0], 2000, &exec_error) == 1 && exec_error == EINVAL,
+        "child reports invalid descriptors");
     close(errors[0]);
     require(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 127, "failure exit");
     require(close(handle) == 0, "close failure pidfd");
+
+    int out_pipe[2], err_pipe[2];
+    require(pipe2(out_pipe, O_CLOEXEC) == 0 && pipe2(err_pipe, O_CLOEXEC) == 0 && pipe2(errors, O_CLOEXEC) == 0,
+        "create separate stream pipes");
+    int shell = open("/bin/sh", O_PATH | O_CLOEXEC);
+    int cwd = open("/tmp", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    input = open("/dev/null", O_RDONLY | O_CLOEXEC);
+    require(shell >= 3 && cwd >= 3 && input >= 3, "open stream test descriptors");
+    child = termux_managed_fork_pidfd(&handle);
+    require(child >= 0, "stream clone3");
+    if (child == 0) {
+        close(out_pipe[0]); close(err_pipe[0]); close(errors[0]);
+        char *const argv[] = {"sh", "-c", "printf out; printf err >&2", NULL};
+        char *const environment[] = {NULL};
+        termux_managed_exec_child(shell, cwd, errors[1], input, out_pipe[1], err_pipe[1], argv, environment);
+    }
+    close(shell); close(cwd); close(input); close(out_pipe[1]); close(err_pipe[1]); close(errors[1]);
+    require(termux_managed_read_exec_status(errors[0], 2000, &exec_error) == 0, "stream exec status");
+    close(errors[0]);
+    char stream[4] = {0};
+    require(read(out_pipe[0], stream, 3) == 3 && memcmp(stream, "out", 3) == 0, "separate stdout");
+    require(read(err_pipe[0], stream, 3) == 3 && memcmp(stream, "err", 3) == 0, "separate stderr");
+    close(out_pipe[0]); close(err_pipe[0]);
+    require(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0, "stream child exit");
+    close(handle);
 
     require(pipe2(errors, O_CLOEXEC) == 0, "create timeout pipe");
     errno = 0;
