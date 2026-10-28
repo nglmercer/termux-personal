@@ -1,0 +1,12 @@
+# Managed jobs: AppShell integration audit
+
+This is an implementation audit, not a claim that managed jobs are available. The existing `RUN_COMMAND` path and session API remain unchanged.
+
+* `TermuxService.createTermuxTask(ExecutionCommand)` calls `AppShell.execute` while holding the service monitor. `Runtime.exec` runs before that method returns, so managed job startup must happen on a bounded worker and must not hold the service thread across process creation.
+* `AppShell.executeInner` starts separate stdout and stderr `StreamGobbler` threads, then waits for the child and joins both readers. `StreamGobbler` uses `BufferedReader.readLine()` and appends to `ResultData` string builders. A long line or unbounded output can consume unbounded memory, byte fidelity is not preserved, and verbose logging may contain output. This capture path is unsuitable for managed jobs.
+* Legacy nonempty stdin gets a newline appended and is closed afterward. Empty stdin is not closed until after `waitFor`, which may leave a child waiting for EOF. Managed jobs need a distinct bounded exact-byte stdin policy and must close their pipe independently without altering plugin semantics.
+* `AppShell` starts its worker before `createTermuxTask` registers the returned object in the task list. A managed job must reserve and publish its own record before launch and reconcile an immediate exit or startup failure exactly once.
+* `kill()` looks up a numeric PID and sends `SIGKILL` through `Os.kill` (the comment mentions SIGILL, but the code uses SIGKILL). This is not a safe cancellation primitive for a separately managed job because the PID can be reused. New cancellation must operate on the owned process handle, with bounded grace and explicit descendant limitations.
+* `onAppShellExited` posts a short removal/notification callback to the service handler. It is not a durable job journal; process death, force-stop, and reboot do not guarantee retained history or continuing work.
+
+`JobOutputStore` is a bounded, service-lifetime foundation that reuses the existing byte replay buffer. It is not yet connected to AppShell or exposed through IPC. Before enabling a jobs feature, implement and verify a job-specific concurrent stream drain, lifecycle coordinator, consent scopes, idempotency and owned-handle cancellation, then run the required on-device tests.
