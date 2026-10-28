@@ -24,6 +24,10 @@ public class SafeDocumentOpenInstrumentedTest {
         try (FileOutputStream out = new FileOutputStream(file)) { out.write("abc".getBytes(StandardCharsets.UTF_8)); }
         File link = new File(root, "link"); Os.symlink(dir.getPath(), link.getPath());
         try {
+            assertEquals(2, SafeDocumentOpen.list(root, root.getAbsolutePath()).length);
+            assertEquals(1, SafeDocumentOpen.list(root, dir.getAbsolutePath()).length);
+            try { SafeDocumentOpen.list(root, link.getAbsolutePath()); fail(); }
+            catch (FileNotFoundException expected) { }
             try (ParcelFileDescriptor fd = SafeDocumentOpen.open(root, file.getPath(), "r")) {
                 assertEquals(3, fd.getStatSize());
             }

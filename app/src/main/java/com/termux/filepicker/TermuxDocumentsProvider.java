@@ -38,13 +38,15 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
     private final File mBaseDir;
     private final Creator mCreator;
     private final Deleter mDeleter;
+    private final Lister mLister;
     interface Creator { int create(File root, String id, boolean directory) throws FileNotFoundException; }
     interface Deleter { void delete(File root, String id) throws FileNotFoundException; }
+    interface Lister { File[] list(File root, String id) throws FileNotFoundException; }
 
-    public TermuxDocumentsProvider() { this(TermuxConstants.TERMUX_HOME_DIR, SafeDocumentOpen::create, SafeDocumentOpen::delete); }
+    public TermuxDocumentsProvider() { this(TermuxConstants.TERMUX_HOME_DIR, SafeDocumentOpen::create, SafeDocumentOpen::delete, SafeDocumentOpen::list); }
 
     // Allows provider operations to be tested against an isolated temporary root.
-    TermuxDocumentsProvider(File baseDir, Creator creator, Deleter deleter) { mBaseDir = baseDir; mCreator = creator; mDeleter = deleter; }
+    TermuxDocumentsProvider(File baseDir, Creator creator, Deleter deleter, Lister lister) { mBaseDir = baseDir; mCreator = creator; mDeleter = deleter; mLister = lister; }
 
 
     // The default columns to return information about a root if no specific
@@ -99,8 +101,7 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
     public Cursor queryChildDocuments(String parentDocumentId, String[] projection, String sortOrder) throws FileNotFoundException {
         final MatrixCursor result = new MatrixCursor(projection != null ? projection : DEFAULT_DOCUMENT_PROJECTION);
         final File parent = getFileForDocId(parentDocumentId);
-        File[] children = parent.listFiles();
-        if (children == null) throw new FileNotFoundException("Cannot list directory");
+        File[] children = mLister.list(mBaseDir, parent.getAbsolutePath());
         for (File file : children) {
             try { includeFile(result, null, getFileForDocId(file.getAbsolutePath())); }
             catch (FileNotFoundException ignored) { /* Skip inaccessible or linked entries. */ }
@@ -176,8 +177,10 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
             catch (FileNotFoundException e) { isInsideHome = false; }
             if (isInsideHome) {
                 if (file.isDirectory()) {
-                    File[] children = file.listFiles();
-                    if (children != null) for (File child : children) {
+                    File[] children;
+                    try { children = mLister.list(mBaseDir, file.getAbsolutePath()); }
+                    catch (FileNotFoundException ignored) { continue; }
+                    for (File child : children) {
                         if (pending.size() + visited >= 10000) break;
                         pending.add(child);
                     }

@@ -3,6 +3,7 @@ package com.termux.filepicker;
 import android.os.ParcelFileDescriptor;
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
 /** Descriptor-relative, no-follow open for existing regular documents. */
@@ -52,4 +53,21 @@ final class SafeDocumentOpen {
             throw new FileNotFoundException("Cannot delete document");
     }
     private static native int deleteNative(byte[] root, byte[] path);
+
+    static File[] list(File root, String id) throws FileNotFoundException {
+        String base = root.getAbsolutePath(), prefix = base + File.separator;
+        if (!AVAILABLE || id == null || (!id.equals(base) && !id.startsWith(prefix)))
+            throw new FileNotFoundException("Invalid directory");
+        String relative = id.equals(base) ? "" : id.substring(prefix.length());
+        int raw = directoryNative(base.getBytes(StandardCharsets.UTF_8), relative.getBytes(StandardCharsets.UTF_8));
+        if (raw < 0) throw new FileNotFoundException("Cannot open directory");
+        try (ParcelFileDescriptor fd = ParcelFileDescriptor.adoptFd(raw)) {
+            String[] names = new File("/proc/self/fd/" + fd.getFd()).list();
+            if (names == null) throw new FileNotFoundException("Cannot list directory");
+            File[] files = new File[names.length];
+            for (int i = 0; i < names.length; i++) files[i] = new File(id, names[i]);
+            return files;
+        } catch (IOException e) { throw new FileNotFoundException("Cannot close directory"); }
+    }
+    private static native int directoryNative(byte[] root, byte[] path);
 }

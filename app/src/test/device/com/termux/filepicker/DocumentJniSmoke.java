@@ -17,6 +17,10 @@ public final class DocumentJniSmoke {
             check(dir.mkdir());
             try (FileOutputStream out = new FileOutputStream(file)) { out.write(new byte[]{1, 2, 3}); }
             Os.symlink("dir", link.getAbsolutePath());
+            check(SafeDocumentOpen.list(root, root.getAbsolutePath()).length == 2);
+            check(SafeDocumentOpen.list(root, dir.getAbsolutePath()).length == 1);
+            try { SafeDocumentOpen.list(root, link.getAbsolutePath()); throw new AssertionError(); }
+            catch (FileNotFoundException expected) { }
             try (ParcelFileDescriptor fd = SafeDocumentOpen.open(root, file.getAbsolutePath(), "r")) {
                 check(fd.getStatSize() == 3);
             }

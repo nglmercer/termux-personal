@@ -20,6 +20,10 @@ static int try_delete(const char *root, const char *name) {
     char path[4097]; assert(strlen(name) < sizeof(path)); strcpy(path, name);
     return delete_document(root, path);
 }
+static int try_directory(const char *root, const char *name) {
+    char path[4097]; assert(strlen(name) < sizeof(path)); strcpy(path, name);
+    return open_directory(root, path);
+}
 
 struct swap_state { const char *dir; const char *held; atomic_int stop; };
 static void *swap_directory(void *arg) {
@@ -60,6 +64,10 @@ int main(void) {
     assert(try_open(root, "../secret", 1, 1) < 0);
     assert(try_open(root, "dir//file", 0, 0) < 0);
     assert(try_open(root, "dir", 0, 0) < 0);
+    fd = try_directory(root, ""); assert(fd >= 0); close(fd);
+    fd = try_directory(root, "dir"); assert(fd >= 0); close(fd);
+    assert(try_directory(root, "link") < 0);
+    assert(try_directory(root, "../") < 0);
     assert(try_create(root, "link/created", 0) < 0);
     assert(try_create(root, "../created", 0) < 0);
     assert(try_create(root, "dir/newdir", 1) == 0);
@@ -70,6 +78,7 @@ int main(void) {
     fd = open(inner, O_CREAT | O_WRONLY | O_EXCL, 0600); assert(fd >= 0); close(fd);
     struct swap_state state = {dir, held, ATOMIC_VAR_INIT(0)};
     pthread_t thread; assert(pthread_create(&thread, NULL, swap_directory, &state) == 0);
+    struct stat outside_stat; assert(!stat(outside, &outside_stat));
     for (int i = 0; i < 20000; i++) {
         fd = try_open(root, "dir/secret", 1, 1);
         if (fd >= 0) close(fd);
@@ -77,6 +86,13 @@ int main(void) {
         assert(create_result == -1 || create_result == 0 || create_result == 1);
         int delete_result = try_delete(root, "dir/secret");
         assert(delete_result == -1 || delete_result == 0);
+        fd = try_directory(root, "dir");
+        if (fd >= 0) {
+            struct stat found;
+            if (fstatat(fd, "secret", &found, AT_SYMLINK_NOFOLLOW) == 0)
+                assert(found.st_dev != outside_stat.st_dev || found.st_ino != outside_stat.st_ino);
+            close(fd);
+        }
     }
     atomic_store(&state.stop, 1);
     assert(pthread_join(thread, NULL) == 0);
