@@ -5,6 +5,12 @@ import java.util.Set;
 import static org.junit.Assert.*;
 
 public class LocalControlOptionsTest {
+    @Test public void existingConsentNeverGrantsNewDomainScopes() {
+        Set<ControlCore.Scope> granted = LocalControlOptions.scopes(true, true, true, true);
+        for (ControlCore.Scope scope : ControlCore.Scope.values()) {
+            if (!scope.name().startsWith("SESSIONS_")) assertFalse(granted.contains(scope));
+        }
+    }
     @Test public void closeNeedsBothWriteModeAndExplicitConsent() {
         Set<ControlCore.Scope> read = LocalControlOptions.scopes(false, false, true);
         assertTrue(read.contains(ControlCore.Scope.SESSIONS_READ));
