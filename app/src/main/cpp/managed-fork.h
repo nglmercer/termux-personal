@@ -28,6 +28,11 @@ struct termux_managed_child {
 int termux_managed_launch(int executable_fd, int cwd_fd, char *const argv[], char *const envp[],
                           struct termux_managed_child *child);
 
+/* Close only descriptors still owned by child; does not signal or reap it.
+ * Synchronize this operation with all descriptor users. Initialize via launch;
+ * set a field to -1 when its descriptor is closed or ownership is transferred. */
+void termux_managed_child_close(struct termux_managed_child *child);
+
 /* Signal only the owned pidfd with TERM, KILL or INT. Caller synchronizes
  * descriptor lifetime with this call; never pass a recycled descriptor. */
 int termux_managed_signal(int pidfd, int signal_number);

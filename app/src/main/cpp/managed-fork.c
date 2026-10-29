@@ -94,6 +94,15 @@ int termux_managed_launch(int executable_fd, int cwd_fd, char *const argv[], cha
     return 0;
 }
 
+void termux_managed_child_close(struct termux_managed_child *child) {
+    if (child == NULL) return;
+    int *fds[] = {&child->pidfd, &child->stdin_write, &child->stdout_read, &child->stderr_read, &child->status_read};
+    for (size_t i = 0; i < sizeof(fds) / sizeof(fds[0]); i++) {
+        if (*fds[i] >= 0) close(*fds[i]);
+        *fds[i] = -1;
+    }
+}
+
 int termux_managed_signal(int pidfd, int signal_number) {
     if (pidfd < 0 || (signal_number != SIGTERM && signal_number != SIGKILL && signal_number != SIGINT)) {
         errno = EINVAL; return -1;

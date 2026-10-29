@@ -26,6 +26,7 @@ int main(void) {
     require(invalid_child.pid == -1 && invalid_child.pidfd == -1 && invalid_child.stdin_write == -1 &&
         invalid_child.stdout_read == -1 && invalid_child.stderr_read == -1 && invalid_child.status_read == -1,
         "invalid launch clears ownership outputs");
+    termux_managed_child_close(&invalid_child);
     struct termux_managed_pipes managed_pipes;
     require(termux_managed_pipes_open(NULL) == -1 && errno == EINVAL, "reject missing pipe storage");
     require(termux_managed_pipes_open(&managed_pipes) == 0, "open managed pipes");
@@ -226,8 +227,13 @@ int main(void) {
         "observe signalled child");
     errno = 0;
     require(termux_managed_signal(managed_child.pidfd, SIGKILL) == -1 && errno == ESRCH, "reject post-exit signal");
-    close(managed_child.stdin_write); close(managed_child.stdout_read); close(managed_child.stderr_read);
-    close(managed_child.status_read); close(managed_child.pidfd);
+    int old_pidfd = managed_child.pidfd;
+    termux_managed_child_close(&managed_child);
+    require(managed_child.pidfd == -1 && managed_child.stdin_write == -1 && managed_child.stdout_read == -1 &&
+        managed_child.stderr_read == -1 && managed_child.status_read == -1, "child descriptors invalidated");
+    errno = 0;
+    require(fcntl(old_pidfd, F_GETFD) == -1 && errno == EBADF, "pidfd closed");
+    termux_managed_child_close(&managed_child);
 
     require(pipe2(errors, O_CLOEXEC) == 0, "create timeout pipe");
     errno = 0;
