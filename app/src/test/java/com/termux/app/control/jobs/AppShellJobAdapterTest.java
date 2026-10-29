@@ -58,6 +58,19 @@ public class AppShellJobAdapterTest {
         }
     }
 
+    @Test public void captureFailurePreservesObservedExitCode() {
+        try (JobRegistry registry = registry()) {
+            JobRegistry.Entry entry = registry.admit(spec(), 1, 100).entry;
+            AppShellJobAdapter adapter = new AppShellJobAdapter((job, exe, cwd, capture, callback) -> {
+                capture.discardBeforeLaunch(); callback.finished(7, true); return new FakeProcess();
+            });
+            adapter.launch(entry, spec(), "/bin/echo", "/home");
+            assertEquals(JobRecord.State.FAILED, entry.record().snapshot().state);
+            assertEquals(JobRecord.Failure.CAPTURE_FAILED, entry.record().snapshot().failure);
+            assertEquals(Integer.valueOf(7), entry.record().snapshot().exitCode);
+        }
+    }
+
     @Test public void invalidResolvedPathsDoNotStartJob() {
         try (JobRegistry registry = registry()) {
             JobRegistry.Entry entry = registry.admit(spec(), 1, 100).entry;

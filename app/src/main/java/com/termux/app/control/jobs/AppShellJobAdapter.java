@@ -58,7 +58,7 @@ public final class AppShellJobAdapter {
         Completion callback = (exitCode, captureFailed) -> {
             if (!completed.compareAndSet(false, true)) return;
             if (captureFailed || exitCode == null)
-                record.complete(JobRecord.State.FAILED, null, JobRecord.Failure.CAPTURE_FAILED, System.currentTimeMillis());
+                record.complete(JobRecord.State.FAILED, exitCode, JobRecord.Failure.CAPTURE_FAILED, System.currentTimeMillis());
             else record.complete(JobRecord.State.EXITED, exitCode, null, System.currentTimeMillis());
             if (control != null) control.completed();
         };

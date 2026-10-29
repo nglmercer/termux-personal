@@ -305,17 +305,18 @@ public final class AppShell {
         } finally {
             // Wait on the owned child even if capture failed before it could wait. Android's
             // Process.destroy() may use a recyclable PID and must not be called after exit.
-            waitForManagedChild(mProcess);
+            int observedExit = waitForManagedChild(mProcess);
+            if (mExecutionCommand.resultData.exitCode == null) mExecutionCommand.resultData.exitCode = observedExit;
         }
         if (notify) processAppShellResult(this, null);
         if (fatal != null) throw fatal;
     }
 
-    private static void waitForManagedChild(Process process) {
+    private static int waitForManagedChild(Process process) {
         boolean interrupted = Thread.interrupted();
         try {
             for (;;) {
-                try { process.waitFor(); return; }
+                try { return process.waitFor(); }
                 catch (InterruptedException e) { interrupted = true; }
             }
         } finally { if (interrupted) Thread.currentThread().interrupt(); }

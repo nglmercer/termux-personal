@@ -46,7 +46,7 @@ public final class JobRecord {
     /** A terminal outcome is supplied by the owner after observing the actual result. */
     public synchronized boolean complete(State outcome, Integer exitCode, Failure failure, long at) {
         if (!isTerminal(outcome) || at < 0) throw new IllegalArgumentException("Invalid terminal outcome");
-        if (outcome == State.EXITED && exitCode == null || outcome != State.EXITED && exitCode != null ||
+        if (outcome == State.EXITED && exitCode == null || outcome != State.EXITED && outcome != State.FAILED && exitCode != null ||
             outcome == State.FAILED && failure == null || outcome != State.FAILED && failure != null)
             throw new IllegalArgumentException("Invalid terminal metadata");
         if (isTerminal(mState)) return false;

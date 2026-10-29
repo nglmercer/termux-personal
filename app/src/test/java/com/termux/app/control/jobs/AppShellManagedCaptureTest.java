@@ -71,6 +71,7 @@ public class AppShellManagedCaptureTest {
             assertTrue(done.await(5, TimeUnit.SECONDS));
             assertTrue(command.isStateFailed()); assertEquals(1, calls.get());
             assertTrue(shell.get().getProcess().waitFor(5, TimeUnit.SECONDS));
+            assertNotNull(command.resultData.exitCode);
             assertFalse(command.resultData.errorsList.toString().contains("secret must not be copied"));
         } finally { shell.get().getProcess().destroyForcibly(); }
     }

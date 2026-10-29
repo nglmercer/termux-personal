@@ -47,6 +47,14 @@ public class JobRecordTest {
         assertEquals(JobRecord.Failure.START_FAILED, job.snapshot().failure);
     }
 
+    @Test public void captureFailureCanRetainObservedExitCode() {
+        JobRecord job = new JobRecord("job", null, 0);
+        assertTrue(job.begin());
+        assertTrue(job.complete(JobRecord.State.FAILED, 7, JobRecord.Failure.CAPTURE_FAILED, 1));
+        assertEquals(Integer.valueOf(7), job.snapshot().exitCode);
+        assertEquals(JobRecord.Failure.CAPTURE_FAILED, job.snapshot().failure);
+    }
+
     private static void await(CountDownLatch gate) {
         try { gate.await(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new AssertionError(e); }
     }
