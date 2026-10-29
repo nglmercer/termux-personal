@@ -123,8 +123,11 @@ int termux_managed_probe_pidfd(void) {
     /* Check pidfd wait support before creating a child that may need reaping. */
     siginfo_t preflight;
     memset(&preflight, 0, sizeof(preflight));
-    if (syscall(__NR_waitid, 3 /* P_PIDFD */, INT_MAX, &preflight, WEXITED | WNOHANG, NULL) == 0 || errno != EBADF)
-        return -(errno ? errno : EIO);
+    long check;
+    do { check = syscall(__NR_waitid, 3 /* P_PIDFD */, INT_MAX, &preflight, WEXITED | WNOHANG, NULL); }
+    while (check < 0 && errno == EINTR);
+    if (check == 0) return -EIO;
+    if (errno != EBADF) return -errno;
 #else
     return -ENOSYS;
 #endif
