@@ -184,6 +184,26 @@ public class JobCoordinatorTest {
         } finally { coordinator.stopAccepting(); closeEventually(coordinator); }
     }
 
+    @Test public void shutdownWaitsForLauncherAfterImmediateCompletionCallback() throws Exception {
+        JobRegistry registry = registry(); JobAuthority authority = new JobAuthority();
+        JobAuthority.Lease lease = authority.grant(EnumSet.of(JobAuthority.Permission.EXECUTE));
+        CountDownLatch callbackDone = new CountDownLatch(1), release = new CountDownLatch(1);
+        AppShellJobAdapter adapter = new AppShellJobAdapter((job, exe, cwd, capture, callback) -> {
+            capture.discardBeforeLaunch(); callback.finished(0, false); callbackDone.countDown(); await(release);
+            return new FakeProcess();
+        });
+        JobCoordinator coordinator = new JobCoordinator(registry, adapter,
+            (job, epoch) -> new JobCoordinator.Resolution("/bin/echo", "/home"), authority);
+        try {
+            JobCoordinator.StartResult started = coordinator.start(spec("run", 0), lease);
+            assertTrue(callbackDone.await(2, TimeUnit.SECONDS));
+            assertEquals(JobRecord.State.EXITED, registry.get(started.job.id, lease.epoch()).record().snapshot().state);
+            coordinator.stopAccepting();
+            assertFalse("launcher still holds the entry", coordinator.closeIfIdle());
+            release.countDown(); closeEventually(coordinator);
+        } finally { release.countDown(); coordinator.stopAccepting(); closeEventually(coordinator); }
+    }
+
     private static void waitForTerminal(JobRecord record) throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
         while (!JobRecord.isTerminal(record.snapshot().state) && System.nanoTime() < deadline) Thread.yield();

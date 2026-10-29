@@ -188,7 +188,8 @@ public final class JobCoordinator {
     public synchronized boolean closeIfIdle() {
         if (mClosed) return true;
         if (!mStopping) return false;
-        for (Work work : mWork.values()) if (!JobRecord.isTerminal(work.entry.record().snapshot().state)) return false;
+        for (Work work : mWork.values())
+            if (!work.done || !JobRecord.isTerminal(work.entry.record().snapshot().state)) return false;
         mClosed = true; mTimers.shutdown(); mRegistry.close(); mWork.clear();
         return true;
     }
