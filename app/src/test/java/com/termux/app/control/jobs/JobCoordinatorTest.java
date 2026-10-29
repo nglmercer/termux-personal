@@ -226,6 +226,43 @@ public class JobCoordinatorTest {
         } finally { release.countDown(); coordinator.stopAccepting(); closeEventually(coordinator); }
     }
 
+    @Test public void shutdownWaitsForActualPipeWorkersAfterTerminalResult() throws Exception {
+        JobRegistry registry = registry(); JobAuthority authority = new JobAuthority();
+        JobAuthority.Lease lease = authority.grant(EnumSet.of(JobAuthority.Permission.EXECUTE));
+        CountDownLatch workerStarted = new CountDownLatch(1), release = new CountDownLatch(1);
+        AppShellJobAdapter adapter = new AppShellJobAdapter((job, exe, cwd, capture, callback) -> {
+            Process process = new FakeProcess() {
+                @Override public InputStream getInputStream() {
+                    return new InputStream() {
+                        @Override public int read() {
+                            workerStarted.countDown();
+                            boolean interrupted = false;
+                            for (;;) try { release.await(); break; } catch (InterruptedException e) { interrupted = true; }
+                            if (interrupted) Thread.currentThread().interrupt();
+                            return -1;
+                        }
+                    };
+                }
+            };
+            try { capture.captureAndWait(process); callback.finished(0, false); }
+            catch (Exception e) { callback.finished(null, true); }
+            return process;
+        });
+        JobCoordinator coordinator = new JobCoordinator(registry, adapter,
+            (job, epoch) -> new JobCoordinator.Resolution("/bin/echo", "/home"), authority);
+        try {
+            JobCoordinator.StartResult started = coordinator.start(spec("run", 0), lease);
+            assertTrue(workerStarted.await(2, TimeUnit.SECONDS));
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(8);
+            JobRecord record = registry.get(started.job.id, lease.epoch()).record();
+            while (!JobRecord.isTerminal(record.snapshot().state) && System.nanoTime() < deadline) Thread.yield();
+            assertTrue(JobRecord.isTerminal(record.snapshot().state));
+            coordinator.stopAccepting();
+            assertFalse("pipe worker remains active", coordinator.closeIfIdle());
+            release.countDown(); closeEventually(coordinator);
+        } finally { release.countDown(); coordinator.stopAccepting(); closeEventually(coordinator); }
+    }
+
     private static void waitForTerminal(JobRecord record) throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
         while (!JobRecord.isTerminal(record.snapshot().state) && System.nanoTime() < deadline) Thread.yield();
@@ -239,7 +276,7 @@ public class JobCoordinatorTest {
     private static void await(CountDownLatch gate) {
         try { gate.await(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new AssertionError(e); }
     }
-    private static final class FakeProcess extends Process {
+    private static class FakeProcess extends Process {
         @Override public OutputStream getOutputStream() { return new ByteArrayOutputStream(); }
         @Override public InputStream getInputStream() { return new ByteArrayInputStream(new byte[0]); }
         @Override public InputStream getErrorStream() { return new ByteArrayInputStream(new byte[0]); }

@@ -43,6 +43,9 @@ public final class AppShellJobCapture implements AppShell.ManagedCapture {
         return true;
     }
 
+    /** True only after every reserved pipe worker has actually stopped. */
+    public boolean isReleased() { return mIoWorkers.isTerminated(); }
+
     /** Called on the AppShell worker, never the Android service thread. */
     @Override public int captureAndWait(Process process) throws IOException, InterruptedException {
         if (process == null || !mStarted.compareAndSet(false, true)) throw new IllegalStateException("Capture already used or missing process");

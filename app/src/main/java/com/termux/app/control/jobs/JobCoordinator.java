@@ -189,7 +189,7 @@ public final class JobCoordinator {
         if (mClosed) return true;
         if (!mStopping) return false;
         for (Work work : mWork.values())
-            if (!work.done || !JobRecord.isTerminal(work.entry.record().snapshot().state)) return false;
+            if (!work.done || !JobRecord.isTerminal(work.entry.record().snapshot().state) || !work.entry.capture().isReleased()) return false;
         mClosed = true; mTimers.shutdown(); mRegistry.close(); mWork.clear();
         return true;
     }

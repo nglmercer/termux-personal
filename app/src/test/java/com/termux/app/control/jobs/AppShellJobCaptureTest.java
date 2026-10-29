@@ -82,7 +82,8 @@ public class AppShellJobCaptureTest {
         };
         try {
             long start = System.nanoTime();
-            try { new AppShellJobCapture(lease, output, null, 100).captureAndWait(exited); fail(); }
+            AppShellJobCapture capture = new AppShellJobCapture(lease, output, null, 100);
+            try { capture.captureAndWait(exited); fail(); }
             catch (IOException expected) { }
             assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start) < 2000);
             assertTrue(output.isFinished());
