@@ -161,6 +161,9 @@ public class JobCoordinatorTest {
             assertEquals((byte) 8, chunk.output.data[0]); assertFalse(chunk.finished);
             assertEquals(JobCoordinator.ReadStatus.INVALID_REQUEST, coordinator.readOutput(started.job.id, output, JobOutputStore.Stream.STDOUT, 25, 16).status);
             assertEquals(JobCoordinator.ReadStatus.INVALID_REQUEST, coordinator.readOutput(started.job.id, output, JobOutputStore.Stream.STDOUT, 0, 65537).status);
+            assertEquals(JobCoordinator.ReadStatus.OK, coordinator.readOutput(started.job.id, output, JobOutputStore.Stream.STDOUT, 0, 65536).status);
+            assertEquals(JobCoordinator.ReadStatus.INVALID_REQUEST, coordinator.readOutput(started.job.id, output, JobOutputStore.Stream.STDOUT, 0, 0).status);
+            assertEquals(JobCoordinator.ReadStatus.INVALID_REQUEST, coordinator.readOutput(started.job.id, output, JobOutputStore.Stream.STDOUT, -1, 1).status);
             release.countDown(); waitForTerminal(entry.record());
             JobCoordinator.OutputResult finalRead = coordinator.readOutput(started.job.id, output, JobOutputStore.Stream.STDOUT, 24, 16);
             assertTrue(finalRead.finished); assertEquals(24, finalRead.output.endOffset); assertEquals(0, finalRead.output.data.length);
