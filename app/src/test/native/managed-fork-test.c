@@ -243,6 +243,22 @@ int main(void) {
     require(termux_managed_signal(managed_child.pidfd, SIGKILL) == -1 && errno == ESRCH, "reject post-exit signal");
     int old_pidfd = managed_child.pidfd;
     termux_managed_child_close(&managed_child);
+
+    char nonexec_path[] = "/tmp/termux-managed-nonexec-XXXXXX";
+    int nonexec_file = mkstemp(nonexec_path);
+    require(nonexec_file >= 0 && write(nonexec_file, "not executable", 14) == 14 && close(nonexec_file) == 0,
+        "create non-executable file");
+    nonexec_file = open(nonexec_path, O_PATH | O_CLOEXEC);
+    cwd = open("/tmp", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    char *const nonexec_argv[] = {"nonexec", NULL};
+    require(termux_managed_launch(nonexec_file, cwd, nonexec_argv, launch_env, &managed_child) == 0,
+        "launch reports exec failure asynchronously");
+    close(nonexec_file); close(cwd); unlink(nonexec_path);
+    require(termux_managed_read_exec_status(managed_child.status_read, 2000, &exec_error) == 1 && exec_error == EACCES,
+        "report non-executable error");
+    require(termux_managed_wait(managed_child.pid, &result) == 0 && result.exited && result.exit_code == 127,
+        "reap failed exec child");
+    termux_managed_child_close(&managed_child);
     require(managed_child.pidfd == -1 && managed_child.stdin_write == -1 && managed_child.stdout_read == -1 &&
         managed_child.stderr_read == -1 && managed_child.status_read == -1, "child descriptors invalidated");
     errno = 0;
