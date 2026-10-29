@@ -226,6 +226,32 @@ public class JobCoordinatorTest {
         } finally { release.countDown(); coordinator.stopAccepting(); closeEventually(coordinator); }
     }
 
+    @Test public void replayCanReturnOriginalAfterPathDisappearsWithCurrentAuthority() throws Exception {
+        JobRegistry registry = registry(); JobAuthority authority = new JobAuthority();
+        JobAuthority.Lease lease = authority.grant(EnumSet.of(JobAuthority.Permission.EXECUTE));
+        AtomicBoolean pathAvailable = new AtomicBoolean(true);
+        AppShellJobAdapter adapter = new AppShellJobAdapter((job, exe, cwd, capture, callback) -> {
+            capture.discardBeforeLaunch(); callback.finished(0, false); return new FakeProcess();
+        });
+        JobCoordinator.Policy policy = new JobCoordinator.Policy() {
+            @Override public JobCoordinator.Resolution authorizeAndResolve(JobSpec spec, long epoch) {
+                return pathAvailable.get() ? new JobCoordinator.Resolution("/bin/echo", "/home") : null;
+            }
+            @Override public boolean authorizeReplay(JobSpec spec, long epoch) { return true; }
+        };
+        JobCoordinator coordinator = new JobCoordinator(registry, adapter, policy, authority);
+        try {
+            JobCoordinator.StartResult first = coordinator.start(spec("run", 0), lease);
+            waitForTerminal(registry.get(first.job.id, lease.epoch()).record());
+            pathAvailable.set(false);
+            JobCoordinator.StartResult replay = coordinator.start(spec("run", 0), lease);
+            assertEquals(JobCoordinator.StartStatus.REPLAY, replay.status);
+            assertEquals(first.job.id, replay.job.id);
+            authority.revoke();
+            assertEquals(JobCoordinator.StartStatus.DENIED, coordinator.start(spec("run", 0), lease).status);
+        } finally { coordinator.stopAccepting(); closeEventually(coordinator); }
+    }
+
     @Test public void shutdownWaitsForActualPipeWorkersAfterTerminalResult() throws Exception {
         JobRegistry registry = registry(); JobAuthority authority = new JobAuthority();
         JobAuthority.Lease lease = authority.grant(EnumSet.of(JobAuthority.Permission.EXECUTE));

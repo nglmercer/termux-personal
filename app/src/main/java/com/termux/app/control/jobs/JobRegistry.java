@@ -79,6 +79,15 @@ public final class JobRegistry implements AutoCloseable {
         return entry != null && entry.mRecord.snapshot().authorizationEpoch == authorizationEpoch ? entry : null;
     }
 
+    /** Lookup without reserving resources or repeating a mutation. */
+    synchronized Admission replay(JobSpec spec, long epoch) {
+        if (mClosed) throw new IllegalStateException("Job registry closed");
+        Entry old = spec.clientRequestId() == null ? null : mRequests.get(spec.clientRequestId());
+        if (old == null) return null;
+        boolean same = old.mRecord.snapshot().authorizationEpoch == epoch && old.matches(spec);
+        return new Admission(same ? Status.REPLAY : Status.CONFLICT, same ? old : null);
+    }
+
     /** Internal views still require the current coordinator's permission check. */
     synchronized Entry getRetained(String id) { return mEntries.get(id); }
 

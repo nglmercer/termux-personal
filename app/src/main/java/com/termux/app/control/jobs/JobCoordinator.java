@@ -20,7 +20,11 @@ public final class JobCoordinator {
     public enum ReadStatus { OK, DENIED, NOT_FOUND, INVALID_REQUEST, UNAVAILABLE }
 
     /** Implementations must check server-derived authority and resolve executable and cwd on this worker. */
-    public interface Policy { Resolution authorizeAndResolve(JobSpec spec, long authorizationEpoch); }
+    public interface Policy {
+        Resolution authorizeAndResolve(JobSpec spec, long authorizationEpoch);
+        /** Short, nonblocking current non-path authority check; deny by default. */
+        default boolean authorizeReplay(JobSpec spec, long authorizationEpoch) { return false; }
+    }
     public static final class Resolution {
         public final String executable, cwd;
         public Resolution(String executable, String cwd) { this.executable = executable; this.cwd = cwd; }
@@ -85,6 +89,14 @@ public final class JobCoordinator {
         if (spec == null) throw new IllegalArgumentException("Invalid request");
         if (!mAuthority.allows(lease, JobAuthority.Permission.EXECUTE)) return new StartResult(StartStatus.DENIED, null);
         long authorizationEpoch = lease.epoch();
+        synchronized (this) {
+            if (mStopping) return new StartResult(StartStatus.UNAVAILABLE, null);
+            if (!mAuthority.allows(lease, JobAuthority.Permission.EXECUTE)) return new StartResult(StartStatus.DENIED, null);
+            JobRegistry.Admission replay = mRegistry.replay(spec, authorizationEpoch);
+            if (replay != null && replay.status == JobRegistry.Status.CONFLICT) return new StartResult(StartStatus.CONFLICT, null);
+            if (replay != null && mPolicy.authorizeReplay(spec, authorizationEpoch))
+                return new StartResult(StartStatus.REPLAY, replay.entry.record().snapshot());
+        }
         final Resolution resolution;
         try { resolution = mPolicy.authorizeAndResolve(spec, authorizationEpoch); }
         catch (SecurityException e) { return new StartResult(StartStatus.DENIED, null); }
