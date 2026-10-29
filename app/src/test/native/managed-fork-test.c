@@ -81,6 +81,7 @@ int main(void) {
     errno = 0;
     require(termux_managed_signal(handle, SIGTERM) == -1 && errno == ESRCH, "stale handle rejection");
     require(close(handle) == 0, "close pidfd");
+    for (int i = 0; i < 20; i++) require(termux_managed_probe_pidfd() == 0, "repeat disposable pidfd probe");
 
     int pipe_fds[2];
     require(pipe2(pipe_fds, O_CLOEXEC) == 0, "create exec pipe");

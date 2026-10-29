@@ -32,6 +32,9 @@ int termux_managed_launch(int executable_fd, int cwd_fd, char *const argv[], cha
  * descriptor lifetime with this call; never pass a recycled descriptor. */
 int termux_managed_signal(int pidfd, int signal_number);
 
+/* Worker-only partial availability probe; returns zero or a negative errno. */
+int termux_managed_probe_pidfd(void);
+
 /* Worker-only; call once for the still-owned, unreaped child. Exactly one of
  * exited and signaled is true on success. No descriptor is closed here. */
 struct termux_managed_result { int exited, exit_code, signaled, signal_number; };

@@ -105,6 +105,31 @@ int termux_managed_signal(int pidfd, int signal_number) {
 #endif
 }
 
+int termux_managed_probe_pidfd(void) {
+    int gate[2];
+    if (pipe2(gate, O_CLOEXEC) < 0) return -errno;
+    int fd;
+    pid_t child = termux_managed_fork_pidfd(&fd);
+    if (child < 0) { int error = errno; close(gate[0]); close(gate[1]); return -error; }
+    if (child == 0) {
+        close(gate[1]);
+        char byte;
+        while (read(gate[0], &byte, 1) < 0 && errno == EINTR) { }
+        _exit(0);
+    }
+    close(gate[0]);
+    int error = 0;
+    if (termux_managed_signal(fd, SIGKILL) < 0) error = errno;
+    close(gate[1]);
+    int status;
+    pid_t waited;
+    do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
+    if (waited < 0 && error == 0) error = errno;
+    if (waited > 0 && (!WIFSIGNALED(status) || WTERMSIG(status) != SIGKILL) && error == 0) error = EIO;
+    close(fd);
+    return error ? -error : 0;
+}
+
 int termux_managed_wait(pid_t pid, struct termux_managed_result *result) {
     if (pid <= 0 || result == NULL) { errno = EINVAL; return -1; }
     memset(result, 0, sizeof(*result));
