@@ -13,6 +13,7 @@
 #include <time.h>
 #include <limits.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 
 #ifndef CLOSE_RANGE_CLOEXEC
 #define CLOSE_RANGE_CLOEXEC (1U << 2)
@@ -76,6 +77,9 @@ int termux_managed_launch(int executable_fd, int cwd_fd, char *const argv[], cha
     if (executable_fd < 3 || cwd_fd < 3 || argv == NULL || argv[0] == NULL || envp == NULL) {
         errno = EINVAL; return -1;
     }
+    struct stat executable_stat, cwd_stat;
+    if (fstat(executable_fd, &executable_stat) < 0 || fstat(cwd_fd, &cwd_stat) < 0) return -1;
+    if (!S_ISREG(executable_stat.st_mode) || !S_ISDIR(cwd_stat.st_mode)) { errno = EINVAL; return -1; }
     struct termux_managed_pipes pipes;
     if (termux_managed_pipes_open(&pipes) < 0) return -1;
     int pidfd;

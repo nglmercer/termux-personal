@@ -27,6 +27,16 @@ int main(void) {
         invalid_child.stdout_read == -1 && invalid_child.stderr_read == -1 && invalid_child.status_read == -1,
         "invalid launch clears ownership outputs");
     termux_managed_child_close(&invalid_child);
+    int directory_fd = open("/tmp", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    int regular_fd = open("/bin/echo", O_PATH | O_CLOEXEC);
+    require(directory_fd >= 3 && regular_fd >= 3, "open descriptor validation inputs");
+    char *const invalid_argv[] = {"echo", NULL};
+    char *const invalid_env[] = {NULL};
+    errno = 0;
+    require(termux_managed_launch(directory_fd, regular_fd, invalid_argv, invalid_env, &invalid_child) == -1 && errno == EINVAL,
+        "reject swapped descriptor types before launch");
+    require(invalid_child.pid == -1 && invalid_child.pidfd == -1, "type rejection creates no child");
+    close(directory_fd); close(regular_fd);
     struct termux_managed_pipes managed_pipes;
     require(termux_managed_pipes_open(NULL) == -1 && errno == EINVAL, "reject missing pipe storage");
     require(termux_managed_pipes_open(&managed_pipes) == 0, "open managed pipes");

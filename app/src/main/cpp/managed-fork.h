@@ -20,7 +20,8 @@ void termux_managed_pipes_close(struct termux_managed_pipes *pipes);
 
 /* On success caller owns pidfd and the four retained pipe ends, and must reap
  * pid exactly once. pid is for waitpid only, never authority for signalling.
- * On failure no child exists and no descriptors are retained. */
+ * On failure no child exists and no descriptors are retained. Caller keeps the
+ * executable and cwd descriptors open and stable until this call returns. */
 struct termux_managed_child {
     pid_t pid;
     int pidfd, stdin_write, stdout_read, stderr_read, status_read;
