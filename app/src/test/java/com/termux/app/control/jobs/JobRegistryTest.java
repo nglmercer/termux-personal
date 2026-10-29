@@ -45,7 +45,7 @@ public class JobRegistryTest {
     }
 
     @Test public void concurrentSameKeyPublishesOnlyOneEntry() throws Exception {
-        try (JobRegistry registry = registry(2, 2)) {
+        try (JobRegistry registry = registry(1, 2)) {
             CountDownLatch gate = new CountDownLatch(1);
             AtomicReference<JobRegistry.Admission> a = new AtomicReference<>(), b = new AtomicReference<>();
             Thread one = new Thread(() -> { await(gate); a.set(registry.admit(spec("key", "x"), 8, 1000)); });
@@ -54,6 +54,8 @@ public class JobRegistryTest {
             assertSame(a.get().entry, b.get().entry);
             assertNotEquals(a.get().status, b.get().status);
             assertEquals(1, registry.list(8).size());
+            a.get().entry.capture().discardBeforeLaunch();
+            assertEquals(JobRegistry.Status.ACCEPTED, registry.admit(spec("new", "x"), 8, 1000).status);
         }
     }
 
