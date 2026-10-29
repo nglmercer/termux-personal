@@ -78,4 +78,32 @@ public class JobOutputStoreTest {
         }
         store.close();
     }
+
+    @Test public void finishedSnapshotNeverMissesFinalAppend() throws Exception {
+        JobOutputStore store = new JobOutputStore(16, 1, 32);
+        JobOutputStore.Output output = store.reserve("job");
+        CountDownLatch start = new CountDownLatch(1), done = new CountDownLatch(1);
+        Thread writer = new Thread(() -> {
+            try {
+                start.await();
+                for (int i = 0; i < 10000; i++) output.append(JobOutputStore.Stream.STDOUT, new byte[]{1}, 0, 1);
+                output.finish();
+            } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            finally { done.countDown(); }
+        });
+        try {
+            writer.start(); start.countDown();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            boolean observed = false;
+            while (System.nanoTime() < deadline) {
+                JobOutputStore.Read read = output.readSnapshot(JobOutputStore.Stream.STDOUT, 0, 16);
+                if (read.finished) {
+                    assertEquals(10000, read.data.endOffset);
+                    observed = true; break;
+                }
+            }
+            assertTrue("finished snapshot observed", observed);
+            assertTrue(done.await(5, TimeUnit.SECONDS));
+        } finally { writer.join(5000); store.close(); }
+    }
 }
