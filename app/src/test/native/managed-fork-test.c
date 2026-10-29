@@ -229,7 +229,11 @@ int main(void) {
     shell = open("/bin/sh", O_PATH | O_CLOEXEC);
     cwd = open("/tmp", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     char *const wait_argv[] = {"sh", "-c", "read x", NULL};
+    sigset_t blocked, previous;
+    require(sigemptyset(&blocked) == 0 && sigaddset(&blocked, SIGTERM) == 0 &&
+        sigprocmask(SIG_BLOCK, &blocked, &previous) == 0, "block parent SIGTERM");
     require(termux_managed_launch(shell, cwd, wait_argv, launch_env, &managed_child) == 0, "launch cancellable child");
+    require(sigprocmask(SIG_SETMASK, &previous, NULL) == 0, "restore parent signal mask");
     close(shell); close(cwd);
     require(termux_managed_read_exec_status(managed_child.status_read, 2000, &exec_error) == 0, "cancellable exec status");
     require(termux_managed_signal(managed_child.pidfd, SIGTERM) == 0, "signal launched child handle");

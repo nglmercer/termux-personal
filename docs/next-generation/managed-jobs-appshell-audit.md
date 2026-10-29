@@ -43,6 +43,8 @@ The child now requests `close_range(CLOSE_RANGE_CLOEXEC)` before exec and fails 
 
 The native prototype exposes TERM, KILL and INT through the owned pidfd only. Its host test signals a launched child and confirms that a later signal to the same handle fails after exit. Descriptor lifetime must be synchronized by the eventual coordinator; this helper does not implement the cancellation state machine or prove Android support.
 
+Before exec, the child clears its inherited signal mask and restores default TERM, INT and PIPE dispositions. A host test launches while the parent thread blocks TERM and verifies that the child can still be terminated. Device behavior remains unverified.
+
 A worker-only wait helper distinguishes a normal exit code from termination by signal and reports duplicate reaping as an error. Its caller must ensure a single owner for waiting and preserve the pidfd independently for signaling; this helper does not make numeric PIDs an authorization mechanism.
 
 The native child result also has a descriptor cleanup helper. It neither signals nor reaps the process; callers must synchronize it with descriptor use and invalidate fields when transferring or closing individual descriptors. Host tests cover repeated cleanup, but lifecycle integration remains unfinished.

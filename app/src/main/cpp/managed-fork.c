@@ -165,6 +165,15 @@ void termux_managed_exec_child(int executable_fd, int cwd_fd, int error_fd,
     else if (dup2(stdin_fd, STDIN_FILENO) < 0 || dup2(stdout_fd, STDOUT_FILENO) < 0 ||
              dup2(stderr_fd, STDERR_FILENO) < 0 || fchdir(cwd_fd) < 0) failure = errno;
     else {
+        sigset_t mask;
+        struct sigaction action;
+        memset(&action, 0, sizeof(action));
+        action.sa_handler = SIG_DFL;
+        if (sigemptyset(&mask) < 0 || sigprocmask(SIG_SETMASK, &mask, NULL) < 0 ||
+            sigemptyset(&action.sa_mask) < 0 || sigaction(SIGTERM, &action, NULL) < 0 ||
+            sigaction(SIGINT, &action, NULL) < 0 || sigaction(SIGPIPE, &action, NULL) < 0) {
+            failure = errno;
+        } else {
 #if defined(__NR_close_range)
         if (syscall(__NR_close_range, 3U, UINT_MAX, CLOSE_RANGE_CLOEXEC) < 0) failure = errno;
         else {
@@ -178,6 +187,7 @@ void termux_managed_exec_child(int executable_fd, int cwd_fd, int error_fd,
 #else
         failure = ENOSYS;
 #endif
+        }
     }
     const char *bytes = (const char *)&failure;
     size_t remaining = sizeof(failure);
