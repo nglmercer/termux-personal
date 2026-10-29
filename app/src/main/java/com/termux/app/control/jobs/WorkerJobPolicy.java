@@ -8,10 +8,16 @@ public final class WorkerJobPolicy implements JobCoordinator.Policy {
         this.delegate = delegate;
     }
     @Override public JobCoordinator.Resolution authorizeAndResolve(JobSpec spec, long epoch) {
+        requireWorker();
+        return delegate.authorizeAndResolve(spec, epoch);
+    }
+    @Override public boolean authorizeReplay(JobSpec spec, long epoch) {
+        requireWorker();
+        return delegate.authorizeReplay(spec, epoch);
+    }
+    private static void requireWorker() {
         android.os.Looper main = android.os.Looper.getMainLooper();
         if (main != null && android.os.Looper.myLooper() == main)
             throw new IllegalStateException("Job policy must run off the main thread");
-        return delegate.authorizeAndResolve(spec, epoch);
     }
-    @Override public boolean authorizeReplay(JobSpec spec, long epoch) { return delegate.authorizeReplay(spec, epoch); }
 }

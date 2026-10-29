@@ -21,6 +21,12 @@ public class WorkerJobPolicyInstrumentedTest {
         });
         assertTrue(rejected.get());
         assertTrue(!called.get());
+        rejected.set(false);
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            try { policy.authorizeReplay(null, 0); }
+            catch (IllegalStateException expected) { rejected.set(true); }
+        });
+        assertTrue(rejected.get());
     }
 
     @Test public void productionCoordinatorDoesNotResolveOnMainThread() {
