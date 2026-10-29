@@ -6,9 +6,12 @@ import static org.junit.Assert.*;
 
 public class LocalControlOptionsTest {
     @Test public void existingConsentNeverGrantsNewDomainScopes() {
-        Set<ControlCore.Scope> granted = LocalControlOptions.scopes(true, true, true, true);
-        for (ControlCore.Scope scope : ControlCore.Scope.values()) {
-            if (!scope.name().startsWith("SESSIONS_")) assertFalse(granted.contains(scope));
+        for (int mask = 0; mask < 16; mask++) {
+            Set<ControlCore.Scope> granted = LocalControlOptions.scopes((mask & 1) != 0, (mask & 2) != 0,
+                (mask & 4) != 0, (mask & 8) != 0);
+            for (ControlCore.Scope scope : ControlCore.Scope.values()) {
+                if (!scope.name().startsWith("SESSIONS_")) assertFalse(granted.contains(scope));
+            }
         }
     }
     @Test public void closeNeedsBothWriteModeAndExplicitConsent() {
