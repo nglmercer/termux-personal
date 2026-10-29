@@ -31,7 +31,11 @@ public class JobCoordinatorTest {
             launches.incrementAndGet(); launching.countDown(); await(release);
             capture.discardBeforeLaunch(); callback.finished(0, false); return new FakeProcess();
         });
-        JobCoordinator coordinator = new JobCoordinator(registry, adapter, (job, epoch) -> new JobCoordinator.Resolution("/bin/echo", "/home"), authority, 1);
+        JobCoordinator.Policy replayPolicy = new JobCoordinator.Policy() {
+            @Override public JobCoordinator.Resolution authorizeAndResolve(JobSpec job, long epoch) { return new JobCoordinator.Resolution("/bin/echo", "/home"); }
+            @Override public boolean authorizeReplay(JobSpec job, long epoch) { return true; }
+        };
+        JobCoordinator coordinator = new JobCoordinator(registry, adapter, replayPolicy, authority, 1);
         try {
             JobCoordinator.StartResult first = coordinator.start(spec("one", 0), lease);
             assertEquals(JobCoordinator.StartStatus.ACCEPTED, first.status);
@@ -248,6 +252,21 @@ public class JobCoordinatorTest {
             assertEquals(JobCoordinator.StartStatus.REPLAY, replay.status);
             assertEquals(first.job.id, replay.job.id);
             authority.revoke();
+            assertEquals(JobCoordinator.StartStatus.DENIED, coordinator.start(spec("run", 0), lease).status);
+        } finally { coordinator.stopAccepting(); closeEventually(coordinator); }
+    }
+
+    @Test public void replayPolicyDenialCannotFallThroughToAdmission() throws Exception {
+        JobRegistry registry = registry(); JobAuthority authority = new JobAuthority();
+        JobAuthority.Lease lease = authority.grant(EnumSet.of(JobAuthority.Permission.EXECUTE));
+        AppShellJobAdapter adapter = new AppShellJobAdapter((job, exe, cwd, capture, callback) -> {
+            capture.discardBeforeLaunch(); callback.finished(0, false); return new FakeProcess();
+        });
+        JobCoordinator coordinator = new JobCoordinator(registry, adapter,
+            (job, epoch) -> new JobCoordinator.Resolution("/bin/echo", "/home"), authority);
+        try {
+            JobCoordinator.StartResult first = coordinator.start(spec("run", 0), lease);
+            waitForTerminal(registry.get(first.job.id, lease.epoch()).record());
             assertEquals(JobCoordinator.StartStatus.DENIED, coordinator.start(spec("run", 0), lease).status);
         } finally { coordinator.stopAccepting(); closeEventually(coordinator); }
     }

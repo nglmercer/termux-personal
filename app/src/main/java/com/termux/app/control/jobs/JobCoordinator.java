@@ -94,8 +94,14 @@ public final class JobCoordinator {
             if (!mAuthority.allows(lease, JobAuthority.Permission.EXECUTE)) return new StartResult(StartStatus.DENIED, null);
             JobRegistry.Admission replay = mRegistry.replay(spec, authorizationEpoch);
             if (replay != null && replay.status == JobRegistry.Status.CONFLICT) return new StartResult(StartStatus.CONFLICT, null);
-            if (replay != null && mPolicy.authorizeReplay(spec, authorizationEpoch))
-                return new StartResult(StartStatus.REPLAY, replay.entry.record().snapshot());
+            if (replay != null) {
+                final boolean allowed;
+                try { allowed = mPolicy.authorizeReplay(spec, authorizationEpoch); }
+                catch (SecurityException e) { return new StartResult(StartStatus.DENIED, null); }
+                catch (RuntimeException e) { return new StartResult(StartStatus.UNAVAILABLE, null); }
+                return allowed ? new StartResult(StartStatus.REPLAY, replay.entry.record().snapshot()) :
+                    new StartResult(StartStatus.DENIED, null);
+            }
         }
         final Resolution resolution;
         try { resolution = mPolicy.authorizeAndResolve(spec, authorizationEpoch); }
@@ -109,6 +115,11 @@ public final class JobCoordinator {
             if (!mAuthority.allows(lease, JobAuthority.Permission.EXECUTE)) return new StartResult(StartStatus.DENIED, null);
             JobRegistry.Admission admission = mRegistry.admit(spec, authorizationEpoch, 5000);
             if (admission.status != JobRegistry.Status.ACCEPTED) {
+                if (admission.status == JobRegistry.Status.REPLAY) {
+                    try { if (!mPolicy.authorizeReplay(spec, authorizationEpoch)) return new StartResult(StartStatus.DENIED, null); }
+                    catch (SecurityException e) { return new StartResult(StartStatus.DENIED, null); }
+                    catch (RuntimeException e) { return new StartResult(StartStatus.UNAVAILABLE, null); }
+                }
                 StartStatus status = admission.status == JobRegistry.Status.REPLAY ? StartStatus.REPLAY :
                     admission.status == JobRegistry.Status.CONFLICT ? StartStatus.CONFLICT : StartStatus.LIMIT_REACHED;
                 return new StartResult(status, admission.entry == null ? null : admission.entry.record().snapshot());

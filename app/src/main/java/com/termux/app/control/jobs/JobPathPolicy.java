@@ -35,6 +35,10 @@ public final class JobPathPolicy implements JobCoordinator.Policy {
     }
 
     /** Returns null for unauthorized or unavailable paths. Workspace resolution is not implemented yet. */
+    @Override public boolean authorizeReplay(JobSpec spec, long authorizationEpoch) {
+        return spec != null && authorizationEpoch >= 0 && spec.workspaceId() == null;
+    }
+
     @Override public JobCoordinator.Resolution authorizeAndResolve(JobSpec spec, long authorizationEpoch) {
         if (spec == null || authorizationEpoch < 0 || spec.workspaceId() != null) return null;
         String executable = spec.executable().startsWith("/") ? spec.executable() : mNamedExecutables.get(spec.executable());
