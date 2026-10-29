@@ -14,7 +14,7 @@ public final class ManagedNative {
     }
     private ManagedNative() { }
     public static boolean isLibraryAvailable() { return AVAILABLE; }
-    /** Returns zero if atomic pidfd creation and signal-zero succeeded, otherwise negative errno.
+    /** Returns zero if atomic pidfd creation and owned SIGTERM succeeded, otherwise negative errno.
      * This is a partial probe, not a guarantee of exec, close_range, or job availability. */
     public static int probePidfd() {
         if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
