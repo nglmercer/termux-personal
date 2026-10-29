@@ -55,6 +55,13 @@ public class JobRecordTest {
         assertEquals(JobRecord.Failure.CAPTURE_FAILED, job.snapshot().failure);
     }
 
+    @Test public void startupFailureCannotInventExitCode() {
+        JobRecord job = new JobRecord("job", null, 0);
+        assertThrows(IllegalArgumentException.class,
+            () -> job.complete(JobRecord.State.FAILED, 0, JobRecord.Failure.START_FAILED, 1));
+        assertEquals(JobRecord.State.QUEUED, job.snapshot().state);
+    }
+
     private static void await(CountDownLatch gate) {
         try { gate.await(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new AssertionError(e); }
     }
