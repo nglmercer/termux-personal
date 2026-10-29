@@ -271,6 +271,33 @@ public class JobCoordinatorTest {
         } finally { coordinator.stopAccepting(); closeEventually(coordinator); }
     }
 
+    @Test public void concurrentAdmissionsStillApplyReplayPolicy() throws Exception {
+        JobRegistry registry = registry(); JobAuthority authority = new JobAuthority();
+        JobAuthority.Lease lease = authority.grant(EnumSet.of(JobAuthority.Permission.EXECUTE));
+        CountDownLatch resolving = new CountDownLatch(2), release = new CountDownLatch(1);
+        AtomicInteger launches = new AtomicInteger();
+        AppShellJobAdapter adapter = new AppShellJobAdapter((job, exe, cwd, capture, callback) -> {
+            launches.incrementAndGet(); capture.discardBeforeLaunch(); callback.finished(0, false); return new FakeProcess();
+        });
+        JobCoordinator coordinator = new JobCoordinator(registry, adapter, (job, epoch) -> {
+            resolving.countDown(); await(release);
+            return new JobCoordinator.Resolution("/bin/echo", "/home");
+        }, authority);
+        AtomicReference<JobCoordinator.StartResult> one = new AtomicReference<>(), two = new AtomicReference<>();
+        Thread first = new Thread(() -> one.set(coordinator.start(spec("same", 0), lease)));
+        Thread second = new Thread(() -> two.set(coordinator.start(spec("same", 0), lease)));
+        try {
+            first.start(); second.start(); assertTrue(resolving.await(2, TimeUnit.SECONDS));
+            release.countDown(); first.join(2000); second.join(2000);
+            assertFalse(first.isAlive()); assertFalse(second.isAlive());
+            assertTrue((one.get().status == JobCoordinator.StartStatus.ACCEPTED && two.get().status == JobCoordinator.StartStatus.DENIED) ||
+                (two.get().status == JobCoordinator.StartStatus.ACCEPTED && one.get().status == JobCoordinator.StartStatus.DENIED));
+            JobCoordinator.StartResult accepted = one.get().status == JobCoordinator.StartStatus.ACCEPTED ? one.get() : two.get();
+            waitForTerminal(registry.get(accepted.job.id, lease.epoch()).record());
+            assertEquals(1, launches.get());
+        } finally { release.countDown(); first.join(2000); second.join(2000); coordinator.stopAccepting(); closeEventually(coordinator); }
+    }
+
     @Test public void shutdownWaitsForActualPipeWorkersAfterTerminalResult() throws Exception {
         JobRegistry registry = registry(); JobAuthority authority = new JobAuthority();
         JobAuthority.Lease lease = authority.grant(EnumSet.of(JobAuthority.Permission.EXECUTE));
