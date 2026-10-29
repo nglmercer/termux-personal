@@ -52,6 +52,9 @@ public class JobOutputStoreTest {
     @Test public void rejectsInvalidQuotaAndReadLimits() {
         try { new JobOutputStore(0, 1, 2); fail(); } catch (IllegalArgumentException expected) { }
         try { new JobOutputStore(4, 1, 7); fail(); } catch (IllegalArgumentException expected) { }
+        try { new JobOutputStore(Integer.MAX_VALUE, 1, Integer.MAX_VALUE); fail(); } catch (IllegalArgumentException expected) { }
+        try { new JobOutputStore(1, Integer.MAX_VALUE, Integer.MAX_VALUE); fail(); } catch (IllegalArgumentException expected) { }
+        try { new JobOutputStore(1, 1, Integer.MIN_VALUE); fail(); } catch (IllegalArgumentException expected) { }
         JobOutputStore store = new JobOutputStore(4, 1, 8);
         JobOutputStore.Output output = store.reserve("job");
         try { output.read(JobOutputStore.Stream.STDOUT, 0, 0); fail(); } catch (IllegalArgumentException expected) { }
