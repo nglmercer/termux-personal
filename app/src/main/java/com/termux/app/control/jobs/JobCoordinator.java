@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit;
 /** Internal admission and worker orchestration; not an authorization or IPC entry point. */
 public final class JobCoordinator {
     public enum StartStatus { ACCEPTED, REPLAY, CONFLICT, DENIED, LIMIT_REACHED, UNSUPPORTED, UNAVAILABLE }
-    public enum CancelStatus { ACCEPTED, DENIED, NOT_FOUND, FINISHED, ALREADY_REQUESTED, UNSUPPORTED }
+    public enum CancelStatus { ACCEPTED, DENIED, NOT_FOUND, INVALID_REQUEST, FINISHED, ALREADY_REQUESTED, UNSUPPORTED }
     public enum ReadStatus { OK, DENIED, NOT_FOUND, INVALID_REQUEST, UNAVAILABLE }
 
     /** Implementations must check server-derived authority and resolve executable and cwd on this worker. */
@@ -139,6 +139,7 @@ public final class JobCoordinator {
     public CancelStatus cancel(String id, JobAuthority.Lease lease) {
         synchronized (this) {
             if (!mAuthority.allows(lease, JobAuthority.Permission.CANCEL)) return CancelStatus.DENIED;
+            if (!validId(id)) return CancelStatus.INVALID_REQUEST;
             JobRegistry.Entry entry = mRegistry.get(id, lease.epoch());
             if (entry == null) return CancelStatus.NOT_FOUND;
             Work work = mWork.get(id);

@@ -42,6 +42,7 @@ public class JobCoordinatorTest {
             assertTrue(launching.await(2, TimeUnit.SECONDS));
             JobCoordinator.StartResult queued = coordinator.start(spec("two", 0), lease);
             assertEquals(JobRecord.State.QUEUED, queued.job.state);
+            assertEquals(JobCoordinator.CancelStatus.INVALID_REQUEST, coordinator.cancel(null, lease));
             JobAuthority.Lease foreign = new JobAuthority().grant(EnumSet.of(JobAuthority.Permission.CANCEL));
             assertEquals(JobCoordinator.CancelStatus.DENIED, coordinator.cancel(queued.job.id, foreign));
             assertEquals(JobCoordinator.CancelStatus.ACCEPTED, coordinator.cancel(queued.job.id, lease));
