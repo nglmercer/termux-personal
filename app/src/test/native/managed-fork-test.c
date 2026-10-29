@@ -288,6 +288,14 @@ int main(void) {
     errno = 0;
     require(termux_managed_read_exec_status(errors[0], 2000, &exec_error) == -1 && errno == EPROTO, "reject partial error");
     close(errors[0]);
+    require(pipe2(errors, O_CLOEXEC) == 0, "create malformed status pipe");
+    int invalid_error = 0;
+    require(write(errors[1], &invalid_error, sizeof(invalid_error)) == sizeof(invalid_error) && close(errors[1]) == 0,
+        "write invalid error code");
+    errno = 0;
+    require(termux_managed_read_exec_status(errors[0], 2000, &exec_error) == -1 && errno == EPROTO,
+        "reject zero error code");
+    close(errors[0]);
 
     for (int i = 0; i < 100; i++) {
         handle = -1;
