@@ -67,7 +67,7 @@ public final class JobCoordinator {
     private boolean mStopping, mClosed;
 
     public JobCoordinator(JobRegistry registry, AppShellJobAdapter adapter, Policy policy, JobAuthority authority) {
-        this(registry, adapter, policy, authority, JobIoPool.MAX_JOBS);
+        this(registry, adapter, new WorkerJobPolicy(policy), authority, JobIoPool.MAX_JOBS);
     }
 
     JobCoordinator(JobRegistry registry, AppShellJobAdapter adapter, Policy policy, JobAuthority authority, int launchWorkers) {

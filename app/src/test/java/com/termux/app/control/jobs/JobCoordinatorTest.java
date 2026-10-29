@@ -87,7 +87,7 @@ public class JobCoordinatorTest {
         AppShellJobAdapter adapter = new AppShellJobAdapter((job, exe, cwd, capture, done) -> {
             capture.discardBeforeLaunch(); callback.set(done); launched.countDown(); return new FakeProcess();
         });
-        JobCoordinator coordinator = new JobCoordinator(registry, adapter, (job, epoch) -> new JobCoordinator.Resolution("/bin/echo", "/home"), authority);
+        JobCoordinator coordinator = new JobCoordinator(registry, adapter, (job, epoch) -> new JobCoordinator.Resolution("/bin/echo", "/home"), authority, 4);
         try {
             assertEquals(JobCoordinator.StartStatus.UNSUPPORTED, coordinator.start(spec("timeout", 100), lease).status);
             assertTrue(registry.list(lease.epoch()).isEmpty());
@@ -135,7 +135,7 @@ public class JobCoordinatorTest {
             launched.countDown(); await(release); capture.discardBeforeLaunch(); callback.finished(0, false); return new FakeProcess();
         });
         JobCoordinator coordinator = new JobCoordinator(registry, adapter,
-            (job, epoch) -> new JobCoordinator.Resolution("/bin/echo", "/home"), authority);
+            (job, epoch) -> new JobCoordinator.Resolution("/bin/echo", "/home"), authority, 4);
         try {
             JobCoordinator.StartResult started = coordinator.start(spec("run", 0), execute);
             assertTrue(launched.await(2, TimeUnit.SECONDS));
@@ -179,7 +179,7 @@ public class JobCoordinatorTest {
             capture.discardBeforeLaunch(); callback.finished(0, false); return new FakeProcess();
         });
         JobCoordinator coordinator = new JobCoordinator(registry, adapter,
-            (job, epoch) -> new JobCoordinator.Resolution("/bin/echo", "/home"), authority);
+            (job, epoch) -> new JobCoordinator.Resolution("/bin/echo", "/home"), authority, 4);
         try {
             JobCoordinator.StartResult first = coordinator.start(spec("one", 0), lease);
             waitForTerminal(registry.get(first.job.id, lease.epoch()).record());
@@ -203,7 +203,7 @@ public class JobCoordinatorTest {
             return new FakeProcess();
         });
         JobCoordinator coordinator = new JobCoordinator(registry, adapter,
-            (job, epoch) -> new JobCoordinator.Resolution("/bin/echo", "/home"), authority);
+            (job, epoch) -> new JobCoordinator.Resolution("/bin/echo", "/home"), authority, 4);
         try {
             JobCoordinator.StartResult started = coordinator.start(spec("run", 0), lease);
             assertTrue(callbackDone.await(2, TimeUnit.SECONDS));
@@ -225,7 +225,7 @@ public class JobCoordinatorTest {
         JobCoordinator coordinator = new JobCoordinator(registry, adapter, (job, epoch) -> {
             if (checks.incrementAndGet() == 2) { resolving.countDown(); await(release); }
             return new JobCoordinator.Resolution("/bin/echo", "/home");
-        }, authority);
+        }, authority, 4);
         try {
             JobCoordinator.StartResult started = coordinator.start(spec("run", 0), lease);
             assertTrue(resolving.await(2, TimeUnit.SECONDS));
@@ -249,7 +249,7 @@ public class JobCoordinatorTest {
             }
             @Override public boolean authorizeReplay(JobSpec spec, long epoch) { return true; }
         };
-        JobCoordinator coordinator = new JobCoordinator(registry, adapter, policy, authority);
+        JobCoordinator coordinator = new JobCoordinator(registry, adapter, policy, authority, 4);
         try {
             JobCoordinator.StartResult first = coordinator.start(spec("run", 0), lease);
             waitForTerminal(registry.get(first.job.id, lease.epoch()).record());
@@ -269,7 +269,7 @@ public class JobCoordinatorTest {
             capture.discardBeforeLaunch(); callback.finished(0, false); return new FakeProcess();
         });
         JobCoordinator coordinator = new JobCoordinator(registry, adapter,
-            (job, epoch) -> new JobCoordinator.Resolution("/bin/echo", "/home"), authority);
+            (job, epoch) -> new JobCoordinator.Resolution("/bin/echo", "/home"), authority, 4);
         try {
             JobCoordinator.StartResult first = coordinator.start(spec("run", 0), lease);
             waitForTerminal(registry.get(first.job.id, lease.epoch()).record());
@@ -288,7 +288,7 @@ public class JobCoordinatorTest {
         JobCoordinator coordinator = new JobCoordinator(registry, adapter, (job, epoch) -> {
             resolving.countDown(); await(release);
             return new JobCoordinator.Resolution("/bin/echo", "/home");
-        }, authority);
+        }, authority, 4);
         AtomicReference<JobCoordinator.StartResult> one = new AtomicReference<>(), two = new AtomicReference<>();
         Thread first = new Thread(() -> one.set(coordinator.start(spec("same", 0), lease)));
         Thread second = new Thread(() -> two.set(coordinator.start(spec("same", 0), lease)));
@@ -327,7 +327,7 @@ public class JobCoordinatorTest {
             return process;
         });
         JobCoordinator coordinator = new JobCoordinator(registry, adapter,
-            (job, epoch) -> new JobCoordinator.Resolution("/bin/echo", "/home"), authority);
+            (job, epoch) -> new JobCoordinator.Resolution("/bin/echo", "/home"), authority, 4);
         try {
             JobCoordinator.StartResult started = coordinator.start(spec("run", 0), lease);
             assertTrue(workerStarted.await(2, TimeUnit.SECONDS));
