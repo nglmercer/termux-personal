@@ -163,6 +163,12 @@ public class JobCoordinatorTest {
             release.countDown(); waitForTerminal(entry.record());
             JobCoordinator.OutputResult finalRead = coordinator.readOutput(started.job.id, output, JobOutputStore.Stream.STDOUT, 24, 16);
             assertTrue(finalRead.finished); assertEquals(24, finalRead.output.endOffset); assertEquals(0, finalRead.output.data.length);
+            authority.revoke();
+            assertEquals(JobCoordinator.ReadStatus.DENIED, coordinator.readOutput(started.job.id, output, JobOutputStore.Stream.STDOUT, 0, 16).status);
+            JobAuthority.Lease later = authority.grant(EnumSet.of(JobAuthority.Permission.READ, JobAuthority.Permission.CANCEL));
+            assertEquals(JobCoordinator.ReadStatus.OK, coordinator.get(started.job.id, later).status);
+            assertEquals(JobCoordinator.CancelStatus.NOT_FOUND, coordinator.cancel(started.job.id, later));
+            assertEquals(JobCoordinator.ReadStatus.DENIED, coordinator.readOutput(started.job.id, later, JobOutputStore.Stream.STDOUT, 0, 16).status);
         } finally { release.countDown(); coordinator.stopAccepting(); closeEventually(coordinator); }
     }
 
