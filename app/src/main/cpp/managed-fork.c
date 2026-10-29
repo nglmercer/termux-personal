@@ -119,6 +119,15 @@ int termux_managed_signal(int pidfd, int signal_number) {
 }
 
 int termux_managed_probe_pidfd(void) {
+#if defined(__NR_waitid)
+    /* Check pidfd wait support before creating a child that may need reaping. */
+    siginfo_t preflight;
+    memset(&preflight, 0, sizeof(preflight));
+    if (syscall(__NR_waitid, 3 /* P_PIDFD */, INT_MAX, &preflight, WEXITED | WNOHANG, NULL) == 0 || errno != EBADF)
+        return -(errno ? errno : EIO);
+#else
+    return -ENOSYS;
+#endif
     int gate[2];
     if (pipe2(gate, O_CLOEXEC) < 0) return -errno;
     int fd;
@@ -136,13 +145,9 @@ int termux_managed_probe_pidfd(void) {
     close(gate[1]);
     struct termux_managed_result result;
     if (termux_managed_wait(fd, &result) < 0) {
-        int wait_error = errno;
-        /* Probe cleanup only. This assumes no other component reaps this child;
-         * no numeric-PID fallback is exposed for managed jobs. */
-        int status;
-        pid_t waited;
-        do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
-        if (error == 0) error = wait_error;
+        /* Do not wait on a PID that another component may have reaped and the
+         * kernel may have reused. Report uncertainty if pidfd wait fails. */
+        if (error == 0) error = errno;
     } else if ((!result.signaled || result.signal_number != SIGKILL) && error == 0) error = EIO;
     close(fd);
     return error ? -error : 0;
