@@ -244,6 +244,22 @@ int main(void) {
     int old_pidfd = managed_child.pidfd;
     termux_managed_child_close(&managed_child);
 
+    char script_path[] = "/tmp/termux-managed-script-XXXXXX";
+    int script_file = mkstemp(script_path);
+    const char script_body[] = "#!/bin/sh\nexit 0\n";
+    require(script_file >= 0 && write(script_file, script_body, sizeof(script_body) - 1) == (ssize_t)(sizeof(script_body) - 1) &&
+        fchmod(script_file, 0700) == 0 && close(script_file) == 0, "create shebang script");
+    script_file = open(script_path, O_PATH | O_CLOEXEC);
+    cwd = open("/tmp", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    char *const script_argv[] = {"script", NULL};
+    require(termux_managed_launch(script_file, cwd, script_argv, launch_env, &managed_child) == 0, "launch shebang probe");
+    close(script_file); close(cwd); unlink(script_path);
+    require(termux_managed_read_exec_status(managed_child.status_read, 2000, &exec_error) == 1 && exec_error == ENOENT,
+        "report close-on-exec shebang limitation");
+    require(termux_managed_wait(managed_child.pidfd, &result) == 0 && result.exited && result.exit_code == 127,
+        "reap shebang probe");
+    termux_managed_child_close(&managed_child);
+
     char nonexec_path[] = "/tmp/termux-managed-nonexec-XXXXXX";
     int nonexec_file = mkstemp(nonexec_path);
     require(nonexec_file >= 0 && write(nonexec_file, "not executable", 14) == 14 && close(nonexec_file) == 0,

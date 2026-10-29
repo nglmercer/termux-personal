@@ -29,6 +29,8 @@ Coordinator metadata listing and bounded output reads are independently authoriz
 
 The host pidfd test also exercises `execveat(AT_EMPTY_PATH)` on a close-on-exec `O_PATH` descriptor for an ELF executable after replacing its pathname with a symlink to a different executable. This is a host-only probe, not proof of Android support or script compatibility; interpreter scripts can have different descriptor and close-on-exec requirements. The production launcher and fallback behavior remain unimplemented.
 
+On the tested Linux host, directly executing a shebang script through this close-on-exec descriptor fails with `ENOENT`; the regression test records the error and reaps the child. Script support needs a reviewed design that preserves descriptor and interpreter access without leaking unrelated descriptors. Explicitly invoking an interpreter is a separate argv choice and does not by itself solve script-path containment.
+
 The native prototype now has a child-only `fchdir`/`execveat` helper that reports pre-exec errors over a close-on-exec pipe and exits without returning to Java. Its host test covers successful execution and a working-directory failure; all four ABI compilers accept it. Parent-side launch, pipe ownership, integration and Android validation are still absent.
 
 A parent-side status reader bounds the wait and rejects partial error messages. EOF with no error is deliberately reported only as pipe closure: a child can die before reporting an error, so EOF alone does not prove execution. Callers must retain ownership of the child and reconcile its actual outcome. The helper requires a single reader and correct closure of other pipe writers.
