@@ -204,6 +204,28 @@ public class JobCoordinatorTest {
         } finally { release.countDown(); coordinator.stopAccepting(); closeEventually(coordinator); }
     }
 
+    @Test public void shutdownPreventsLaunchStillResolvingPolicy() throws Exception {
+        JobRegistry registry = registry(); JobAuthority authority = new JobAuthority();
+        JobAuthority.Lease lease = authority.grant(EnumSet.of(JobAuthority.Permission.EXECUTE));
+        CountDownLatch resolving = new CountDownLatch(1), release = new CountDownLatch(1);
+        AtomicInteger checks = new AtomicInteger(), launches = new AtomicInteger();
+        AppShellJobAdapter adapter = new AppShellJobAdapter((job, exe, cwd, capture, callback) -> {
+            launches.incrementAndGet(); return null;
+        });
+        JobCoordinator coordinator = new JobCoordinator(registry, adapter, (job, epoch) -> {
+            if (checks.incrementAndGet() == 2) { resolving.countDown(); await(release); }
+            return new JobCoordinator.Resolution("/bin/echo", "/home");
+        }, authority);
+        try {
+            JobCoordinator.StartResult started = coordinator.start(spec("run", 0), lease);
+            assertTrue(resolving.await(2, TimeUnit.SECONDS));
+            coordinator.stopAccepting(); release.countDown();
+            waitForTerminal(registry.get(started.job.id, lease.epoch()).record());
+            assertEquals(0, launches.get());
+            closeEventually(coordinator);
+        } finally { release.countDown(); coordinator.stopAccepting(); closeEventually(coordinator); }
+    }
+
     private static void waitForTerminal(JobRecord record) throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
         while (!JobRecord.isTerminal(record.snapshot().state) && System.nanoTime() < deadline) Thread.yield();

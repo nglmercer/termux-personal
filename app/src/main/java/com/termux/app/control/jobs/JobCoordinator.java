@@ -215,9 +215,12 @@ public final class JobCoordinator {
                 Resolution current = mPolicy.authorizeAndResolve(spec, entry.record().snapshot().authorizationEpoch);
                 if (current == null || !Objects.equals(current.executable, resolution.executable) ||
                     !Objects.equals(current.cwd, resolution.cwd)) throw new SecurityException("Job authorization changed");
-                // This short state check marks the operation in flight; revocation cannot undo a
-                // launch already past this point, so its outcome may need reconciliation.
-                if (!mAuthority.allows(lease, JobAuthority.Permission.EXECUTE)) throw new SecurityException("Job consent revoked");
+                // The lock orders this final check against shutdown. Launches past it are in
+                // flight and may still complete after shutdown or revocation.
+                synchronized (JobCoordinator.this) {
+                    if (mStopping || !mAuthority.allows(lease, JobAuthority.Permission.EXECUTE))
+                        throw new SecurityException("Job consent revoked or service stopping");
+                }
                 mAdapter.launchBegun(entry, spec, current.executable, current.cwd, control);
             }
             catch (RuntimeException | Error e) {
