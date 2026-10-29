@@ -134,11 +134,16 @@ int termux_managed_probe_pidfd(void) {
     int error = 0;
     if (termux_managed_signal(fd, SIGKILL) < 0) error = errno;
     close(gate[1]);
-    int status;
-    pid_t waited;
-    do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
-    if (waited < 0 && error == 0) error = errno;
-    if (waited > 0 && (!WIFSIGNALED(status) || WTERMSIG(status) != SIGKILL) && error == 0) error = EIO;
+    struct termux_managed_result result;
+    if (termux_managed_wait(fd, &result) < 0) {
+        int wait_error = errno;
+        /* Probe cleanup only. This assumes no other component reaps this child;
+         * no numeric-PID fallback is exposed for managed jobs. */
+        int status;
+        pid_t waited;
+        do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
+        if (error == 0) error = wait_error;
+    } else if ((!result.signaled || result.signal_number != SIGKILL) && error == 0) error = EIO;
     close(fd);
     return error ? -error : 0;
 }
