@@ -32,13 +32,14 @@ Java_com_termux_app_control_jobs_ManagedNative_nativeProbePidfd(JNIEnv *env, jcl
     }
     close(gate[0]);
     int error = 0;
-    if (termux_managed_signal(fd, SIGTERM) < 0) error = errno;
+    /* SIGKILL cannot be blocked or ignored by the inherited process state. */
+    if (termux_managed_signal(fd, SIGKILL) < 0) error = errno;
     close(gate[1]);
     int status;
     pid_t waited;
     do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
     if (waited < 0 && error == 0) error = errno;
-    if (waited > 0 && (!WIFSIGNALED(status) || WTERMSIG(status) != SIGTERM) && error == 0) error = EIO;
+    if (waited > 0 && (!WIFSIGNALED(status) || WTERMSIG(status) != SIGKILL) && error == 0) error = EIO;
     close(fd);
     return error ? -error : 0;
 }
