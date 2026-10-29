@@ -19,7 +19,7 @@ int termux_managed_pipes_open(struct termux_managed_pipes *pipes);
 void termux_managed_pipes_close(struct termux_managed_pipes *pipes);
 
 /* On success caller owns pidfd and the four retained pipe ends, and must reap
- * pid exactly once. pid is for waitpid only, never authority for signalling.
+ * the child exactly once through its pidfd. pid is observational only.
  * On failure no child exists and no descriptors are retained. Caller keeps the
  * executable and cwd descriptors open and stable until this call returns. */
 struct termux_managed_child {
@@ -41,10 +41,10 @@ int termux_managed_signal(int pidfd, int signal_number);
 /* Worker-only partial availability probe; returns zero or a negative errno. */
 int termux_managed_probe_pidfd(void);
 
-/* Worker-only; call once for the still-owned, unreaped child. Exactly one of
- * exited and signaled is true on success. No descriptor is closed here. */
+/* Worker-only; wait through the owned pidfd, never a recyclable PID. Call once
+ * for the unreaped child. Exactly one outcome is set; no descriptor is closed. */
 struct termux_managed_result { int exited, exit_code, signaled, signal_number; };
-int termux_managed_wait(pid_t pid, struct termux_managed_result *result);
+int termux_managed_wait(int pidfd, struct termux_managed_result *result);
 
 /* Child-only: wire three descriptors, fchdir and exec a pinned executable.
  * All supplied descriptors must be >= 3; error_fd must be distinct from the

@@ -143,16 +143,24 @@ int termux_managed_probe_pidfd(void) {
     return error ? -error : 0;
 }
 
-int termux_managed_wait(pid_t pid, struct termux_managed_result *result) {
-    if (pid <= 0 || result == NULL) { errno = EINVAL; return -1; }
+int termux_managed_wait(int pidfd, struct termux_managed_result *result) {
+    if (pidfd < 0 || result == NULL) { errno = EINVAL; return -1; }
     memset(result, 0, sizeof(*result));
-    int status;
-    pid_t waited;
-    do { waited = waitpid(pid, &status, 0); } while (waited < 0 && errno == EINTR);
+#if defined(__NR_waitid)
+    siginfo_t info;
+    memset(&info, 0, sizeof(info));
+    int waited;
+    do { waited = (int)syscall(__NR_waitid, 3 /* P_PIDFD */, pidfd, &info, WEXITED, NULL); }
+    while (waited < 0 && errno == EINTR);
     if (waited < 0) return -1;
-    if (WIFEXITED(status)) { result->exited = 1; result->exit_code = WEXITSTATUS(status); return 0; }
-    if (WIFSIGNALED(status)) { result->signaled = 1; result->signal_number = WTERMSIG(status); return 0; }
+    if (info.si_code == CLD_EXITED) { result->exited = 1; result->exit_code = info.si_status; return 0; }
+    if (info.si_code == CLD_KILLED || info.si_code == CLD_DUMPED) {
+        result->signaled = 1; result->signal_number = info.si_status; return 0;
+    }
     errno = EPROTO; return -1;
+#else
+    errno = ENOSYS; return -1;
+#endif
 }
 
 void termux_managed_exec_child(int executable_fd, int cwd_fd, int error_fd,

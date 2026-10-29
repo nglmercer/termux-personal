@@ -220,10 +220,10 @@ int main(void) {
     require(read(managed_child.stderr_read, launch_output, 5) == 5 && memcmp(launch_output, "error", 5) == 0, "managed stderr");
     close(managed_child.stdout_read); close(managed_child.stderr_read);
     struct termux_managed_result result;
-    require(termux_managed_wait(managed_child.pid, &result) == 0 && result.exited && result.exit_code == 9 && !result.signaled,
+    require(termux_managed_wait(managed_child.pidfd, &result) == 0 && result.exited && result.exit_code == 9 && !result.signaled,
         "managed exit status");
     errno = 0;
-    require(termux_managed_wait(managed_child.pid, &result) == -1 && errno == ECHILD, "reject duplicate reap");
+    require(termux_managed_wait(managed_child.pidfd, &result) == -1 && errno == ECHILD, "reject duplicate reap");
     close(managed_child.pidfd);
 
     shell = open("/bin/sh", O_PATH | O_CLOEXEC);
@@ -237,7 +237,7 @@ int main(void) {
     close(shell); close(cwd);
     require(termux_managed_read_exec_status(managed_child.status_read, 2000, &exec_error) == 0, "cancellable exec status");
     require(termux_managed_signal(managed_child.pidfd, SIGTERM) == 0, "signal launched child handle");
-    require(termux_managed_wait(managed_child.pid, &result) == 0 && result.signaled && result.signal_number == SIGTERM && !result.exited,
+    require(termux_managed_wait(managed_child.pidfd, &result) == 0 && result.signaled && result.signal_number == SIGTERM && !result.exited,
         "observe signalled child");
     errno = 0;
     require(termux_managed_signal(managed_child.pidfd, SIGKILL) == -1 && errno == ESRCH, "reject post-exit signal");
@@ -256,7 +256,7 @@ int main(void) {
     close(nonexec_file); close(cwd); unlink(nonexec_path);
     require(termux_managed_read_exec_status(managed_child.status_read, 2000, &exec_error) == 1 && exec_error == EACCES,
         "report non-executable error");
-    require(termux_managed_wait(managed_child.pid, &result) == 0 && result.exited && result.exit_code == 127,
+    require(termux_managed_wait(managed_child.pidfd, &result) == 0 && result.exited && result.exit_code == 127,
         "reap failed exec child");
     termux_managed_child_close(&managed_child);
     require(managed_child.pidfd == -1 && managed_child.stdin_write == -1 && managed_child.stdout_read == -1 &&
