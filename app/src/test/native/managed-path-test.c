@@ -46,6 +46,11 @@ int main(void) {
         require(fd == -1, "reject traversal or symlink");
     }
     require(termux_managed_open_relative(root, "", TERMUX_MANAGED_EXECUTABLE) == -1, "reject empty executable");
+    char oversized[4098];
+    memset(oversized, 'a', sizeof(oversized)); oversized[sizeof(oversized) - 1] = '\0';
+    errno = 0;
+    require(termux_managed_open_relative(root, oversized, TERMUX_MANAGED_EXECUTABLE) == -1 && errno == EINVAL,
+        "reject oversized path before traversal");
     require(termux_managed_open_relative(root, "project", TERMUX_MANAGED_EXECUTABLE) == -1, "reject non-regular executable");
     require(termux_managed_open_relative(root, "fifo", TERMUX_MANAGED_EXECUTABLE) == -1, "reject fifo without opening it");
     int before = descriptor_count();
