@@ -62,6 +62,16 @@ public class JobRecordTest {
         assertEquals(JobRecord.State.QUEUED, job.snapshot().state);
     }
 
+    @Test public void duplicateFailureCannotReplaceObservedExit() {
+        JobRecord job = new JobRecord("job", null, 0);
+        assertTrue(job.begin());
+        assertTrue(job.complete(JobRecord.State.EXITED, 9, null, 10));
+        assertFalse(job.complete(JobRecord.State.FAILED, 0, JobRecord.Failure.CAPTURE_FAILED, 11));
+        assertEquals(JobRecord.State.EXITED, job.snapshot().state);
+        assertEquals(Integer.valueOf(9), job.snapshot().exitCode);
+        assertEquals(Long.valueOf(10), job.snapshot().endedAt);
+    }
+
     private static void await(CountDownLatch gate) {
         try { gate.await(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new AssertionError(e); }
     }
