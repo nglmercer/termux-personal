@@ -1,5 +1,6 @@
 package com.termux.app.control.jobs;
 
+import com.termux.app.control.ControlCore;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.Set;
@@ -18,6 +19,17 @@ public final class JobAuthority {
         mPermissions = Collections.unmodifiableSet(permissions.isEmpty() ? EnumSet.noneOf(Permission.class) : EnumSet.copyOf(permissions));
         mEnabled = true;
         return new Lease(this, mEpoch);
+    }
+
+    /** Convert trusted server-selected scopes; never pass request-supplied fields. */
+    public synchronized Lease grantScopes(Set<ControlCore.Scope> scopes) {
+        if (scopes == null) throw new IllegalArgumentException("Missing scopes");
+        EnumSet<Permission> permissions = EnumSet.noneOf(Permission.class);
+        if (scopes.contains(ControlCore.Scope.JOBS_READ)) permissions.add(Permission.READ);
+        if (scopes.contains(ControlCore.Scope.JOBS_OUTPUT)) permissions.add(Permission.OUTPUT);
+        if (scopes.contains(ControlCore.Scope.JOBS_EXECUTE)) permissions.add(Permission.EXECUTE);
+        if (scopes.contains(ControlCore.Scope.JOBS_CANCEL)) permissions.add(Permission.CANCEL);
+        return grant(permissions);
     }
 
     /** Revocation is immediate for future lease checks and does not imply a running child stopped. */
