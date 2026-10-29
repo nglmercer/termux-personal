@@ -38,7 +38,7 @@ public final class AppShellJobCapture implements AppShell.ManagedCapture {
     public boolean discardIfUnstarted() {
         if (!mStarted.compareAndSet(false, true)) return false;
         Arrays.fill(mStdin, (byte) 0);
-        mOutput.finish();
+        mOutput.finish(false);
         mIoWorkers.shutdown();
         return true;
     }
@@ -51,7 +51,7 @@ public final class AppShellJobCapture implements AppShell.ManagedCapture {
         if (process == null || !mStarted.compareAndSet(false, true)) throw new IllegalStateException("Capture already used or missing process");
         AtomicInteger inputState = new AtomicInteger(0); // 0 = pending, 1 = writer owns bytes, 2 = wiped before start
         Future<?> outFuture = null, errFuture = null, inputFuture = null;
-        boolean exited = false;
+        boolean exited = false, complete = false;
         try {
             JobStreamPump stdout = new JobStreamPump(process.getInputStream(), mOutput, JobOutputStore.Stream.STDOUT);
             JobStreamPump stderr = new JobStreamPump(process.getErrorStream(), mOutput, JobOutputStore.Stream.STDERR);
@@ -73,6 +73,7 @@ public final class AppShellJobCapture implements AppShell.ManagedCapture {
             if (stdout.await(0, TimeUnit.MILLISECONDS) != JobStreamPump.Result.COMPLETE ||
                 stderr.await(0, TimeUnit.MILLISECONDS) != JobStreamPump.Result.COMPLETE)
                 throw new IOException("Managed output capture failed");
+            complete = true;
             return exitCode;
         } catch (RejectedExecutionException | CancellationException e) {
             throw new IOException("Managed I/O workers unavailable", e);
@@ -84,7 +85,7 @@ public final class AppShellJobCapture implements AppShell.ManagedCapture {
             if (errFuture != null && !errFuture.isDone()) errFuture.cancel(true);
             if (inputFuture != null && !inputFuture.isDone()) inputFuture.cancel(true);
             if (inputState.compareAndSet(0, 2)) Arrays.fill(mStdin, (byte) 0);
-            mOutput.finish();
+            mOutput.finish(complete);
             mIoWorkers.shutdown();
         }
     }

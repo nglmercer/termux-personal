@@ -50,9 +50,9 @@ public final class JobCoordinator {
         }
     }
     public static final class OutputResult {
-        public final ReadStatus status; public final OutputReplayBuffer.ReadResult output; public final boolean finished;
-        private OutputResult(ReadStatus status, OutputReplayBuffer.ReadResult output, boolean finished) {
-            this.status = status; this.output = output; this.finished = finished;
+        public final ReadStatus status; public final OutputReplayBuffer.ReadResult output; public final boolean finished, complete;
+        private OutputResult(ReadStatus status, OutputReplayBuffer.ReadResult output, boolean finished, boolean complete) {
+            this.status = status; this.output = output; this.finished = finished; this.complete = complete;
         }
     }
 
@@ -191,13 +191,13 @@ public final class JobCoordinator {
         if (entry == null) return outputError(ReadStatus.NOT_FOUND);
         try {
             JobOutputStore.Read read = entry.output().readSnapshot(stream, offset, limit);
-            return new OutputResult(ReadStatus.OK, read.data, read.finished);
+            return new OutputResult(ReadStatus.OK, read.data, read.finished, read.complete);
         } catch (IllegalArgumentException e) { return outputError(ReadStatus.INVALID_REQUEST); }
     }
 
     private static boolean validId(String id) { return id != null && !id.isEmpty() && id.length() <= 128; }
     private static ListResult listError(ReadStatus status) { return new ListResult(status, Collections.emptyList(), null); }
-    private static OutputResult outputError(ReadStatus status) { return new OutputResult(status, null, false); }
+    private static OutputResult outputError(ReadStatus status) { return new OutputResult(status, null, false, false); }
 
     /** Stop admission and abandon only queued work. Live children are never forgotten or signalled by PID. */
     public synchronized void stopAccepting() {

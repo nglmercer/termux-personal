@@ -19,8 +19,19 @@ public class JobOutputStoreTest {
         OutputReplayBuffer.ReadResult stderr = output.read(JobOutputStore.Stream.STDERR, 0, 4);
         assertFalse(stderr.gap); assertEquals(2, stderr.endOffset); assertArrayEquals(new byte[]{9, 8}, stderr.data);
         output.finish();
+        assertTrue(output.readSnapshot(JobOutputStore.Stream.STDOUT, 0, 4).complete);
         assertFalse(output.append(JobOutputStore.Stream.STDOUT, new byte[]{6}, 0, 1));
         assertArrayEquals(new byte[]{2, 3, 4, 5}, output.read(JobOutputStore.Stream.STDOUT, 0, 4).data);
+        store.close();
+    }
+
+    @Test public void failedCaptureIsFinishedButNotComplete() {
+        JobOutputStore store = new JobOutputStore(4, 1, 8);
+        JobOutputStore.Output output = store.reserve("job");
+        output.finish(false);
+        output.finish(true);
+        JobOutputStore.Read read = output.readSnapshot(JobOutputStore.Stream.STDOUT, 0, 4);
+        assertTrue(read.finished); assertFalse(read.complete);
         store.close();
     }
 

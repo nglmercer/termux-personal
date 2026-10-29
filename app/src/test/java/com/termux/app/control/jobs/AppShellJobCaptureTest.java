@@ -24,6 +24,7 @@ public class AppShellJobCaptureTest {
             assertEquals(0, new AppShellJobCapture(io.tryReserve(), output, null, 5000).captureAndWait(process));
             assertArrayEquals(new byte[]{'d', 'o', 'n', 'e'}, output.read(JobOutputStore.Stream.STDOUT, 0, 32).data);
             assertTrue(output.isFinished());
+            assertTrue(output.readSnapshot(JobOutputStore.Stream.STDOUT, 0, 32).complete);
         } finally { process.destroyForcibly(); io.close(); store.close(); }
     }
 
@@ -37,6 +38,7 @@ public class AppShellJobCaptureTest {
             AppShellJobCapture capture = new AppShellJobCapture(lease, output, new byte[]{1}, 1000);
             try { capture.captureAndWait(process); fail(); } catch (IOException expected) { }
             assertTrue(output.isFinished());
+            assertFalse(output.readSnapshot(JobOutputStore.Stream.STDOUT, 0, 32).complete);
             assertFalse(output.append(JobOutputStore.Stream.STDOUT, new byte[]{1}, 0, 1));
             try { capture.captureAndWait(process); fail(); } catch (IllegalStateException expected) { }
         } finally { process.destroyForcibly(); io.close(); store.close(); }

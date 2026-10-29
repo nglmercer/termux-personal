@@ -55,7 +55,7 @@ public final class JobOutputStore implements AutoCloseable {
     /** Each stream has independent monotonic offsets; finished logs remain readable until removal. */
     public static final class Output implements AutoCloseable {
         private final OutputReplayBuffer mStdout, mStderr;
-        private boolean mFinished, mClosed;
+        private boolean mFinished, mComplete, mClosed;
 
         private Output(int capacity) {
             mStdout = new OutputReplayBuffer(capacity);
@@ -75,7 +75,7 @@ public final class JobOutputStore implements AutoCloseable {
         /** Couple the finished flag and end offset so a caller cannot miss a final append. */
         public synchronized Read readSnapshot(Stream stream, long offset, int limit) {
             if (mClosed) throw new IllegalStateException("Output removed");
-            return new Read(buffer(stream).read(offset, limit), mFinished);
+            return new Read(buffer(stream).read(offset, limit), mFinished, mComplete);
         }
 
         /** Offset metadata is separate from permission to read retained output. */
@@ -84,8 +84,11 @@ public final class JobOutputStore implements AutoCloseable {
             return new Offsets(mStdout.endOffset(), mStderr.endOffset());
         }
 
-        /** Freeze writes only after both stream readers have finished. */
-        public synchronized void finish() { if (!mClosed) mFinished = true; }
+        /** Freeze writes; complete means both streams reached EOF without capture failure. */
+        public synchronized void finish() { finish(true); }
+        public synchronized void finish(boolean complete) {
+            if (!mClosed && !mFinished) { mComplete = complete; mFinished = true; }
+        }
         public synchronized boolean isFinished() { return mFinished; }
 
         private OutputReplayBuffer buffer(Stream stream) {
@@ -108,7 +111,9 @@ public final class JobOutputStore implements AutoCloseable {
     }
 
     public static final class Read {
-        public final OutputReplayBuffer.ReadResult data; public final boolean finished;
-        private Read(OutputReplayBuffer.ReadResult data, boolean finished) { this.data = data; this.finished = finished; }
+        public final OutputReplayBuffer.ReadResult data; public final boolean finished, complete;
+        private Read(OutputReplayBuffer.ReadResult data, boolean finished, boolean complete) {
+            this.data = data; this.finished = finished; this.complete = complete;
+        }
     }
 }
