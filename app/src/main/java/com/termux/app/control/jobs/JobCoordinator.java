@@ -38,6 +38,7 @@ public final class JobCoordinator {
         public final JobRecord.Snapshot job;
         public final JobOutputStore.Offsets output;
         private JobView(JobRegistry.Entry entry) { job = entry.record().snapshot(); output = entry.output().offsets(); }
+        private JobView(JobRecord.Snapshot snapshot, JobRegistry.Entry entry) { job = snapshot; output = entry.output().offsets(); }
     }
     public static final class GetResult {
         public final ReadStatus status; public final JobView job;
@@ -173,7 +174,7 @@ public final class JobCoordinator {
         List<JobView> matches = new ArrayList<>();
         for (JobRegistry.Entry entry : mRegistry.retainedEntries()) {
             JobRecord.Snapshot snapshot = entry.record().snapshot();
-            if (workspaceId == null || workspaceId.equals(snapshot.workspaceId)) matches.add(new JobView(entry));
+            if (workspaceId == null || workspaceId.equals(snapshot.workspaceId)) matches.add(new JobView(snapshot, entry));
         }
         if (cursor > matches.size()) return listError(ReadStatus.INVALID_REQUEST);
         int end = Math.min(matches.size(), cursor + limit);
