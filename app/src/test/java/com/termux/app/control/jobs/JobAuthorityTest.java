@@ -6,6 +6,18 @@ import java.util.EnumSet;
 import com.termux.app.control.ControlCore;
 
 public class JobAuthorityTest {
+    @Test public void everyJobScopeGrantsOnlyItsCorrespondingPermission() {
+        ControlCore.Scope[] scopes = {ControlCore.Scope.JOBS_READ, ControlCore.Scope.JOBS_OUTPUT,
+            ControlCore.Scope.JOBS_EXECUTE, ControlCore.Scope.JOBS_CANCEL};
+        JobAuthority.Permission[] permissions = {JobAuthority.Permission.READ, JobAuthority.Permission.OUTPUT,
+            JobAuthority.Permission.EXECUTE, JobAuthority.Permission.CANCEL};
+        JobAuthority authority = new JobAuthority();
+        for (int i = 0; i < scopes.length; i++) {
+            JobAuthority.Lease lease = authority.grantScopes(EnumSet.of(scopes[i]));
+            for (int j = 0; j < permissions.length; j++)
+                assertEquals(scopes[i] + " / " + permissions[j], i == j, authority.allows(lease, permissions[j]));
+        }
+    }
     @Test public void trustedScopesMapIndependentlyAndDoNotImplyExecution() {
         JobAuthority authority = new JobAuthority();
         JobAuthority.Lease lease = authority.grantScopes(EnumSet.of(ControlCore.Scope.JOBS_READ,
