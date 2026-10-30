@@ -216,13 +216,76 @@ public final class ExtraKeysEditorActivity extends AppCompatActivity {
     }
     private static String truncate(String text) { return text.length() > 40 ? text.substring(0, 40) + "…" : text; }
 
+    private interface KeyChoice { void chosen(String value); }
+
     private void addKey(int row) {
         if (busy || layout == null) return;
+        pickKey(R.string.extra_keys_editor_add_key, value -> {
+            try { layout.addKey(row, value); render(); }
+            catch (RuntimeException e) { message(R.string.extra_keys_editor_limit); }
+        });
+    }
+
+    /**
+     * Searchable list of every named key and common symbol with a short description, so nobody needs to know
+     * the configuration format. The last row enters any other character or text.
+     */
+    private void pickKey(int title, KeyChoice choice) {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        int pad = (int) (16 * getResources().getDisplayMetrics().density);
+        panel.setPadding(pad, pad / 2, pad, 0);
+        EditText search = new EditText(this);
+        search.setSingleLine(true); search.setHint(R.string.extra_keys_editor_search); search.setInputType(InputType.TYPE_CLASS_TEXT);
+        panel.addView(search);
+        android.widget.ListView list = new android.widget.ListView(this);
+        panel.addView(list, new LinearLayout.LayoutParams(-1, (int) (360 * getResources().getDisplayMetrics().density)));
+        final java.util.List<com.termux.app.extrakeys.ExtraKeyCatalog.Key> shown = new java.util.ArrayList<>(com.termux.app.extrakeys.ExtraKeyCatalog.all());
+        android.widget.BaseAdapter adapter = new android.widget.BaseAdapter() {
+            @Override public int getCount() { return shown.size() + 1; }
+            @Override public Object getItem(int position) { return position < shown.size() ? shown.get(position) : null; }
+            @Override public long getItemId(int position) { return position; }
+            @Override public View getView(int position, View convert, android.view.ViewGroup parent) {
+                View view = convert != null ? convert :
+                    getLayoutInflater().inflate(android.R.layout.simple_list_item_2, parent, false);
+                TextView first = view.findViewById(android.R.id.text1), second = view.findViewById(android.R.id.text2);
+                if (position < shown.size()) {
+                    com.termux.app.extrakeys.ExtraKeyCatalog.Key key = shown.get(position);
+                    first.setText(key.label);
+                    second.setText(key.group + " · " + key.description);
+                } else {
+                    first.setText(R.string.extra_keys_editor_custom);
+                    second.setText(R.string.extra_keys_editor_custom_summary);
+                }
+                return view;
+            }
+        };
+        list.setAdapter(adapter);
+        search.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) { }
+            @Override public void afterTextChanged(android.text.Editable text) {
+                shown.clear(); shown.addAll(com.termux.app.extrakeys.ExtraKeyCatalog.search(text.toString()));
+                adapter.notifyDataSetChanged();
+            }
+        });
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle(title).setView(panel)
+            .setNegativeButton(android.R.string.cancel, null).create();
+        list.setOnItemClickListener((parent, view, position, id) -> {
+            dialog.dismiss();
+            if (position < shown.size()) choice.chosen(shown.get(position).value);
+            else customKey(title, search.getText().toString(), choice);
+        });
+        dialog.show();
+    }
+
+    private void customKey(int title, String initial, KeyChoice choice) {
         EditText input = new EditText(this); input.setSingleLine(true); input.setInputType(InputType.TYPE_CLASS_TEXT);
-        new AlertDialog.Builder(this).setTitle(R.string.extra_keys_editor_add_key).setView(input)
+        input.setText(initial);
+        new AlertDialog.Builder(this).setTitle(title).setMessage(R.string.extra_keys_editor_custom_summary).setView(input)
             .setPositiveButton(android.R.string.ok, (d, w) -> {
-                try { if (input.getText().length() == 0) throw new IllegalArgumentException(); layout.addKey(row, input.getText().toString()); render(); }
-                catch (RuntimeException e) { message(R.string.extra_keys_editor_limit); }
+                if (input.getText().length() == 0) { message(R.string.extra_keys_editor_invalid); return; }
+                choice.chosen(input.getText().toString());
             }).setNegativeButton(android.R.string.cancel, null).show();
     }
 
@@ -244,8 +307,14 @@ public final class ExtraKeysEditorActivity extends AppCompatActivity {
                     case 1: layout.moveKey(row, index, row, index + 1); break;
                     case 2: layout.moveKey(row, index, row - 1, Math.min(index, layout.keyCount(row - 1))); break;
                     case 3: layout.moveKey(row, index, row + 1, Math.min(index, layout.keyCount(row + 1))); break;
-                    case 4: editKeyJson(row, index); return;
-                    case 5: layout.removeKey(row, index); break;
+                    case 4:
+                        pickKey(R.string.extra_keys_editor_replace_key, value -> {
+                            try { layout.replaceKeyJson(row, index, new com.google.gson.JsonPrimitive(value).toString()); render(); }
+                            catch (Exception e) { message(R.string.extra_keys_editor_invalid); }
+                        });
+                        return;
+                    case 5: editKeyJson(row, index); return;
+                    case 6: layout.removeKey(row, index); break;
                     default: return;
                 }
                 render();

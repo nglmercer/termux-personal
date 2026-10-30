@@ -68,7 +68,7 @@ import java.util.List;
 public final class TermuxService extends Service implements AppShell.AppShellClient, TermuxSession.TermuxSessionClient {
 
     /** This service is only bound from inside the same process and never uses IPC. */
-    class LocalBinder extends Binder {
+    public class LocalBinder extends Binder {
         public final TermuxService service = TermuxService.this;
     }
 
@@ -162,34 +162,15 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         new android.os.Handler(android.os.Looper.getMainLooper()).post(this::autoStartLocalControl);
     }
 
-    private static final String LOCAL_CONTROL_PREFS = "local_control_consent";
-    private static final String KEY_SCOPES = "scopes", KEY_AUTO_START = "auto_start";
-
-    /** Scopes the user last chose, or null if nothing was remembered. Never widened beyond what was stored. */
-    @androidx.annotation.Nullable
-    public java.util.EnumSet<com.termux.app.control.ControlCore.Scope> savedLocalControlScopes() {
-        String stored = getSharedPreferences(LOCAL_CONTROL_PREFS, MODE_PRIVATE).getString(KEY_SCOPES, null);
-        return stored == null ? null : com.termux.app.control.LocalControlOptions.decode(stored);
-    }
-
-    public boolean isLocalControlAutoStart() {
-        return getSharedPreferences(LOCAL_CONTROL_PREFS, MODE_PRIVATE).getBoolean(KEY_AUTO_START, false);
-    }
-
-    /** Called only from the local consent dialog after the user chose the scopes. */
-    public void saveLocalControlConsent(java.util.Set<com.termux.app.control.ControlCore.Scope> scopes, boolean autoStart) {
-        getSharedPreferences(LOCAL_CONTROL_PREFS, MODE_PRIVATE).edit()
-            .putString(KEY_SCOPES, com.termux.app.control.LocalControlOptions.encode(scopes))
-            .putBoolean(KEY_AUTO_START, autoStart).apply();
-    }
-
-    public void forgetLocalControlConsent() {
-        getSharedPreferences(LOCAL_CONTROL_PREFS, MODE_PRIVATE).edit().clear().apply();
+    /** The user's remembered local control choice; written only by the app's own UI. */
+    public com.termux.app.control.LocalControlConsent localControlConsent() {
+        return new com.termux.app.control.LocalControlConsent(this);
     }
 
     private void autoStartLocalControl() {
-        if (!mControlAvailable || mLocalControlServer != null || !isLocalControlAutoStart()) return;
-        java.util.EnumSet<com.termux.app.control.ControlCore.Scope> scopes = savedLocalControlScopes();
+        com.termux.app.control.LocalControlConsent consent = localControlConsent();
+        if (!mControlAvailable || mLocalControlServer != null || !consent.autoStart()) return;
+        java.util.EnumSet<com.termux.app.control.ControlCore.Scope> scopes = consent.scopes();
         if (scopes == null) return;
         try {
             if (!startLocalControl(scopes, started -> { if (!started) Logger.logWarn(LOG_TAG, "Saved local control did not start"); }))
