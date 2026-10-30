@@ -99,10 +99,37 @@ public class TermuxSessionsListViewController extends ArrayAdapter<TermuxSession
         mActivity.getDrawer().closeDrawers();
     }
 
+    /** Long press offers the common session actions instead of going straight to rename. */
     @Override
     public boolean onItemLongClick(AdapterView<?> parent, View view, int position, long id) {
         final TermuxSession selectedSession = getItem(position);
-        mActivity.getTermuxTerminalSessionClient().renameSession(selectedSession.getTerminalSession());
+        if (selectedSession == null) return true;
+        final TerminalSession session = selectedSession.getTerminalSession();
+        final boolean running = session.isRunning();
+        String title = session.mSessionName != null && !session.mSessionName.isEmpty() ? session.mSessionName :
+            mActivity.getString(R.string.session_options_untitled, position + 1);
+        String[] options = {
+            mActivity.getString(R.string.session_options_open),
+            mActivity.getString(R.string.session_options_rename),
+            mActivity.getString(running ? R.string.session_options_kill : R.string.session_options_close)};
+        new android.app.AlertDialog.Builder(mActivity).setTitle(title).setItems(options, (dialog, which) -> {
+            TermuxTerminalSessionActivityClient client = mActivity.getTermuxTerminalSessionClient();
+            switch (which) {
+                case 0:
+                    client.setCurrentSession(session);
+                    mActivity.getDrawer().closeDrawers();
+                    break;
+                case 1:
+                    client.renameSession(session);
+                    break;
+                default:
+                    if (!session.isRunning()) { client.removeFinishedSession(session); break; }
+                    new android.app.AlertDialog.Builder(mActivity).setTitle(title)
+                        .setMessage(R.string.title_confirm_kill_process)
+                        .setPositiveButton(R.string.session_options_kill, (d, w) -> session.finishIfRunning())
+                        .setNegativeButton(android.R.string.cancel, null).show();
+            }
+        }).show();
         return true;
     }
 

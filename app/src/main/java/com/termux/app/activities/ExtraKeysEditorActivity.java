@@ -81,21 +81,60 @@ public final class ExtraKeysEditorActivity extends AppCompatActivity {
         ScrollView scroll = new ScrollView(this);
         content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(content); root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        // One action bar: secondary actions on the left, Save on the right. Import and export are in the menu.
         LinearLayout actions = new LinearLayout(this);
-        Button presets = button(R.string.extra_keys_editor_presets, v -> choosePreset());
-        Button revert = button(R.string.extra_keys_editor_revert, v -> revert());
+        actions.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        actions.addView(button(R.string.extra_keys_editor_presets, v -> choosePreset()));
+        actions.addView(button(R.string.extra_keys_editor_revert, v -> revert()));
+        View spacer = new View(this);
+        actions.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1));
         save = button(R.string.extra_keys_editor_save, v -> save()); save.setEnabled(false);
-        actions.addView(presets); actions.addView(revert); actions.addView(save); root.addView(actions);
-        LinearLayout transfer = new LinearLayout(this);
-        transfer.addView(button(R.string.extra_keys_editor_import, v -> requestImport()));
-        transfer.addView(button(R.string.extra_keys_editor_export, v -> requestExport()));
-        root.addView(transfer);
+        actions.addView(save);
+        root.addView(actions);
         setContentView(root);
         load();
     }
 
     private Button button(int label, View.OnClickListener listener) {
         Button button = new Button(this); button.setText(label); button.setOnClickListener(listener); return button;
+    }
+
+    @Override public boolean onCreateOptionsMenu(android.view.Menu menu) {
+        menu.add(0, 1, 0, R.string.extra_keys_editor_import);
+        menu.add(0, 2, 1, R.string.extra_keys_editor_export);
+        return true;
+    }
+
+    @Override public boolean onOptionsItemSelected(android.view.MenuItem item) {
+        if (item.getItemId() == 1) { requestImport(); return true; }
+        if (item.getItemId() == 2) { requestExport(); return true; }
+        return super.onOptionsItemSelected(item);
+    }
+
+    private int dp(int value) { return (int) (value * getResources().getDisplayMetrics().density); }
+
+    /** A compact rounded key; filled for the add chip so it stands apart from real keys. */
+    private TextView chip(String text, boolean filled, View.OnClickListener listener) {
+        TextView chip = new TextView(this);
+        chip.setText(text);
+        chip.setTextSize(16);
+        chip.setTypeface(android.graphics.Typeface.MONOSPACE);
+        chip.setGravity(android.view.Gravity.CENTER);
+        chip.setMinWidth(dp(44));
+        chip.setPadding(dp(14), dp(8), dp(14), dp(8));
+        int ink = status.getCurrentTextColor();
+        android.graphics.drawable.GradientDrawable background = new android.graphics.drawable.GradientDrawable();
+        background.setCornerRadius(dp(18));
+        background.setStroke(dp(1), (ink & 0x00ffffff) | 0x66000000);
+        background.setColor(filled ? (ink & 0x00ffffff) | 0x22000000 : 0);
+        chip.setBackground(background);
+        chip.setClickable(true);
+        chip.setFocusable(true);
+        chip.setOnClickListener(listener);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, -2);
+        params.setMargins(0, dp(4), dp(8), dp(4));
+        chip.setLayoutParams(params);
+        return chip;
     }
 
     private static File activeFile() {
@@ -182,20 +221,35 @@ public final class ExtraKeysEditorActivity extends AppCompatActivity {
         content.removeAllViews();
         for (int row = 0; row < layout.rowCount(); row++) {
             final int r = row;
-            TextView label = new TextView(this); label.setText(getString(R.string.extra_keys_editor_row, row + 1)); content.addView(label);
+            // Row header: title on the left, a small remove action on the right.
+            LinearLayout header = new LinearLayout(this);
+            header.setGravity(android.view.Gravity.CENTER_VERTICAL);
+            header.setPadding(0, dp(12), 0, 0);
+            TextView label = new TextView(this);
+            label.setText(getString(R.string.extra_keys_editor_row, row + 1));
+            label.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            header.addView(label, new LinearLayout.LayoutParams(0, -2, 1));
+            TextView remove = new TextView(this);
+            remove.setText(R.string.extra_keys_editor_remove_row);
+            remove.setPadding(dp(12), dp(6), 0, dp(6));
+            remove.setAlpha(0.7f);
+            remove.setOnClickListener(v -> removeRow(r));
+            header.addView(remove);
+            content.addView(header);
             HorizontalScrollView scroll = new HorizontalScrollView(this);
+            scroll.setHorizontalScrollBarEnabled(false);
             LinearLayout keys = new LinearLayout(this);
             for (int index = 0; index < layout.keyCount(row); index++) {
                 final int i = index;
                 String labelText = keyLabel(layout.key(row, index));
-                Button key = new Button(this); key.setText(labelText); key.setContentDescription(getString(R.string.extra_keys_editor_key_description, row + 1, index + 1, labelText));
-                key.setOnClickListener(v -> editKey(r, i)); keys.addView(key);
+                TextView key = chip(labelText, false, v -> editKey(r, i));
+                key.setContentDescription(getString(R.string.extra_keys_editor_key_description, row + 1, index + 1, labelText));
+                keys.addView(key);
             }
+            TextView add = chip(getString(R.string.extra_keys_editor_add_chip), true, v -> addKey(r));
+            add.setContentDescription(getString(R.string.extra_keys_editor_add_key));
+            keys.addView(add);
             scroll.addView(keys); content.addView(scroll);
-            LinearLayout rowActions = new LinearLayout(this);
-            rowActions.addView(button(R.string.extra_keys_editor_add_key, v -> addKey(r)));
-            rowActions.addView(button(R.string.extra_keys_editor_remove_row, v -> removeRow(r)));
-            content.addView(rowActions);
         }
         Button addRow = button(R.string.extra_keys_editor_add_row, v -> {
             if (busy) return;

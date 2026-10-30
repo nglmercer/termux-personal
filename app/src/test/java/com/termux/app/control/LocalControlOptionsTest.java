@@ -52,4 +52,27 @@ public class LocalControlOptionsTest {
             LocalControlOptions.decode("SESSIONS_CLOSE,SESSIONS_OUTPUT_RESUME"));
         org.junit.Assert.assertEquals(java.util.EnumSet.of(ControlCore.Scope.SESSIONS_READ), LocalControlOptions.decode(null));
     }
+
+    @Test public void quickGroupsGrantWholeGroupsAndKeepUntouchedCustomChoices() {
+        java.util.Map<LocalControlOptions.Group, Boolean> chosen = new java.util.EnumMap<>(LocalControlOptions.Group.class);
+        for (LocalControlOptions.Group group : LocalControlOptions.Group.values()) chosen.put(group, group.recommended);
+        java.util.EnumSet<ControlCore.Scope> first = LocalControlOptions.applyGroups(java.util.EnumSet.of(ControlCore.Scope.SESSIONS_READ), chosen);
+        org.junit.Assert.assertTrue(first.containsAll(LocalControlOptions.Group.FILES.scopes));
+        org.junit.Assert.assertFalse("running commands is never recommended", first.contains(ControlCore.Scope.JOBS_EXECUTE));
+
+        // A custom subset from the settings screen (read-only files) survives when the box is left as is.
+        java.util.EnumSet<ControlCore.Scope> custom = java.util.EnumSet.of(ControlCore.Scope.SESSIONS_READ, ControlCore.Scope.FILES_READ,
+            ControlCore.Scope.SESSIONS_WRITE, ControlCore.Scope.SESSIONS_CLOSE);
+        chosen.put(LocalControlOptions.Group.FILES, true);
+        chosen.put(LocalControlOptions.Group.TERMINAL, true);
+        java.util.EnumSet<ControlCore.Scope> kept = LocalControlOptions.applyGroups(custom, chosen);
+        org.junit.Assert.assertFalse(kept.contains(ControlCore.Scope.FILES_WRITE));
+        org.junit.Assert.assertTrue(kept.contains(ControlCore.Scope.SESSIONS_CLOSE));
+
+        chosen.put(LocalControlOptions.Group.TERMINAL, false);
+        java.util.EnumSet<ControlCore.Scope> off = LocalControlOptions.applyGroups(custom, chosen);
+        org.junit.Assert.assertFalse(off.contains(ControlCore.Scope.SESSIONS_WRITE));
+        org.junit.Assert.assertFalse("turning terminal off also removes force-close", off.contains(ControlCore.Scope.SESSIONS_CLOSE));
+        org.junit.Assert.assertTrue(off.contains(ControlCore.Scope.SESSIONS_READ));
+    }
 }

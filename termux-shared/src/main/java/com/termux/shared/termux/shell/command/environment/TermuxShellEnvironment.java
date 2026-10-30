@@ -87,14 +87,40 @@ public class TermuxShellEnvironment extends AndroidShellEnvironment {
                 environment.put(ENV_LD_LIBRARY_PATH, TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH);
             } else {
                 // Termux binaries on Android 7+ rely on DT_RUNPATH, so LD_LIBRARY_PATH should be unset by default
-                environment.put(ENV_PATH, TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH);
+                environment.put(ENV_PATH, TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + userBinPath());
                 environment.remove(ENV_LD_LIBRARY_PATH);
             }
+            putGlibcCompatibility(currentPackageContext, environment);
         }
 
         return environment;
     }
 
+
+    /**
+     * Directories that tool installers commonly use, after the Termux prefix so they never shadow it. Listing a
+     * directory that does not exist yet is harmless, and lets a tool installed later work without editing PATH.
+     */
+    static final String[] USER_BIN_DIRS = {".local/bin", "bin", ".cargo/bin", ".bun/bin", ".deno/bin", "go/bin",
+        ".opencode/bin", ".npm-global/bin"};
+
+    static String userBinPath() {
+        StringBuilder path = new StringBuilder();
+        for (String dir : USER_BIN_DIRS) path.append(':').append(TermuxConstants.TERMUX_HOME_DIR_PATH).append('/').append(dir);
+        return path.toString();
+    }
+
+    /**
+     * Paths of the app's glibc compatibility libraries, which the shell profile adds after termux-exec. They live
+     * in the app's native library directory, which changes when the app is updated, so they are set per session.
+     */
+    private static void putGlibcCompatibility(@NonNull Context context, @NonNull HashMap<String, String> environment) {
+        if (!TermuxConstants.TERMUX_PACKAGE_NAME.equals(context.getPackageName())) return;
+        String nativeDir = context.getApplicationInfo().nativeLibraryDir;
+        if (nativeDir == null) return;
+        environment.put("TERMUX_GLIBC_EXEC", nativeDir + "/libtermux-glibc-exec.so");
+        environment.put("TERMUX_GLIBC_PRELOAD", nativeDir + "/libtermux-glibc-preload.so");
+    }
 
     @NonNull
     @Override

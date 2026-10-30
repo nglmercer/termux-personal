@@ -482,6 +482,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             if (mIsVisible) {
                 TermuxInstaller.setupBootstrapIfNeeded(TermuxActivity.this, () -> {
                     if (mTermuxService == null) return; // Activity might have been destroyed.
+                    // Before the first session, so it already has ~/.bashrc and glibc compatibility.
+                    ShellCompatibility.ensure();
                     try {
                         boolean launchFailsafe = false;
                         if (intent != null && intent.getExtras() != null) {
@@ -1173,9 +1175,76 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             .setPositiveButton(android.R.string.ok, null).show();
     }
 
-    /** Local control has its own settings screen with grouped, remembered choices. */
+    /**
+     * Quick local control consent: a few grouped choices with the recommended ones pre-selected, and a link to
+     * the settings screen for per-permission control. The choice is saved and reused next time.
+     */
     private void showLocalControlDialog() {
-        startActivity(new Intent(this, com.termux.app.activities.LocalControlActivity.class));
+        TermuxService service = getTermuxService();
+        if (service == null) { showToast(getString(R.string.local_control_unavailable), true); return; }
+        Intent settings = new Intent(this, com.termux.app.activities.LocalControlActivity.class);
+        if (service.hasLocalControl()) {
+            new AlertDialog.Builder(this).setTitle(R.string.action_local_control)
+                .setMessage(service.isLocalControlStopping() ? R.string.local_control_screen_stopping : R.string.local_control_quick_running)
+                .setPositiveButton(R.string.local_control_quick_stop, (d, w) -> service.stopLocalControl())
+                .setNeutralButton(R.string.local_control_quick_more, (d, w) -> startActivity(settings))
+                .setNegativeButton(android.R.string.cancel, null).show();
+            return;
+        }
+        com.termux.app.control.LocalControlConsent consent = service.localControlConsent();
+        final EnumSet<ControlCore.Scope> saved = consent.scopes();
+        final com.termux.app.control.LocalControlOptions.Group[] groups = com.termux.app.control.LocalControlOptions.Group.values();
+        final int[] titles = {R.string.local_control_group_terminal, R.string.local_control_group_commands,
+            R.string.local_control_group_files_quick, R.string.local_control_group_processes_quick, R.string.local_control_group_workspaces_quick};
+        final int[] summaries = {R.string.local_control_group_terminal_summary, R.string.local_control_group_commands_summary,
+            R.string.local_control_group_files_summary, R.string.local_control_group_processes_summary, R.string.local_control_group_workspaces_summary};
+        android.widget.LinearLayout options = new android.widget.LinearLayout(this);
+        options.setOrientation(android.widget.LinearLayout.VERTICAL);
+        int pad = (int) (20 * getResources().getDisplayMetrics().density);
+        options.setPadding(pad, pad / 2, pad, 0);
+        final android.widget.CheckBox[] boxes = new android.widget.CheckBox[groups.length];
+        for (int i = 0; i < groups.length; i++) {
+            boxes[i] = new android.widget.CheckBox(this);
+            boxes[i].setText(titles[i]);
+            boxes[i].setChecked(saved == null ? groups[i].recommended : groups[i].enabledIn(saved));
+            options.addView(boxes[i]);
+            android.widget.TextView summary = new android.widget.TextView(this);
+            summary.setText(summaries[i]);
+            summary.setPadding((int) (32 * getResources().getDisplayMetrics().density), 0, 0, pad / 3);
+            summary.setAlpha(0.7f);
+            options.addView(summary);
+        }
+        android.widget.CheckBox autoStart = new android.widget.CheckBox(this);
+        autoStart.setText(R.string.local_control_opt_auto_start);
+        autoStart.setChecked(consent.autoStart());
+        options.addView(autoStart);
+        android.widget.ScrollView scroll = new android.widget.ScrollView(this);
+        scroll.addView(options);
+        new AlertDialog.Builder(this).setTitle(R.string.local_control_quick_title).setView(scroll)
+            .setPositiveButton(R.string.local_control_quick_allow, (d, w) -> {
+                java.util.Map<com.termux.app.control.LocalControlOptions.Group, Boolean> chosen =
+                    new java.util.EnumMap<>(com.termux.app.control.LocalControlOptions.Group.class);
+                for (int i = 0; i < groups.length; i++) chosen.put(groups[i], boxes[i].isChecked());
+                EnumSet<ControlCore.Scope> scopes = com.termux.app.control.LocalControlOptions.applyGroups(
+                    saved == null ? EnumSet.of(ControlCore.Scope.SESSIONS_READ) : saved, chosen);
+                consent.save(scopes, autoStart.isChecked());
+                startLocalControl(service, scopes);
+            })
+            .setNeutralButton(R.string.local_control_quick_more, (d, w) -> startActivity(settings))
+            .setNegativeButton(android.R.string.cancel, null).show();
+    }
+
+    private void startLocalControl(TermuxService service, EnumSet<ControlCore.Scope> scopes) {
+        WeakReference<TermuxActivity> activity = new WeakReference<>(this);
+        try {
+            if (!service.startLocalControl(scopes, started -> {
+                TermuxActivity current = activity.get();
+                if (current != null && current.isVisible())
+                    current.showToast(current.getString(started ? R.string.local_control_quick_started : R.string.local_control_start_failed), true);
+            })) showToast(getString(R.string.local_control_unavailable), true);
+        } catch (IllegalStateException e) {
+            showToast(getString(R.string.local_control_unavailable), true);
+        }
     }
 
     private static boolean isImageShare(@Nullable Intent intent) {
