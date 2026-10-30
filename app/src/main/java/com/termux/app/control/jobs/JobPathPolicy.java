@@ -14,12 +14,25 @@ public final class JobPathPolicy implements JobCoordinator.Policy {
     private final List<Root> mExecutableRoots, mWorkingRoots;
     private final Map<String, String> mNamedExecutables;
     private final String mDefaultCwd;
+    private final WorkspaceDirectories mWorkspaces;
+
+    /** Resolves a workspace to its canonical directory, or throws when the workspace no longer resolves. */
+    public interface WorkspaceDirectories {
+        File directory(String workspaceId) throws Exception;
+    }
 
     /** Resolves and pins configured roots; construction performs filesystem I/O off the main thread. */
     public JobPathPolicy(List<String> executableRoots, List<String> workingRoots, String defaultCwd,
                          Map<String, String> namedExecutables) throws IOException {
+        this(executableRoots, workingRoots, defaultCwd, namedExecutables, null);
+    }
+
+    /** With a resolver, workspace jobs run in the workspace directory; without one, they are refused. */
+    public JobPathPolicy(List<String> executableRoots, List<String> workingRoots, String defaultCwd,
+                         Map<String, String> namedExecutables, WorkspaceDirectories workspaces) throws IOException {
         if (namedExecutables == null || namedExecutables.size() > MAX_NAMES || !validPath(defaultCwd))
             throw new IllegalArgumentException("Invalid job path policy");
+        mWorkspaces = workspaces;
         mExecutableRoots = roots(executableRoots);
         mWorkingRoots = roots(workingRoots);
         mDefaultCwd = defaultCwd;
@@ -34,20 +47,41 @@ public final class JobPathPolicy implements JobCoordinator.Policy {
         if (!permittedDirectory(mDefaultCwd, mWorkingRoots)) throw new IllegalArgumentException("Invalid default working directory");
     }
 
-    /** Returns null for unauthorized or unavailable paths. Workspace resolution is not implemented yet. */
+    /** Returns false for unauthorized or unavailable paths. A workspace replay needs the workspace to still resolve. */
     @Override public boolean authorizeReplay(JobSpec spec, long authorizationEpoch) {
-        return spec != null && authorizationEpoch >= 0 && spec.workspaceId() == null;
+        if (spec == null || authorizationEpoch < 0) return false;
+        return spec.workspaceId() == null || workspaceDirectory(spec) != null;
     }
 
     @Override public JobCoordinator.Resolution authorizeAndResolve(JobSpec spec, long authorizationEpoch) {
-        if (spec == null || authorizationEpoch < 0 || spec.workspaceId() != null) return null;
+        if (spec == null || authorizationEpoch < 0) return null;
         String executable = spec.executable().startsWith("/") ? spec.executable() : mNamedExecutables.get(spec.executable());
-        String cwd = spec.workingDirectory() == null ? mDefaultCwd : spec.workingDirectory();
+        String cwd;
+        if (spec.workspaceId() != null) {
+            // A workspace job takes its directory only from the workspace, never from a request field.
+            if (spec.workingDirectory() != null) return null;
+            cwd = workspaceDirectory(spec);
+            if (cwd == null) return null;
+        } else {
+            cwd = spec.workingDirectory() == null ? mDefaultCwd : spec.workingDirectory();
+        }
         if (!validPath(executable) || !validPath(cwd)) return null;
         try {
             if (!permittedExecutable(executable) || !permittedDirectory(cwd, mWorkingRoots)) return null;
             return new JobCoordinator.Resolution(executable, cwd);
         } catch (IOException e) { throw new IllegalStateException("Job path validation unavailable", e); }
+    }
+
+    /** Canonical workspace directory checked against the configured working roots, or null when unavailable. */
+    private String workspaceDirectory(JobSpec spec) {
+        if (mWorkspaces == null || spec.workspaceId() == null) return null;
+        try {
+            File directory = mWorkspaces.directory(spec.workspaceId());
+            String canonical = directory.getCanonicalPath();
+            return permittedDirectory(canonical, mWorkingRoots) ? canonical : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private boolean permittedExecutable(String path) throws IOException {

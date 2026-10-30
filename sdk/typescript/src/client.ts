@@ -1,8 +1,14 @@
 import { ProtocolError, RpcError, TransportError } from "./errors.ts";
 import { MAX_CHUNK, UnixSocketTransport, type ByteTransport } from "./transports.ts";
 import { Sessions } from "./sessions.ts";
+import { Jobs } from "./jobs.ts";
+import { Files } from "./files.ts";
+import { Processes } from "./processes.ts";
+import { Workspaces } from "./workspaces.ts";
 
-const readOnly = new Set(["system.hello", "system.capabilities", "system.describe", "session.list", "session.snapshot", "session.output.read"]);
+const readOnly = new Set(["system.hello", "system.capabilities", "system.describe", "session.list", "session.snapshot", "session.output.read",
+  "job.list", "job.get", "job.output.read", "process.list", "file.roots", "file.list", "file.stat", "file.read",
+  "workspace.list", "workspace.get", "workspace.tasks"]);
 type JsonObject = Record<string, unknown>;
 function object(value: unknown): value is JsonObject { return typeof value === "object" && value !== null && !Array.isArray(value); }
 
@@ -12,7 +18,18 @@ export class TermuxClient {
   private closed = false;
   private readonly transport: ByteTransport;
   readonly sessions: Sessions;
-  private constructor(transport: ByteTransport) { this.transport = transport; this.sessions = new Sessions(this); }
+  readonly jobs: Jobs;
+  readonly processes: Processes;
+  readonly files: Files;
+  readonly workspaces: Workspaces;
+  private constructor(transport: ByteTransport) {
+    this.transport = transport;
+    this.sessions = new Sessions(this);
+    this.jobs = new Jobs(this);
+    this.processes = new Processes(this);
+    this.files = new Files(this);
+    this.workspaces = new Workspaces(this);
+  }
 
   static async fromTransport(transport: ByteTransport): Promise<TermuxClient> {
     const client = new TermuxClient(transport);
@@ -34,9 +51,9 @@ export class TermuxClient {
   request(method: string, params: JsonObject = {}, options: { binary?: Uint8Array; signal?: AbortSignal } = {}): Promise<{ result: unknown; binary: Uint8Array }> {
     if (typeof method !== "string" || !method || method.length > 128 || !object(params)) return Promise.reject(new TypeError("Invalid request"));
     const binary = options.binary;
-    if (method === "session.write") {
+    if (method === "session.write" || method === "file.transfer.write") {
       if (!(binary instanceof Uint8Array) || !binary.length || binary.length > MAX_CHUNK || params.length !== binary.length)
-        return Promise.reject(new TypeError("session.write requires a matching binary frame"));
+        return Promise.reject(new TypeError(method + " requires a matching binary frame"));
     } else if (binary !== undefined) return Promise.reject(new TypeError("No binary request route for this method"));
     const task = this.tail.then(() => this.perform(method, params, binary, options.signal));
     this.tail = task.then(() => undefined, () => undefined);
@@ -69,7 +86,7 @@ export class TermuxClient {
         throw new RpcError(error.code as number, error.message, error.data);
       }
       let payload: Uint8Array = new Uint8Array(0);
-      if (method === "session.output.read") {
+      if (method === "session.output.read" || method === "job.output.read" || method === "file.read") {
         if (!object(parsed.result) || !Number.isInteger(parsed.result.length) || (parsed.result.length as number) < 0 || (parsed.result.length as number) > MAX_CHUNK)
           throw new ProtocolError("Invalid binary response metadata");
         const length = parsed.result.length as number;

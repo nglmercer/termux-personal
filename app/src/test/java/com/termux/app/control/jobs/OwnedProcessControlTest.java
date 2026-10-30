@@ -35,7 +35,8 @@ public class OwnedProcessControlTest {
             assertEquals(1, process.destroyCalls.get());
             assertEquals(JobRecord.State.CANCELLING, entry.record().snapshot().state);
             process.running = false; completion.get().finished(143, false);
-            assertEquals(JobRecord.State.EXITED, entry.record().snapshot().state);
+            assertEquals(JobRecord.State.CANCELLED, entry.record().snapshot().state);
+            assertNull(entry.record().snapshot().exitCode);
             assertEquals(JobRecord.StopReason.CANCEL, entry.record().snapshot().stopReason);
         } finally { timer.shutdownNow(); }
     }
@@ -87,13 +88,121 @@ public class OwnedProcessControlTest {
         try {
             JobRecord job = new JobRecord("id", null, 1); assertTrue(job.begin());
             FakeProcess process = new FakeProcess();
-            OwnedProcessControl control = OwnedProcessControl.forAndroid(job, timer, 20);
+            OwnedProcessControl control = OwnedProcessControl.forAndroid(job, timer, 20, false);
             control.attach(process);
             assertEquals(OwnedProcessControl.Request.UNSUPPORTED, control.requestStop(JobRecord.StopReason.CANCEL));
             assertEquals(OwnedProcessControl.Status.STOP_UNAVAILABLE, control.status());
             assertNull(job.snapshot().stopReason);
             assertEquals(0, process.destroyCalls.get());
         } finally { timer.shutdownNow(); }
+    }
+
+    @Test public void ownedAndroidControlTerminatesThenKillsTheSameChild() throws Exception {
+        ScheduledThreadPoolExecutor timer = new ScheduledThreadPoolExecutor(1);
+        try {
+            JobRecord job = new JobRecord("id", null, 1); assertTrue(job.begin());
+            FakeOps ops = new FakeOps();
+            OwnedChildProcess child = ops.child(4242);
+            OwnedProcessControl control = OwnedProcessControl.forAndroid(job, timer, 20, true);
+            assertTrue(control.canStop());
+            control.attach(child); assertTrue(job.started(null, 1));
+            assertEquals(OwnedProcessControl.Request.ACCEPTED, control.requestStop(JobRecord.StopReason.CANCEL));
+            assertTrue(ops.killed.await(2, TimeUnit.SECONDS));
+            assertEquals(java.util.Arrays.asList(OwnedChildProcess.SIGTERM, OwnedChildProcess.SIGKILL), ops.signals);
+            assertEquals(4242, ops.signalledPid.get());
+            control.completed();
+        } finally { timer.shutdownNow(); }
+    }
+
+    @Test public void ownedAndroidControlNeverSignalsAForeignHandle() {
+        ScheduledThreadPoolExecutor timer = new ScheduledThreadPoolExecutor(1);
+        try {
+            JobRecord job = new JobRecord("id", null, 1); assertTrue(job.begin());
+            FakeProcess foreign = new FakeProcess();
+            OwnedProcessControl control = OwnedProcessControl.forAndroid(job, timer, 20, true);
+            control.attach(foreign);
+            assertEquals(OwnedProcessControl.Request.ACCEPTED, control.requestStop(JobRecord.StopReason.CANCEL));
+            assertEquals(OwnedProcessControl.Status.FAILED, control.status());
+            assertEquals(0, foreign.destroyCalls.get());
+            control.completed();
+        } finally { timer.shutdownNow(); }
+    }
+
+    @Test public void timeoutRequestsAStopAndCompletionCancelsIt() throws Exception {
+        ScheduledThreadPoolExecutor timer = new ScheduledThreadPoolExecutor(1);
+        try {
+            JobRecord job = new JobRecord("id", null, 1); assertTrue(job.begin());
+            FakeOps ops = new FakeOps();
+            OwnedProcessControl control = OwnedProcessControl.forAndroid(job, timer, 1000, true);
+            assertTrue(control.scheduleTimeout(20));
+            assertFalse("a timeout is armed once", control.scheduleTimeout(20));
+            control.attach(ops.child(7)); assertTrue(job.started(null, 1));
+            assertTrue(ops.terminated.await(2, TimeUnit.SECONDS));
+            assertEquals(JobRecord.StopReason.TIMEOUT, job.snapshot().stopReason);
+            control.completed();
+
+            JobRecord quick = new JobRecord("quick", null, 1); assertTrue(quick.begin());
+            OwnedProcessControl finished = OwnedProcessControl.forAndroid(quick, timer, 1000, true);
+            assertTrue(finished.scheduleTimeout(50));
+            finished.completed();
+            Thread.sleep(100);
+            assertNull("a completed job is not stopped by its timeout", quick.snapshot().stopReason);
+            assertFalse(OwnedProcessControl.forAndroid(quick, timer, 1000, false).scheduleTimeout(50));
+        } finally { timer.shutdownNow(); }
+    }
+
+    @Test public void ownedChildIsNotSignalledOnceItsExitIsObserved() throws Exception {
+        FakeOps ops = new FakeOps();
+        OwnedChildProcess child = ops.child(99);
+        assertThrows(IllegalThreadStateException.class, child::exitValue);
+        assertTrue(child.signal(OwnedChildProcess.SIGINT));
+        ops.exitSignal = 15; ops.exited.countDown();
+        assertEquals(143, child.waitFor());
+        assertEquals(Integer.valueOf(15), child.terminationSignal());
+        assertEquals(143, child.exitValue());
+        assertEquals(1, ops.reaps.get());
+        assertFalse(child.signal(OwnedChildProcess.SIGKILL));
+        assertEquals(1, ops.signals.size());
+        assertEquals(143, child.waitFor());
+        assertEquals("a child is reaped once", 1, ops.reaps.get());
+        assertThrows(IllegalArgumentException.class, () -> child.signal(1));
+    }
+
+    @Test public void concurrentWaitersShareOneReap() throws Exception {
+        FakeOps ops = new FakeOps();
+        OwnedChildProcess child = ops.child(5);
+        AtomicInteger first = new AtomicInteger(-1), second = new AtomicInteger(-1);
+        Thread a = new Thread(() -> first.set(child.waitFor())), b = new Thread(() -> second.set(child.waitFor()));
+        a.start(); b.start();
+        Thread.sleep(50);
+        ops.exitCode = 3; ops.exited.countDown();
+        a.join(2000); b.join(2000);
+        assertEquals(3, first.get()); assertEquals(3, second.get());
+        assertEquals(1, ops.reaps.get());
+        assertNull(child.terminationSignal());
+    }
+
+    private static final class FakeOps implements OwnedChildProcess.Ops {
+        final java.util.List<Integer> signals = Collections.synchronizedList(new java.util.ArrayList<>());
+        final AtomicInteger reaps = new AtomicInteger(), signalledPid = new AtomicInteger();
+        final CountDownLatch exited = new CountDownLatch(1), terminated = new CountDownLatch(1), killed = new CountDownLatch(1);
+        volatile int exitCode, exitSignal;
+        OwnedChildProcess child(int pid) {
+            return new OwnedChildProcess(pid, this, new ByteArrayOutputStream(), new ByteArrayInputStream(new byte[0]),
+                new ByteArrayInputStream(new byte[0]));
+        }
+        @Override public int waitExit(int pid) { await(exited); return 0; }
+        @Override public int reap(int pid, int[] out) {
+            reaps.incrementAndGet();
+            out[0] = exitSignal == 0 ? 1 : 0; out[1] = exitCode; out[2] = exitSignal == 0 ? 0 : 1; out[3] = exitSignal;
+            return 0;
+        }
+        @Override public int signal(int pid, int signal) {
+            signals.add(signal); signalledPid.set(pid);
+            if (signal == OwnedChildProcess.SIGTERM) terminated.countDown();
+            if (signal == OwnedChildProcess.SIGKILL) killed.countDown();
+            return 0;
+        }
     }
 
     private static void await(CountDownLatch gate) {

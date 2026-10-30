@@ -1,10 +1,16 @@
 #include <jni.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <unistd.h>
+
+#ifndef RENAME_NOREPLACE
+#define RENAME_NOREPLACE 1
+#endif
 
 /* Walk each component relative to an open directory; never follow a link. */
 static int open_document(const char *root, char *path, int access, int truncate_file, int append) {
@@ -180,4 +186,90 @@ Java_com_termux_filepicker_SafeDocumentOpen_openNative(JNIEnv *env, jclass cls,
     if (!(*env)->ExceptionCheck(env) && !memchr(root, 0, (size_t) root_len) && !memchr(path, 0, (size_t) path_len))
         result = open_document(root, path, access, truncate_file, append);
     free(root); free(path); return result;
+}
+
+/* Opens the directory that holds the last component of path, with no link followed, and points
+ * *leaf at that component. Returns the directory descriptor, or -1 for an invalid or missing parent. */
+static int open_parent(const char *root, char *path, char **leaf) {
+    char *slash = strrchr(path, '/');
+    char *name = slash ? slash + 1 : path;
+    if (!*name || !strcmp(name, ".") || !strcmp(name, "..")) return -1;
+    int dir;
+    if (slash) {
+        *slash = 0;
+        dir = open_directory(root, path);
+    } else {
+        dir = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+    }
+    if (dir < 0) return -1;
+    *leaf = name;
+    return dir;
+}
+
+/* New regular file, read/write, owner-only; fails if any entry already has the name. */
+static int create_new_file(const char *root, char *path) {
+    char *leaf;
+    int dir = open_parent(root, path, &leaf);
+    if (dir < 0) return -ENOENT;
+    int fd = openat(dir, leaf, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+    int saved = errno;
+    close(dir);
+    return fd >= 0 ? fd : -saved;
+}
+
+/* Renames within root without following either final component. Without replace, renameat2's
+ * RENAME_NOREPLACE refuses an existing target atomically when the caller allows it (Android's app seccomp
+ * policy permits it from Android 11). Otherwise the target is checked first and then renamed, which a
+ * concurrent same-UID creation can still race. Hard links are not used: Android forbids them in app data. */
+static int rename_entry(const char *root, char *from, char *to, int replace, int atomic_noreplace) {
+    char *from_leaf, *to_leaf;
+    int from_dir = open_parent(root, from, &from_leaf);
+    if (from_dir < 0) return -ENOENT;
+    int to_dir = open_parent(root, to, &to_leaf);
+    if (to_dir < 0) { close(from_dir); return -ENOENT; }
+    struct stat st;
+    int result = 0;
+    if (fstatat(from_dir, from_leaf, &st, AT_SYMLINK_NOFOLLOW) < 0) result = -errno;
+    else if (replace) { if (renameat(from_dir, from_leaf, to_dir, to_leaf) < 0) result = -errno; }
+    else if (atomic_noreplace &&
+             syscall(__NR_renameat2, from_dir, from_leaf, to_dir, to_leaf, RENAME_NOREPLACE) == 0) result = 0;
+    else if (atomic_noreplace && errno != ENOSYS && errno != EINVAL) result = -errno;
+    else if (fstatat(to_dir, to_leaf, &st, AT_SYMLINK_NOFOLLOW) == 0) result = -EEXIST;
+    else if (errno != ENOENT) result = -errno;
+    else if (renameat(from_dir, from_leaf, to_dir, to_leaf) < 0) result = -errno;
+    close(from_dir); close(to_dir);
+    return result;
+}
+
+static char *copy_bytes(JNIEnv *env, jbyteArray bytes, jsize max) {
+    if (bytes == NULL) return NULL;
+    jsize length = (*env)->GetArrayLength(env, bytes);
+    if (length <= 0 || length > max) return NULL;
+    char *copy = malloc((size_t) length + 1);
+    if (!copy) return NULL;
+    (*env)->GetByteArrayRegion(env, bytes, 0, length, (jbyte *) copy);
+    copy[length] = 0;
+    if ((*env)->ExceptionCheck(env) || memchr(copy, 0, (size_t) length)) { free(copy); return NULL; }
+    return copy;
+}
+
+/* Returns a descriptor or a negative errno. */
+JNIEXPORT jint JNICALL
+Java_com_termux_filepicker_SafeDocumentOpen_createFileNative(JNIEnv *env, jclass cls, jbyteArray root_bytes,
+                                                              jbyteArray relative_bytes) {
+    (void) cls;
+    char *root = copy_bytes(env, root_bytes, 4096), *path = copy_bytes(env, relative_bytes, 4096);
+    int result = root && path ? create_new_file(root, path) : -EINVAL;
+    free(root); free(path); return result;
+}
+
+/* Returns 0 or a negative errno. */
+JNIEXPORT jint JNICALL
+Java_com_termux_filepicker_SafeDocumentOpen_renameNative(JNIEnv *env, jclass cls, jbyteArray root_bytes,
+                                                          jbyteArray from_bytes, jbyteArray to_bytes, jboolean replace,
+                                                          jboolean atomic_noreplace) {
+    (void) cls;
+    char *root = copy_bytes(env, root_bytes, 4096), *from = copy_bytes(env, from_bytes, 4096), *to = copy_bytes(env, to_bytes, 4096);
+    int result = root && from && to ? rename_entry(root, from, to, replace, atomic_noreplace) : -EINVAL;
+    free(root); free(from); free(to); return result;
 }

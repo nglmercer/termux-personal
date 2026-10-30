@@ -33,12 +33,12 @@ dex, binary = (base64.b64encode(pathlib.Path(path).read_bytes()).decode("ascii")
 script = """set -eu
 d=$(mktemp -d "$TMPDIR/adb-bridge.XXXXXXXX")
 trap 'rm -rf "$d"' EXIT
-printf %s 'DEX' | base64 -d > "$d/classes.dex"
-printf %s 'BIN' | base64 -d > "$d/termux-control"
+printf %s '@DEX@' | base64 -d > "$d/classes.dex"
+printf %s '@BIN@' | base64 -d > "$d/termux-control"
 chmod 400 "$d/classes.dex"
 chmod 700 "$d/termux-control"
 CLASSPATH="$d/classes.dex" app_process /system/bin com.termux.app.control.ipc.AdbBridgeServer "$d/termux-control"
-""".replace("DEX", dex).replace("BIN", binary)
+""".replace("@DEX@", dex).replace("@BIN@", binary)
 server = subprocess.Popen(["python3", "tools/termux-control/python/termux-adb", "exec"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 try:
     try:

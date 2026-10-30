@@ -75,6 +75,43 @@ final class SafeDocumentOpen {
     }
     private static native int directoryNative(byte[] root, byte[] path);
 
+    static boolean isAvailable() { return AVAILABLE; }
+
+    /** New owner-only regular file opened read/write; returns a descriptor or a negative errno. */
+    static int createFile(File root, String relative) {
+        if (!AVAILABLE || relative == null || relative.isEmpty()) return -22;
+        return createFileNative(root.getAbsolutePath().getBytes(StandardCharsets.UTF_8), relative.getBytes(StandardCharsets.UTF_8));
+    }
+    private static native int createFileNative(byte[] root, byte[] path);
+
+    /** Returns 0 or a negative errno. Neither final component is followed. */
+    static int rename(File root, String from, String to, boolean replace) {
+        if (!AVAILABLE || from == null || to == null || from.isEmpty() || to.isEmpty()) return -22;
+        // renameat2 is in Android's app seccomp allowlist from Android 11; earlier it could kill the process.
+        boolean atomicNoReplace = android.os.Build.VERSION.SDK_INT >= 30;
+        return renameNative(root.getAbsolutePath().getBytes(StandardCharsets.UTF_8), from.getBytes(StandardCharsets.UTF_8),
+            to.getBytes(StandardCharsets.UTF_8), replace, atomicNoReplace);
+    }
+    private static native int renameNative(byte[] root, byte[] from, byte[] to, boolean replace, boolean atomicNoReplace);
+
+    /** Root-relative form of {@link #create(File, String, boolean)}: 0 created, 1 exists, -1 other failure. */
+    static int createRelative(File root, String relative, boolean directory) throws FileNotFoundException {
+        return create(root, root.getAbsolutePath() + File.separator + relative, directory);
+    }
+
+    /** Root-relative form of {@link #delete(File, String)}; regular files and empty directories only. */
+    static void deleteRelative(File root, String relative) throws FileNotFoundException {
+        delete(root, root.getAbsolutePath() + File.separator + relative);
+    }
+
+    /** Opens a directory below root without following any link; the empty path names root itself. */
+    static ParcelFileDescriptor openDirectory(File root, String relative) throws FileNotFoundException {
+        if (!AVAILABLE || relative == null) throw new FileNotFoundException("Invalid directory");
+        int raw = directoryNative(root.getAbsolutePath().getBytes(StandardCharsets.UTF_8), relative.getBytes(StandardCharsets.UTF_8));
+        if (raw < 0) throw new FileNotFoundException("Cannot open directory");
+        return ParcelFileDescriptor.adoptFd(raw);
+    }
+
     static final class Entry {
         final boolean directory, writable;
         final long size, modified;

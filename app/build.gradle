@@ -157,6 +157,40 @@ dependencies {
     coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:1.1.5"
 }
 
+// The glibc side of automatic glibc compatibility (src/main/cpp/glibc-exec.c). ndk-build only targets
+// bionic, so the NDK's clang builds this freestanding library for each glibc target directly. Without an
+// NDK clang the step is skipped: glibc programs still run, but programs that relaunch themselves may not.
+def glibcPreloadDir = layout.buildDirectory.dir("generated/glibcPreload/jniLibs")
+android.sourceSets.main.jniLibs.srcDir(glibcPreloadDir)
+tasks.register("buildGlibcPreload") {
+    def source = file("src/main/cpp/glibc-exec.c")
+    def outputRoot = glibcPreloadDir
+    def ndkRoot = android.ndkDirectory
+    inputs.file(source)
+    outputs.dir(outputRoot)
+    doLast {
+        def host = System.getProperty("os.name").toLowerCase().contains("mac") ? "darwin-x86_64" :
+            (System.getProperty("os.arch") in ["aarch64", "arm64"] ? "linux-aarch64" : "linux-x86_64")
+        def clang = new File(ndkRoot, "toolchains/llvm/prebuilt/${host}/bin/clang")
+        if (!clang.canExecute()) {
+            logger.warn("NDK clang not found at ${clang}; skipping the glibc preload library")
+            return
+        }
+        ["arm64-v8a": "aarch64-linux-gnu", "armeabi-v7a": "armv7a-linux-gnueabihf",
+         "x86": "i686-linux-gnu", "x86_64": "x86_64-linux-gnu"].each { abi, target ->
+            def out = outputRoot.get().file("${abi}/libtermux-glibc-preload.so").asFile
+            out.parentFile.mkdirs()
+            def proc = new ProcessBuilder(clang.absolutePath, "--target=${target}", "-DTERMUX_GLIBC_SIDE=1", "-std=c11",
+                "-Wall", "-Wextra", "-Werror", "-Os", "-fPIC", "-shared", "-nostdlib", "-ffreestanding", "-fno-builtin",
+                "-fno-stack-protector", "-fuse-ld=lld", "-Wl,--hash-style=both", "-Wl,-z,noexecstack",
+                source.absolutePath, "-o", out.absolutePath).redirectErrorStream(true).start()
+            def log = proc.inputStream.text
+            if (proc.waitFor() != 0) throw new GradleException("glibc preload build failed for ${abi}:\n${log}")
+        }
+    }
+}
+tasks.named("preBuild") { dependsOn("buildGlibcPreload") }
+
 task versionName {
     doLast {
         print android.defaultConfig.versionName

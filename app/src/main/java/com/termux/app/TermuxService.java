@@ -68,7 +68,7 @@ import java.util.List;
 public final class TermuxService extends Service implements AppShell.AppShellClient, TermuxSession.TermuxSessionClient {
 
     /** This service is only bound from inside the same process and never uses IPC. */
-    class LocalBinder extends Binder {
+    public class LocalBinder extends Binder {
         public final TermuxService service = TermuxService.this;
     }
 
@@ -102,6 +102,14 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
     private com.termux.app.control.ipc.ServiceThreadDispatch mControlDispatch;
     private volatile com.termux.app.control.ipc.LocalControlServer mLocalControlServer;
     private boolean mControlAvailable;
+    /** Managed-job consent; revoked whenever local control stops. Running children are not signalled. */
+    private final com.termux.app.control.jobs.JobAuthority mJobAuthority = new com.termux.app.control.jobs.JobAuthority();
+    private final Object mJobLock = new Object();
+    private com.termux.app.control.jobs.JobCoordinator mJobCoordinator;
+    /** Process listing and workspace store are created once per service on the start worker, under their own lock. */
+    private final Object mDomainLock = new Object();
+    private com.termux.app.control.process.ProcessService mProcessService;
+    private com.termux.app.control.workspace.WorkspaceRepository mWorkspaceRepository;
     private boolean mSafeControlCloseEnabled;
 
     /** The wake lock and wifi lock are always acquired and released together. */
@@ -149,6 +157,30 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         runStartForeground();
 
         SystemEventReceiver.registerPackageUpdateEvents(this);
+
+        // Keeps the app-owned shell profile current after app updates; sessions started later pick it up.
+        new Thread(ShellCompatibility::ensure, "TermuxShellCompat").start();
+
+        // Only a consent the user explicitly chose to remember and auto-start is applied here.
+        new android.os.Handler(android.os.Looper.getMainLooper()).post(this::autoStartLocalControl);
+    }
+
+    /** The user's remembered local control choice; written only by the app's own UI. */
+    public com.termux.app.control.LocalControlConsent localControlConsent() {
+        return new com.termux.app.control.LocalControlConsent(this);
+    }
+
+    private void autoStartLocalControl() {
+        com.termux.app.control.LocalControlConsent consent = localControlConsent();
+        if (!mControlAvailable || mLocalControlServer != null || !consent.autoStart()) return;
+        java.util.EnumSet<com.termux.app.control.ControlCore.Scope> scopes = consent.scopes();
+        if (scopes == null) return;
+        try {
+            if (!startLocalControl(scopes, started -> { if (!started) Logger.logWarn(LOG_TAG, "Saved local control did not start"); }))
+                Logger.logWarn(LOG_TAG, "Saved local control was refused");
+        } catch (IllegalStateException e) {
+            Logger.logWarn(LOG_TAG, "Saved local control unavailable");
+        }
     }
 
     @SuppressLint("Wakelock")
@@ -198,6 +230,8 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
     public void onDestroy() {
         Logger.logVerbose(LOG_TAG, "onDestroy");
         stopLocalControl();
+        mJobAuthority.revoke();
+        synchronized (mJobLock) { if (mJobCoordinator != null) mJobCoordinator.stopAccepting(); }
         if (mOutputSubscriptions != null) mOutputSubscriptions.close();
         if (mControlAvailable) setSafeControlCloseEnabled(false);
         else TerminalSession.setProcessHandlesEnabled(false);
@@ -921,6 +955,116 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
 
     public interface LocalControlStartCallback { void onResult(boolean started); }
 
+    /** Workspace scopes are read and write consent, selected separately. Neither implies job or file access. */
+    private static boolean requestsWorkspaceScope(java.util.Set<com.termux.app.control.ControlCore.Scope> scopes) {
+        return scopes.contains(com.termux.app.control.ControlCore.Scope.WORKSPACES_READ) ||
+            scopes.contains(com.termux.app.control.ControlCore.Scope.WORKSPACES_WRITE);
+    }
+
+    /**
+     * Owned processes are the session shells. Their PIDs are read under the service lock for a moment; the sample
+     * itself is read from /proc on the worker. No task roots exist yet, so task and owned views report session shells.
+     */
+    private com.termux.app.control.process.ProcessService processServiceForWorker() {
+        synchronized (mDomainLock) {
+            if (mProcessService != null) return mProcessService;
+            long ticks = android.system.Os.sysconf(android.system.OsConstants._SC_CLK_TCK);
+            long pageSize = android.system.Os.sysconf(android.system.OsConstants._SC_PAGE_SIZE);
+            mProcessService = new com.termux.app.control.process.ProcessService(new java.io.File("/proc"),
+                android.os.Process.myUid(), ticks, pageSize, new com.termux.app.control.process.ProcessService.Roots() {
+                    @Override public java.util.Set<Integer> sessionRoots() {
+                        java.util.Set<Integer> pids = new java.util.HashSet<>();
+                        synchronized (TermuxService.this) {
+                            for (com.termux.shared.termux.shell.command.runner.terminal.TermuxSession item : getTermuxSessions()) {
+                                int pid = item.getTerminalSession().getPid();
+                                if (pid > 0) pids.add(pid);
+                            }
+                        }
+                        return pids;
+                    }
+                    @Override public java.util.Set<Integer> taskRoots() { return java.util.Collections.emptySet(); }
+                });
+            return mProcessService;
+        }
+    }
+
+    /**
+     * Read-only client file access to the shell home and the prefix. Null when descriptor-relative traversal is
+     * unavailable: the path-checked fallback is not race-safe, so file methods are then not offered at all.
+     */
+    private com.termux.app.control.files.FileService fileServiceForWorker(boolean writable) throws java.io.IOException {
+        com.termux.app.control.files.DescriptorAccess access = com.termux.app.control.files.DescriptorAccess.createIfAvailable();
+        if (access == null) return null;
+        java.util.Map<String, java.io.File> roots = new java.util.LinkedHashMap<>();
+        roots.put("home", new java.io.File(TermuxConstants.TERMUX_HOME_DIR_PATH));
+        roots.put("prefix", new java.io.File(TermuxConstants.TERMUX_PREFIX_DIR_PATH));
+        // Only the home is ever writable; the prefix changes through the package manager, not file RPC.
+        return new com.termux.app.control.files.FileService(roots,
+            writable ? java.util.Collections.singleton("home") : java.util.Collections.<String>emptySet(), access);
+    }
+
+    /** One store per service. Its root is the app-private files directory, never the shell home itself. */
+    private com.termux.app.control.workspace.WorkspaceRepository workspaceRepositoryForWorker() throws java.io.IOException {
+        synchronized (mDomainLock) {
+            if (mWorkspaceRepository != null) return mWorkspaceRepository;
+            java.io.File store = new java.io.File(getFilesDir(), "workspaces");
+            if (!store.isDirectory() && !store.mkdirs()) throw new java.io.IOException("Workspace store unavailable");
+            java.util.Map<String, java.io.File> roots = new java.util.HashMap<>();
+            roots.put("home", new java.io.File(TermuxConstants.TERMUX_HOME_DIR_PATH));
+            try {
+                mWorkspaceRepository = new com.termux.app.control.workspace.WorkspaceRepository(new java.io.File(store, "v1.json"),
+                    new com.termux.app.control.files.FileService(roots));
+            } catch (com.termux.app.control.workspace.WorkspaceRepository.WorkspaceException e) {
+                throw new java.io.IOException("Workspace store unavailable", e);
+            }
+            return mWorkspaceRepository;
+        }
+    }
+
+    /** Avoids Collection.stream(), which is not available on the minimum supported Android API level. */
+    private static boolean requestsJobScope(java.util.Set<com.termux.app.control.ControlCore.Scope> scopes) {
+        for (com.termux.app.control.ControlCore.Scope scope : scopes)
+            if (scope.name().startsWith("JOBS_") || scope == com.termux.app.control.ControlCore.Scope.PROCESSES_SIGNAL) return true;
+        return false;
+    }
+
+    /**
+     * Creates the one coordinator for this service lifetime. The path policy resolves configured roots
+     * on disk, so this runs on the local-control start worker. The service monitor is not held here.
+     */
+    private com.termux.app.control.jobs.JobCoordinator jobCoordinatorForWorker() throws java.io.IOException {
+        synchronized (mJobLock) {
+            if (mJobCoordinator != null) return mJobCoordinator;
+            com.termux.app.control.jobs.JobPathPolicy policy = new com.termux.app.control.jobs.JobPathPolicy(
+                java.util.Collections.singletonList(TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH),
+                java.util.Collections.singletonList(TermuxConstants.TERMUX_HOME_DIR_PATH),
+                TermuxConstants.TERMUX_HOME_DIR_PATH,
+                java.util.Collections.singletonMap("git", TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/git"),
+                // The policy resolves on job workers, so loading the store here stays off the main thread.
+                workspaceId -> workspaceRepositoryForWorker().directory(workspaceId));
+            com.termux.app.control.jobs.JobRegistry registry = new com.termux.app.control.jobs.JobRegistry(
+                new com.termux.app.control.jobs.JobIoPool(com.termux.app.control.jobs.JobIoPool.MAX_JOBS),
+                new com.termux.app.control.jobs.JobOutputStore(),
+                com.termux.app.control.jobs.JobOutputStore.DEFAULT_RECORD_LIMIT);
+            mJobCoordinator = new com.termux.app.control.jobs.JobCoordinator(registry,
+                new com.termux.app.control.jobs.AppShellJobAdapter(this), policy, mJobAuthority);
+            return mJobCoordinator;
+        }
+    }
+
+    /** The workspace store for the app's own UI. Loads from disk on first use, so call it off the main thread. */
+    public com.termux.app.control.workspace.WorkspaceRepository workspaceRepositoryForUi() throws java.io.IOException {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
+            throw new IllegalStateException("Workspace store must load off the main thread");
+        return workspaceRepositoryForWorker();
+    }
+
+    /** The job coordinator if local control ever created one in this service lifetime, for the app's own UI. */
+    @androidx.annotation.Nullable
+    public com.termux.app.control.jobs.JobCoordinator getJobCoordinatorIfCreated() {
+        synchronized (mJobLock) { return mJobCoordinator; }
+    }
+
     /** Explicit in-process opt-in. Scopes must be selected by a trusted local caller. */
     public boolean startLocalControl(java.util.Set<com.termux.app.control.ControlCore.Scope> scopes,
                                      LocalControlStartCallback callback) {
@@ -931,11 +1075,18 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         boolean resume = scopes.contains(com.termux.app.control.ControlCore.Scope.SESSIONS_OUTPUT_RESUME);
         if (close && !scopes.contains(com.termux.app.control.ControlCore.Scope.SESSIONS_WRITE)) return false;
         if (resume && !scopes.contains(com.termux.app.control.ControlCore.Scope.SESSIONS_OUTPUT)) return false;
+        final boolean requestsJobs = requestsJobScope(scopes);
+        final boolean requestsProcesses = scopes.contains(com.termux.app.control.ControlCore.Scope.PROCESSES_READ);
+        final boolean requestsFiles = scopes.contains(com.termux.app.control.ControlCore.Scope.FILES_READ) ||
+            scopes.contains(com.termux.app.control.ControlCore.Scope.FILES_WRITE);
+        final boolean writesFiles = scopes.contains(com.termux.app.control.ControlCore.Scope.FILES_WRITE);
+        final boolean requestsWorkspaces = requestsWorkspaceScope(scopes);
         com.termux.app.control.ipc.LocalControlServer server =
             new com.termux.app.control.ipc.LocalControlServer(this, mControlCore, mControlDispatch, scopes, stopped ->
                 new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
                     if (mLocalControlServer == stopped) {
                         mLocalControlServer = null;
+                        mJobAuthority.revoke();
                         if (mControlAvailable && mSafeControlCloseEnabled) setSafeControlCloseEnabled(false);
                         if (mControlAvailable) mOutputSubscriptions.setRetentionEnabled(false);
                     }
@@ -945,6 +1096,12 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         mLocalControlServer = server;
         try { new Thread(() -> {
             try {
+                com.termux.app.control.jobs.JobCoordinator jobs = requestsJobs ? jobCoordinatorForWorker() : null;
+                if (jobs != null) mJobAuthority.grantScopes(scopes);
+                server.configureDomains(jobs, jobs == null ? null : mJobAuthority,
+                    requestsProcesses ? processServiceForWorker() : null,
+                    requestsFiles ? fileServiceForWorker(writesFiles) : null,
+                    requestsWorkspaces ? workspaceRepositoryForWorker() : null);
                 server.start();
                 new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
                     if (mLocalControlServer == server && callback != null) callback.onResult(server.isRunning());
@@ -953,6 +1110,7 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
                 Logger.logWarn(LOG_TAG, "Local control socket could not start");
                 new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
                     if (mLocalControlServer == server) {
+                        mJobAuthority.revoke();
                         if (mControlAvailable && mSafeControlCloseEnabled) setSafeControlCloseEnabled(false);
                         if (mControlAvailable) mOutputSubscriptions.setRetentionEnabled(false);
                         if (callback != null) callback.onResult(false);
@@ -977,6 +1135,8 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         com.termux.app.control.ipc.LocalControlServer server = mLocalControlServer;
         if (mControlAvailable && mSafeControlCloseEnabled) setSafeControlCloseEnabled(false);
         if (mControlAvailable) mOutputSubscriptions.setRetentionEnabled(false);
+        // Future job requests fail as soon as the user stops local control; running children are not signalled.
+        mJobAuthority.revoke();
         if (server != null) server.requestStop();
     }
 
@@ -996,6 +1156,14 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
 
     public boolean localControlAllowsOutput() {
         return mLocalControlServer != null && mLocalControlServer.allowsOutput();
+    }
+
+    public boolean localControlAllowsJobs() {
+        return mLocalControlServer != null && mLocalControlServer.allowsJobs();
+    }
+
+    public boolean localControlAllowsJobExecute() {
+        return mLocalControlServer != null && mLocalControlServer.allowsJobExecute();
     }
 
     public boolean localControlAllowsOutputResume() {

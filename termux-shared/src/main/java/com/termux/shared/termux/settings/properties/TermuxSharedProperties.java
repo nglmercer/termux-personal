@@ -298,6 +298,8 @@ public abstract class TermuxSharedProperties {
                 return (String) getDefaultWorkingDirectoryInternalPropertyValueFromValue(value);
             case TermuxPropertyConstants.KEY_EXTRA_KEYS:
                 return (String) getExtraKeysInternalPropertyValueFromValue(value);
+            case TermuxPropertyConstants.KEY_PATH_APPEND:
+                return value == null ? TermuxPropertyConstants.DEFAULT_IVALUE_PATH_APPEND : value.trim();
             case TermuxPropertyConstants.KEY_EXTRA_KEYS_STYLE:
                 return (String) getExtraKeysStyleInternalPropertyValueFromValue(value);
             case TermuxPropertyConstants.KEY_NIGHT_MODE:
@@ -673,6 +675,11 @@ public abstract class TermuxSharedProperties {
 
     public boolean isBackKeyTheEscapeKey() {
         return (boolean) TermuxPropertyConstants.IVALUE_BACK_KEY_BEHAVIOUR_ESCAPE.equals(getInternalPropertyValue(TermuxPropertyConstants.KEY_BACK_KEY_BEHAVIOUR, true));
+    }
+
+    /** The raw path-append value; {@code TermuxShellEnvironment} expands and validates it. */
+    public String getPathAppend() {
+        return (String) getInternalPropertyValue(TermuxPropertyConstants.KEY_PATH_APPEND, true);
     }
 
     public String getDefaultWorkingDirectory() {

@@ -570,8 +570,214 @@ static int attach_loop(int *fd, const char *id, const char *path, const char *to
     return result;
 }
 
+/* Managed jobs and workspaces. Only fixed methods with identifier or subcommand arguments are accepted. */
+static const char *domain_method(const char *group, const char *sub, int count) {
+    if (!strcmp(group, "jobs")) {
+        if (!strcmp(sub, "list") && count == 0) return "job.list";
+        if (!strcmp(sub, "get") && count == 1) return "job.get";
+        if (!strcmp(sub, "cancel") && count == 1) return "job.cancel";
+        if ((!strcmp(sub, "start") || !strcmp(sub, "run")) && count >= 2) return "job.start";
+        if (!strcmp(sub, "logs") && count >= 1) return "job.output.read";
+        return NULL;
+    }
+    if (!strcmp(group, "workspaces")) {
+        if (!strcmp(sub, "list") && count == 0) return "workspace.list";
+        if (!strcmp(sub, "get") && count == 1) return "workspace.get";
+        if (!strcmp(sub, "tasks") && count == 1) return "workspace.tasks";
+        if (!strcmp(sub, "git") && count == 2) return "workspace.git";
+        if (!strcmp(sub, "run") && count == 2) return "workspace.task.run";
+        if (!strcmp(sub, "create") && count == 3) return "workspace.create";
+        if (!strcmp(sub, "update") && count == 4) return "workspace.update";
+        if (!strcmp(sub, "remove") && count == 1) return "workspace.remove";
+        if (!strcmp(sub, "select") && count == 1) return "workspace.select";
+        return NULL;
+    }
+    return NULL;
+}
+static int domain_call(const char *path, const char *method, char **args, int count) {
+    char req[MAX_REQUEST] = ""; size_t used = 0;
+    if (!strcmp(method, "workspace.git")) {
+        /* Refused before connecting: only the fixed read-only subcommands exist. */
+        const char *sub = args[1];
+        if (strcmp(sub, "status") && strcmp(sub, "branch") && strcmp(sub, "diff") && strcmp(sub, "log")) {
+            fprintf(stderr, "termux-control: git subcommand must be status, branch, diff or log\n"); return 2;
+        }
+    }
+    const char *keys[3] = {NULL, NULL, NULL};
+    if (!strcmp(method, "job.get") || !strcmp(method, "job.cancel") || !strcmp(method, "workspace.get") || !strcmp(method, "workspace.tasks")) keys[0] = "id";
+    else if (!strcmp(method, "workspace.git")) { keys[0] = "workspaceId"; keys[1] = "subcommand"; }
+    else if (!strcmp(method, "workspace.task.run")) { keys[0] = "workspaceId"; keys[1] = "taskId"; }
+    else if (!strcmp(method, "workspace.remove") || !strcmp(method, "workspace.select")) keys[0] = "id";
+    else if (!strcmp(method, "workspace.create")) { keys[0] = "name"; keys[1] = "rootId"; keys[2] = "path"; }
+    const char *update_keys[4] = {"id", "name", "rootId", "path"};
+    if (append(req, sizeof(req), &used, "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":") || quoted(req, sizeof(req), &used, method) ||
+        append(req, sizeof(req), &used, ",\"params\":{")) goto too_long;
+    int update = !strcmp(method, "workspace.update");
+    for (int n = 0; n < count && (update ? n < 4 : n < 3 && keys[n] != NULL); ++n) {
+        char key[64]; snprintf(key, sizeof(key), "%s\"%s\":", n ? "," : "", update ? update_keys[n] : keys[n]);
+        if (append(req, sizeof(req), &used, key) || quoted(req, sizeof(req), &used, args[n])) goto too_long;
+    }
+    if (append(req, sizeof(req), &used, "}}")) goto too_long;
+    int fd = connect_control(path);
+    if (fd < 0) return 1;
+    int result = exchange(fd, req, 2, 0, NULL, 0, NULL);
+    int mutating = !strcmp(method, "job.cancel") || !strcmp(method, "workspace.git") || !strcmp(method, "workspace.task.run") ||
+                   !strcmp(method, "workspace.create") || !strcmp(method, "workspace.update") || !strcmp(method, "workspace.remove") ||
+                   !strcmp(method, "workspace.select");
+    if (result < 0 && mutating) fprintf(stderr, "termux-control: request outcome may be unknown; inspect job state before retrying\n");
+    close(fd); return result == 0 ? 0 : 1;
+too_long:
+    fprintf(stderr, "termux-control: request is too long\n"); return 2;
+}
+/* Job output and lifecycle helpers. A job's argv is sent as a JSON array; nothing is joined into a shell string. */
+#define MAX_JOB_REQUEST 65536u
+enum job_exit { JOB_EXIT_TIMED_OUT = 124, JOB_EXIT_FAILED = 125, JOB_EXIT_CANCELLED = 130 };
+
+static int parse_result(char *response, struct span *root, struct span *result) {
+    const char *end = response;
+    if (!value(&end, 0)) return -1;
+    ws(&end); root->start = response; root->end = end;
+    return member(*root, "result", result) == 1 ? 0 : -1;
+}
+/* One job.output.read call; writes received bytes to sink. finished means no more bytes will arrive. */
+static int job_read_once(int fd, const char *id, const char *stream, uint64_t *offset, FILE *sink, int *received, int *finished) {
+    char request[MAX_REQUEST] = ""; size_t used = 0; char tail[100];
+    snprintf(tail, sizeof(tail), ",\"stream\":\"%s\",\"offset\":%llu,\"limit\":65536}}", stream, (unsigned long long)*offset);
+    if (append(request, sizeof(request), &used, "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"job.output.read\",\"params\":{\"id\":") ||
+        quoted(request, sizeof(request), &used, id) || append(request, sizeof(request), &used, tail)) return -1;
+    char *response = NULL;
+    int status = exchange(fd, request, 4, 0, NULL, 0, &response);
+    if (status != 0) { free(response); return status; }
+    struct span root, result, gap, done;
+    uint64_t start, next, latest, length;
+    int valid = !parse_result(response, &root, &result) &&
+        !unsigned_member(result, "offset", &start) && !unsigned_member(result, "nextOffset", &next) &&
+        !unsigned_member(result, "endOffset", &latest) && !unsigned_member(result, "length", &length) &&
+        member(result, "gap", &gap) == 1 && (equals(gap, "true") || equals(gap, "false")) &&
+        member(result, "finished", &done) == 1 && (equals(done, "true") || equals(done, "false"));
+    int has_gap = valid && equals(gap, "true");
+    if (!valid || length > MAX_FRAME || start < *offset || next < start || next - start != length || next > latest ||
+        (!has_gap && start != *offset)) {
+        fprintf(stderr, "termux-control: invalid job output metadata\n"); free(response); return -1;
+    }
+    *finished = equals(done, "true") && next >= latest;
+    free(response);
+    if (has_gap) fprintf(stderr, "termux-control: job output gap; older %s bytes were overwritten\n", stream);
+    if (length) {
+        unsigned char header[4], data[MAX_FRAME];
+        long long now = now_ms();
+        if (now < 0 || all_read(fd, header, sizeof(header), now + 5000)) { fprintf(stderr, "termux-control: incomplete output frame\n"); return -2; }
+        uint32_t size = ((uint32_t)header[0] << 24) | ((uint32_t)header[1] << 16) | ((uint32_t)header[2] << 8) | header[3];
+        if (size != length) { fprintf(stderr, "termux-control: invalid output frame\n"); return -1; }
+        if (all_read(fd, data, size, now + 5000)) { fprintf(stderr, "termux-control: incomplete output frame\n"); return -2; }
+        if (fwrite(data, 1, size, sink) != size || fflush(sink)) { fprintf(stderr, "termux-control: cannot write output\n"); return -1; }
+    }
+    *received = length != 0;
+    *offset = next;
+    return 0;
+}
+static void pause_poll(void) {
+    struct timespec delay = { .tv_sec = 0, .tv_nsec = 200000000 };
+    while (nanosleep(&delay, &delay) && errno == EINTR) { }
+}
+/* Prints available output; with follow, polls until the job's stream is finished. */
+static int job_logs(const char *path, const char *id, const char *stream, int follow) {
+    int fd = connect_control(path);
+    if (fd < 0) return 1;
+    uint64_t offset = 0; int status;
+    for (;;) {
+        int received = 0, finished = 0;
+        status = job_read_once(fd, id, stream, &offset, stdout, &received, &finished);
+        if (status || finished || (!received && !follow)) break;
+        if (!received) pause_poll();
+    }
+    close(fd); return status == 0 ? 0 : 1;
+}
+/* Extracts the job ID and returns the state as a quoted span; -1 on malformed metadata. */
+static int job_state(char *response, char *id_out, size_t id_cap, struct span *state, struct span *exit_code) {
+    struct span root, result, job, id;
+    if (parse_result(response, &root, &result) || member(result, "job", &job) != 1 || member(job, "id", &id) != 1 ||
+        member(job, "state", state) != 1 || member(job, "exitCode", exit_code) != 1) return -1;
+    size_t length = (size_t)(id.end - id.start);
+    if (length < 3 || length - 2 >= id_cap || *id.start != '"' || id.end[-1] != '"' || memchr(id.start + 1, '\\', length - 2)) return -1;
+    memcpy(id_out, id.start + 1, length - 2); id_out[length - 2] = 0;
+    return 0;
+}
+static int terminal_exit(struct span state, struct span exit_code) {
+    if (equals(state, "\"exited\"")) {
+        long code = strtol(exit_code.start, NULL, 10);
+        return code >= 0 && code <= 255 ? (int)code : JOB_EXIT_FAILED;
+    }
+    if (equals(state, "\"timed_out\"")) return JOB_EXIT_TIMED_OUT;
+    if (equals(state, "\"cancelled\"")) return JOB_EXIT_CANCELLED;
+    if (equals(state, "\"failed\"") || equals(state, "\"lost\"")) return JOB_EXIT_FAILED;
+    return -1;
+}
+/* jobs start|run [--cwd DIR] [--workspace ID] [--timeout MS] -- EXECUTABLE [ARG...] */
+static int job_start(const char *path, char **args, int count, int run) {
+    const char *cwd = NULL, *workspace = NULL, *timeout = NULL; int n = 0;
+    for (; n < count && strcmp(args[n], "--"); n += 2) {
+        if (n + 1 >= count) return -2;
+        if (!strcmp(args[n], "--cwd")) cwd = args[n + 1];
+        else if (!strcmp(args[n], "--workspace")) workspace = args[n + 1];
+        else if (!strcmp(args[n], "--timeout") && number(args[n + 1], 1, 86400000)) timeout = args[n + 1];
+        else return -2;
+    }
+    if (n >= count || n + 1 >= count) return -2;
+    char *req = malloc(MAX_JOB_REQUEST); size_t used = 0;
+    if (!req) { fprintf(stderr, "termux-control: out of memory\n"); return 1; }
+    req[0] = 0;
+    if (append(req, MAX_JOB_REQUEST, &used, "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"job.start\",\"params\":{\"executable\":") ||
+        quoted(req, MAX_JOB_REQUEST, &used, args[n + 1]) || append(req, MAX_JOB_REQUEST, &used, ",\"args\":[")) goto too_long;
+    for (int a = n + 2; a < count; ++a)
+        if ((a > n + 2 && append(req, MAX_JOB_REQUEST, &used, ",")) || quoted(req, MAX_JOB_REQUEST, &used, args[a])) goto too_long;
+    if (append(req, MAX_JOB_REQUEST, &used, "]")) goto too_long;
+    if (cwd && (append(req, MAX_JOB_REQUEST, &used, ",\"cwd\":") || quoted(req, MAX_JOB_REQUEST, &used, cwd))) goto too_long;
+    if (workspace && (append(req, MAX_JOB_REQUEST, &used, ",\"workspaceId\":") || quoted(req, MAX_JOB_REQUEST, &used, workspace))) goto too_long;
+    if (timeout && (append(req, MAX_JOB_REQUEST, &used, ",\"timeoutMs\":") || append(req, MAX_JOB_REQUEST, &used, timeout))) goto too_long;
+    if (append(req, MAX_JOB_REQUEST, &used, "}}")) goto too_long;
+    int fd = connect_control(path);
+    if (fd < 0) { free(req); return 1; }
+    char *response = NULL;
+    int result = exchange(fd, req, 2, 0, NULL, 0, run ? &response : NULL);
+    free(req);
+    if (result < 0) fprintf(stderr, "termux-control: request outcome may be unknown; inspect job state before retrying\n");
+    if (result != 0 || !run) { free(response); close(fd); return result == 0 ? 0 : 1; }
+    char id[129]; struct span state, exit_code;
+    if (job_state(response, id, sizeof(id), &state, &exit_code)) {
+        fprintf(stderr, "termux-control: invalid job start response; the job may be running\n");
+        free(response); close(fd); return 1;
+    }
+    free(response);
+    uint64_t out_offset = 0, err_offset = 0; int out_done = 0, err_done = 0, status = 0;
+    while (!status && !(out_done && err_done)) {
+        int out_received = 0, err_received = 0;
+        if (!out_done) status = job_read_once(fd, id, "stdout", &out_offset, stdout, &out_received, &out_done);
+        if (!status && !err_done) status = job_read_once(fd, id, "stderr", &err_offset, stderr, &err_received, &err_done);
+        if (!status && !out_received && !err_received && !(out_done && err_done)) pause_poll();
+    }
+    for (int exit = -1; !status;) {
+        char get[MAX_REQUEST] = ""; size_t get_used = 0;
+        if (append(get, sizeof(get), &get_used, "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"job.get\",\"params\":{\"id\":") ||
+            quoted(get, sizeof(get), &get_used, id) || append(get, sizeof(get), &get_used, "}}")) { status = -1; break; }
+        status = exchange(fd, get, 5, 0, NULL, 0, &response);
+        char ignored[129];
+        if (!status && job_state(response, ignored, sizeof(ignored), &state, &exit_code)) status = -1;
+        if (!status) exit = terminal_exit(state, exit_code);
+        free(response); response = NULL;
+        if (exit >= 0) { close(fd); return exit; }
+        if (!status) pause_poll();
+    }
+    fprintf(stderr, "termux-control: lost track of job %s; inspect it with jobs get\n", id);
+    close(fd); return 1;
+too_long:
+    free(req); fprintf(stderr, "termux-control: request is too long\n"); return 2;
+}
 static void usage(void) {
-    fprintf(stderr, "Usage: termux-control [--socket PATH] [--resume] capabilities|list|create COLS ROWS [NAME]|rename ID NAME|resize ID COLS ROWS|focus ID|snapshot ID|close ID|write ID < FILE|follow ID|attach ID|bridge\n");
+    fprintf(stderr, "Usage: termux-control [--socket PATH] [--resume] capabilities|list|create COLS ROWS [NAME]|rename ID NAME|resize ID COLS ROWS|focus ID|snapshot ID|close ID|write ID < FILE|follow ID|attach ID|bridge\n"
+                    "       termux-control [--socket PATH] jobs list|get ID|cancel ID|logs ID [--stream stdout|stderr] [--follow]\n"
+                    "       termux-control [--socket PATH] jobs start|run [--cwd DIR] [--workspace ID] [--timeout MS] -- EXECUTABLE [ARG...]\n"
+                    "       termux-control [--socket PATH] workspaces list|get ID|tasks ID|git ID status|branch|diff|log|run ID TASK|create NAME ROOT PATH|update ID NAME ROOT PATH|remove ID|select ID\n");
 }
 int main(int argc, char **argv) {
     const char *path = getenv("TERMUX_CONTROL_SOCKET"); char default_path[sizeof(((struct sockaddr_un *)0)->sun_path)];
@@ -590,6 +796,28 @@ int main(int argc, char **argv) {
     }
     if (i >= argc || strlen(path) >= sizeof(((struct sockaddr_un *)0)->sun_path)) { usage(); return 2; }
     const char *cmd = argv[i++]; int count = argc - i; char req[MAX_REQUEST] = ""; size_t used = 0;
+    if ((!strcmp(cmd, "jobs") || !strcmp(cmd, "workspaces")) && !resume) {
+        if (i >= argc) { usage(); return 2; }
+        const char *sub = argv[i++]; count = argc - i;
+        const char *method = domain_method(cmd, sub, count);
+        if (!method) { usage(); return 2; }
+        if (!strcmp(method, "job.start")) {
+            int result = job_start(path, &argv[i], count, !strcmp(sub, "run"));
+            if (result == -2) { usage(); return 2; }
+            return result;
+        }
+        if (!strcmp(method, "job.output.read")) {
+            const char *stream = "stdout"; int follow = 0;
+            for (int n = 1; n < count; ++n) {
+                if (!strcmp(argv[i + n], "--follow")) follow = 1;
+                else if (!strcmp(argv[i + n], "--stream") && n + 1 < count &&
+                         (!strcmp(argv[i + n + 1], "stdout") || !strcmp(argv[i + n + 1], "stderr"))) stream = argv[i + ++n];
+                else { usage(); return 2; }
+            }
+            return job_logs(path, argv[i], stream, follow);
+        }
+        return domain_call(path, method, &argv[i], count);
+    }
     if (!strcmp(cmd, "bridge") && count == 0 && !resume) return bridge(path);
     const char *method = NULL;
     if (!strcmp(cmd, "list") && count == 0) method = "session.list";

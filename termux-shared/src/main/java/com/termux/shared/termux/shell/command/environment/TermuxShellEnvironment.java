@@ -13,6 +13,7 @@ import com.termux.shared.shell.command.environment.ShellEnvironmentUtils;
 import com.termux.shared.shell.command.environment.ShellCommandShellEnvironment;
 import com.termux.shared.termux.TermuxBootstrap;
 import com.termux.shared.termux.TermuxConstants;
+import com.termux.shared.termux.settings.properties.TermuxPropertyConstants;
 import com.termux.shared.termux.shell.TermuxShellUtils;
 
 import java.nio.charset.Charset;
@@ -87,14 +88,68 @@ public class TermuxShellEnvironment extends AndroidShellEnvironment {
                 environment.put(ENV_LD_LIBRARY_PATH, TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH);
             } else {
                 // Termux binaries on Android 7+ rely on DT_RUNPATH, so LD_LIBRARY_PATH should be unset by default
-                environment.put(ENV_PATH, TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH);
+                environment.put(ENV_PATH, TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + userBinPath());
                 environment.remove(ENV_LD_LIBRARY_PATH);
             }
+            putGlibcCompatibility(currentPackageContext, environment);
         }
 
         return environment;
     }
 
+
+    /** The fixed part: the conventional per-user directories on Linux. Everything else comes from path-append. */
+    static final String[] USER_BIN_DIRS = {".local/bin", "bin"};
+    private static final int MAX_APPENDED = 32;
+
+    /**
+     * ":"-prefixed directories that follow $PREFIX/bin. Listing a directory that does not exist yet is harmless
+     * and lets a tool installed later work in new sessions without editing PATH.
+     */
+    static String userBinPath() {
+        String configured = null;
+        try {
+            com.termux.shared.termux.settings.properties.TermuxAppSharedProperties properties =
+                com.termux.shared.termux.settings.properties.TermuxAppSharedProperties.getProperties();
+            if (properties != null) configured = properties.getPathAppend();
+        } catch (RuntimeException ignored) { }
+        return userBinPath(configured == null ? TermuxPropertyConstants.DEFAULT_IVALUE_PATH_APPEND : configured);
+    }
+
+    /** Expands "~/" and "$HOME/", keeps absolute entries only, drops duplicates and anything that could split PATH. */
+    static String userBinPath(String pathAppend) {
+        String home = TermuxConstants.TERMUX_HOME_DIR_PATH;
+        java.util.LinkedHashSet<String> dirs = new java.util.LinkedHashSet<>();
+        for (String dir : USER_BIN_DIRS) dirs.add(home + "/" + dir);
+        if (pathAppend != null) {
+            for (String raw : pathAppend.split(":")) {
+                String dir = raw.trim();
+                if (dir.equals("~")) dir = home;
+                else if (dir.startsWith("~/")) dir = home + dir.substring(1);
+                else if (dir.startsWith("$HOME/")) dir = home + dir.substring(5);
+                while (dir.length() > 1 && dir.endsWith("/")) dir = dir.substring(0, dir.length() - 1);
+                if (!dir.startsWith("/") || dir.indexOf('\0') >= 0 || dir.indexOf('\n') >= 0) continue;
+                if (dirs.size() >= MAX_APPENDED) break;
+                dirs.add(dir);
+            }
+        }
+        dirs.remove(TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH);
+        StringBuilder path = new StringBuilder();
+        for (String dir : dirs) path.append(':').append(dir);
+        return path.toString();
+    }
+
+    /**
+     * Paths of the app's glibc compatibility libraries, which the shell profile adds after termux-exec. They live
+     * in the app's native library directory, which changes when the app is updated, so they are set per session.
+     */
+    private static void putGlibcCompatibility(@NonNull Context context, @NonNull HashMap<String, String> environment) {
+        if (!TermuxConstants.TERMUX_PACKAGE_NAME.equals(context.getPackageName())) return;
+        String nativeDir = context.getApplicationInfo().nativeLibraryDir;
+        if (nativeDir == null) return;
+        environment.put("TERMUX_GLIBC_EXEC", nativeDir + "/libtermux-glibc-exec.so");
+        environment.put("TERMUX_GLIBC_PRELOAD", nativeDir + "/libtermux-glibc-preload.so");
+    }
 
     @NonNull
     @Override

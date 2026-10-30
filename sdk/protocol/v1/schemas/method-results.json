@@ -25,6 +25,67 @@
     "session.snapshot": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"], "additionalProperties": false},
     "session.close": {"type": "object", "properties": {"accepted": {"const": true}}, "required": ["accepted"], "additionalProperties": false},
     "session.output.subscribe": {"type": "object", "properties": {"ok": {"const": true}, "resumeToken": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}, "required": ["ok"], "additionalProperties": false},
-    "session.output.read": {"type": "object", "properties": {"offset": {"type": "integer", "minimum": 0}, "nextOffset": {"type": "integer", "minimum": 0}, "endOffset": {"type": "integer", "minimum": 0}, "gap": {"type": "boolean"}, "length": {"type": "integer", "minimum": 0, "maximum": 65536}}, "required": ["offset", "nextOffset", "endOffset", "gap", "length"], "additionalProperties": false}
+    "session.output.read": {"type": "object", "properties": {"offset": {"type": "integer", "minimum": 0}, "nextOffset": {"type": "integer", "minimum": 0}, "endOffset": {"type": "integer", "minimum": 0}, "gap": {"type": "boolean"}, "length": {"type": "integer", "minimum": 0, "maximum": 65536}}, "required": ["offset", "nextOffset", "endOffset", "gap", "length"], "additionalProperties": false},
+    "job": {
+      "type": "object", "properties": {
+        "id": {"type": "string"},
+        "state": {"enum": ["queued", "starting", "running", "cancelling", "exited", "failed", "cancelled", "timed_out", "lost"]},
+        "startedAt": {"type": ["integer", "null"], "minimum": 0},
+        "endedAt": {"type": ["integer", "null"], "minimum": 0},
+        "exitCode": {"type": ["integer", "null"]},
+        "failureCode": {"enum": ["start_failed", "capture_failed", "service_stopped", null]},
+        "pid": {"type": ["integer", "null"], "minimum": 1},
+        "workspaceId": {"type": ["string", "null"]},
+        "output": {"type": "object", "properties": {"stdoutEndOffset": {"type": "integer", "minimum": 0}, "stderrEndOffset": {"type": "integer", "minimum": 0}}, "required": ["stdoutEndOffset", "stderrEndOffset"], "additionalProperties": false}
+      },
+      "required": ["id", "state", "startedAt", "endedAt", "exitCode", "failureCode", "pid", "workspaceId", "output"], "additionalProperties": false
+    },
+    "job.start": {"type": "object", "properties": {"job": {"$ref": "#/$defs/job"}}, "required": ["job"], "additionalProperties": false},
+    "job.get": {"type": "object", "properties": {"job": {"$ref": "#/$defs/job"}}, "required": ["job"], "additionalProperties": false},
+    "job.list": {"type": "object", "properties": {"jobs": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/job"}}, "nextCursor": {"type": ["integer", "null"], "minimum": 0}}, "required": ["jobs", "nextCursor"], "additionalProperties": false},
+    "job.output.read": {
+      "type": "object", "properties": {"offset": {"type": "integer", "minimum": 0}, "nextOffset": {"type": "integer", "minimum": 0}, "endOffset": {"type": "integer", "minimum": 0}, "gap": {"type": "boolean"}, "length": {"type": "integer", "minimum": 0, "maximum": 65536}, "finished": {"type": "boolean"}, "complete": {"type": "boolean"}},
+      "required": ["offset", "nextOffset", "endOffset", "gap", "length", "finished", "complete"], "additionalProperties": false
+    },
+    "job.cancel": {"type": "object", "properties": {"accepted": {"const": true}}, "required": ["accepted"], "additionalProperties": false},
+    "process": {
+      "type": "object", "properties": {
+        "pid": {"type": "integer", "minimum": 1}, "ppid": {"type": "integer", "minimum": 0}, "name": {"type": "string"},
+        "state": {"type": "string", "minLength": 1, "maxLength": 1}, "rssKiB": {"type": ["integer", "null"], "minimum": 0},
+        "cpuPercent": {"type": ["number", "null"]}, "startTicks": {"type": "integer", "minimum": 0},
+        "managedJobId": {"type": "null"}, "visibility": {"const": "partial"}
+      },
+      "required": ["pid", "ppid", "name", "state", "rssKiB", "cpuPercent", "startTicks", "managedJobId", "visibility"], "additionalProperties": false
+    },
+    "process.list": {"type": "object", "properties": {"processes": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/process"}}, "incomplete": {"type": "boolean"}, "missingRoots": {"type": "integer", "minimum": 0}, "nextCursor": {"type": ["integer", "null"], "minimum": 0}}, "required": ["processes", "incomplete", "missingRoots", "nextCursor"], "additionalProperties": false},
+    "process.signal": {"type": "object", "properties": {"sent": {"const": true}}, "required": ["sent"], "additionalProperties": false},
+    "file.entry": {"type": "object", "properties": {"name": {"type": "string"}, "path": {"type": "string"}, "type": {"enum": ["file", "directory", "symlink", "other"]}, "size": {"type": ["integer", "null"], "minimum": 0}, "mtime": {"type": "integer", "minimum": 0}, "revision": {"type": "string"}}, "required": ["name", "path", "type", "size", "mtime", "revision"], "additionalProperties": false},
+    "file.roots": {"type": "object", "properties": {"roots": {"type": "array", "maxItems": 32, "items": {"type": "object", "properties": {"id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$"}, "writable": {"type": "boolean"}}, "required": ["id", "writable"], "additionalProperties": false}}}, "required": ["roots"], "additionalProperties": false},
+    "file.list": {"type": "object", "properties": {"entries": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/file.entry"}}, "nextCursor": {"type": ["integer", "null"], "minimum": 0}}, "required": ["entries", "nextCursor"], "additionalProperties": false},
+    "file.stat": {"type": "object", "properties": {"entry": {"$ref": "#/$defs/file.entry"}}, "required": ["entry"], "additionalProperties": false},
+    "file.read": {"type": "object", "properties": {"offset": {"type": "integer", "minimum": 0}, "nextOffset": {"type": "integer", "minimum": 0}, "eof": {"type": "boolean"}, "length": {"type": "integer", "minimum": 0, "maximum": 65536}, "revision": {"type": "string"}}, "required": ["offset", "nextOffset", "eof", "length", "revision"], "additionalProperties": false},
+    "file.mkdir": {"type": "object", "properties": {"entry": {"$ref": "#/$defs/file.entry"}}, "required": ["entry"], "additionalProperties": false},
+    "file.rename": {"type": "object", "properties": {"entry": {"$ref": "#/$defs/file.entry"}}, "required": ["entry"], "additionalProperties": false},
+    "file.delete": {"type": "object", "properties": {"accepted": {"const": true}}, "required": ["accepted"], "additionalProperties": false},
+    "file.transfer.begin": {"type": "object", "properties": {"transferId": {"type": "string"}, "chunkSize": {"type": "integer", "minimum": 1, "maximum": 65536}, "offset": {"type": "integer", "minimum": 0}}, "required": ["transferId", "chunkSize", "offset"], "additionalProperties": false},
+    "file.transfer.write": {"type": "object", "properties": {"nextOffset": {"type": "integer", "minimum": 0}}, "required": ["nextOffset"], "additionalProperties": false},
+    "file.transfer.commit": {"type": "object", "properties": {"entry": {"$ref": "#/$defs/file.entry"}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "committed": {"const": true}}, "required": ["entry", "sha256", "committed"], "additionalProperties": false},
+    "file.transfer.abort": {"type": "object", "properties": {"aborted": {"const": true}}, "required": ["aborted"], "additionalProperties": false},
+    "wsId": {"type": "string", "pattern": "^ws_[0-9a-f]{16}$"},
+    "taskPreset": {"type": "object", "properties": {"id": {"$ref": "#/$defs/presetId"}, "label": {"type": "string", "minLength": 1, "maxLength": 80, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}, "executable": {"type": "string", "minLength": 1, "maxLength": 4096}, "args": {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 4096}}, "timeoutMs": {"type": "integer", "minimum": 0, "maximum": 86400000}}, "required": ["id", "label", "executable", "args", "timeoutMs"], "additionalProperties": false},
+    "workspace": {"type": "object", "properties": {"id": {"$ref": "#/$defs/wsId"}, "name": {"$ref": "#/$defs/workspaceName"}, "rootId": {"$ref": "#/$defs/rootId"}, "path": {"type": "string", "maxLength": 4096}, "createdAt": {"type": "integer", "minimum": 0}, "updatedAt": {"type": "integer", "minimum": 0}, "available": {"type": "boolean"}, "taskPresets": {"type": "array", "maxItems": 16, "items": {"$ref": "#/$defs/taskPreset"}}}, "required": ["id", "name", "rootId", "path", "createdAt", "updatedAt", "available", "taskPresets"], "additionalProperties": false},
+    "workspace.list": {"type": "object", "properties": {"workspaces": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/workspace"}}, "activeId": {"type": ["string", "null"], "pattern": "^ws_[0-9a-f]{16}$"}}, "required": ["workspaces", "activeId"], "additionalProperties": false},
+    "workspace.get": {"type": "object", "properties": {"workspace": {"$ref": "#/$defs/workspace"}}, "required": ["workspace"], "additionalProperties": false},
+    "workspace.create": {"type": "object", "properties": {"workspace": {"$ref": "#/$defs/workspace"}}, "required": ["workspace"], "additionalProperties": false},
+    "workspace.update": {"type": "object", "properties": {"workspace": {"$ref": "#/$defs/workspace"}}, "required": ["workspace"], "additionalProperties": false},
+    "workspace.remove": {"type": "object", "properties": {"accepted": {"const": true}}, "required": ["accepted"], "additionalProperties": false},
+    "workspace.select": {"type": "object", "properties": {"workspace": {"$ref": "#/$defs/workspace"}, "activeId": {"$ref": "#/$defs/wsId"}}, "required": ["workspace", "activeId"], "additionalProperties": false},
+    "workspace.tasks": {"type": "object", "properties": {"tasks": {"type": "array", "maxItems": 16, "items": {"$ref": "#/$defs/taskPreset"}}}, "required": ["tasks"], "additionalProperties": false},
+    "presetId": {"type": "string", "pattern": "^[a-z0-9_-]{1,64}$"},
+    "rootId": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$"},
+    "workspaceName": {"type": "string", "minLength": 1, "maxLength": 80, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"},
+    "workspace.task.run": {"type": "object", "properties": {"job": {"$ref": "#/$defs/job"}}, "required": ["job"], "additionalProperties": false},
+    "workspace.git": {"type": "object", "properties": {"job": {"$ref": "#/$defs/job"}}, "required": ["job"], "additionalProperties": false},
+    "workspace.git.change": {"type": "object", "properties": {"job": {"$ref": "#/$defs/job"}}, "required": ["job"], "additionalProperties": false}
   }
 }

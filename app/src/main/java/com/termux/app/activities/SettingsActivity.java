@@ -62,9 +62,7 @@ public class SettingsActivity extends AppCompatActivity {
             setPreferencesFromResource(R.xml.root_preferences, rootKey);
             Preference localControl = findPreference("local_control");
             if (localControl != null) localControl.setOnPreferenceClickListener(preference -> {
-                android.content.Intent intent = new android.content.Intent(context, TermuxActivity.class);
-                intent.putExtra(TermuxActivity.EXTRA_SHOW_LOCAL_CONTROL, true);
-                startActivity(intent);
+                startActivity(new android.content.Intent(context, LocalControlActivity.class));
                 return true;
             });
             Preference keyEditor = findPreference("extra_keys_editor");

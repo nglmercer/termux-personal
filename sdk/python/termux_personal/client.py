@@ -6,8 +6,12 @@ from typing import Any, Mapping, Optional
 from .errors import ControlError, ProtocolError, RpcError, TransportError
 from .transport import AdbTransport, FrameTransport, MAX_MESSAGE, SocketTransport
 from .sessions import Sessions
+from .jobs import Jobs
+from .domains import Files, Processes, Workspaces
 
-_READ_ONLY = frozenset({"system.hello", "system.capabilities", "system.describe", "session.list", "session.snapshot", "session.output.read"})
+_READ_ONLY = frozenset({"system.hello", "system.capabilities", "system.describe", "session.list", "session.snapshot", "session.output.read",
+                        "job.list", "job.get", "job.output.read", "process.list", "file.roots", "file.list", "file.stat", "file.read",
+                        "workspace.list", "workspace.get", "workspace.tasks"})
 
 
 def _object(pairs):
@@ -30,6 +34,10 @@ class TermuxClient:
         self._next_id = 1
         self._closed = False
         self.sessions = Sessions(self)
+        self.jobs = Jobs(self)
+        self.processes = Processes(self)
+        self.files = Files(self)
+        self.workspaces = Workspaces(self)
         try:
             hello, _ = self.request("system.hello", {"version": 1})
             if hello != {"version": 1}:
@@ -69,9 +77,9 @@ class TermuxClient:
             raise ValueError("Invalid method")
         if params is not None and not isinstance(params, Mapping):
             raise ValueError("params must be a mapping")
-        if method == "session.write":
+        if method in ("session.write", "file.transfer.write"):
             if not isinstance(binary, bytes) or not 0 < len(binary) <= MAX_MESSAGE or (params or {}).get("length") != len(binary):
-                raise ValueError("session.write requires a matching binary frame")
+                raise ValueError(method + " requires a matching binary frame")
         elif binary is not None:
             raise ValueError("No binary request route for this method")
         with self._lock:
@@ -103,7 +111,7 @@ class TermuxClient:
                     raise RpcError(error["code"], error["message"], error.get("data"))
                 result = response["result"]
                 payload = b""
-                if method == "session.output.read":
+                if method in ("session.output.read", "job.output.read", "file.read"):
                     if not isinstance(result, dict) or type(result.get("length")) is not int or not 0 <= result["length"] <= MAX_MESSAGE:
                         raise ProtocolError("Invalid binary response metadata")
                     if result["length"]:
