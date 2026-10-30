@@ -82,16 +82,19 @@ with connect() as client:
     stop = client.describe().get("limits", {}).get("jobStopAvailable")
     check("running jobs can be stopped on this device", stop is True, repr(stop))
 
-    # The shell and its background sleep share the job's process group; TERM must reach both.
-    record = jobs.start(PREFIX + "/bin/sh", ["-c", "sleep 60 & sleep 60"])
-    deadline = time.monotonic() + 10
-    while jobs.get(record.id).state != "running" and time.monotonic() < deadline:
-        time.sleep(0.05)
-    started = time.monotonic()
-    jobs.cancel(record.id)
-    result = jobs.wait(record.id, timeout=20)
-    check("cancel stops a running process tree", result.state == "cancelled" and time.monotonic() - started < 8, repr(result))
-    check("cancelled output finishes", drain(jobs, record.id, "stdout") == b"")
+    if "job.cancel" in methods:
+        # The shell and its background sleep share the job's process group; TERM must reach both.
+        record = jobs.start(PREFIX + "/bin/sh", ["-c", "sleep 60 & sleep 60"])
+        deadline = time.monotonic() + 10
+        while jobs.get(record.id).state != "running" and time.monotonic() < deadline:
+            time.sleep(0.05)
+        started = time.monotonic()
+        jobs.cancel(record.id)
+        result = jobs.wait(record.id, timeout=20)
+        check("cancel stops a running process tree", result.state == "cancelled" and time.monotonic() - started < 8, repr(result))
+        check("cancelled output finishes", drain(jobs, record.id, "stdout") == b"")
+    else:
+        print("skip cancel check: job.cancel not granted")
 
     if "process.signal" in methods:
         record = jobs.start(PREFIX + "/bin/sleep", ["60"])
