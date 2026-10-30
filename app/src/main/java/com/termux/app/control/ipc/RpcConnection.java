@@ -2,6 +2,8 @@ package com.termux.app.control.ipc;
 
 import com.termux.app.control.ControlCore;
 import com.termux.app.control.OutputSubscriptions;
+import com.termux.app.control.jobs.JobAuthority;
+import com.termux.app.control.jobs.JobCoordinator;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -17,6 +19,7 @@ final class RpcConnection {
     private final Running mRunning;
     private final OutputSubscriptions mOutputRegistry;
     private final RequestPermit mPermit;
+    private final DomainServices mServices;
     private final java.security.SecureRandom mTokenRandom;
 
     RpcConnection(ControlCore core, ServiceThreadDispatch dispatch, Set<ControlCore.Scope> scopes, Running running) {
@@ -27,10 +30,24 @@ final class RpcConnection {
                   OutputSubscriptions outputRegistry) {
         this(core, dispatch, scopes, running, outputRegistry, new RequestRateLimiter(System.nanoTime())::await);
     }
+
     RpcConnection(ControlCore core, ServiceThreadDispatch dispatch, Set<ControlCore.Scope> scopes, Running running,
                   OutputSubscriptions outputRegistry, RequestPermit permit) {
-        if (permit == null) throw new IllegalArgumentException("Missing request limiter");
+        this(core, dispatch, scopes, running, outputRegistry, permit, DomainServices.NONE);
+    }
+
+    RpcConnection(ControlCore core, ServiceThreadDispatch dispatch, Set<ControlCore.Scope> scopes, Running running,
+                  OutputSubscriptions outputRegistry, JobCoordinator jobs, JobAuthority jobAuthority) {
+        this(core, dispatch, scopes, running, outputRegistry, new RequestRateLimiter(System.nanoTime())::await,
+            new DomainServices(jobs, jobAuthority, null, null, null));
+    }
+
+    /** Trusted domain services are supplied by server wiring. Their methods still need the connection's scopes. */
+    RpcConnection(ControlCore core, ServiceThreadDispatch dispatch, Set<ControlCore.Scope> scopes, Running running,
+                  OutputSubscriptions outputRegistry, RequestPermit permit, DomainServices services) {
+        if (permit == null || services == null) throw new IllegalArgumentException("Missing connection configuration");
         mCore = core; mDispatch = dispatch; mScopes = scopes; mRunning = running; mOutputRegistry = outputRegistry; mPermit = permit;
+        mServices = services;
         // Constructed on the socket worker; no secure-random operation runs on the service thread.
         mTokenRandom = scopes != null && scopes.contains(ControlCore.Scope.SESSIONS_OUTPUT_RESUME) ? new java.security.SecureRandom() : null;
     }
@@ -49,7 +66,7 @@ final class RpcConnection {
         FrameCodec frames = new FrameCodec(RpcRequestParser.MAX_REQUEST_BYTES);
         RpcRequestParser parser = new RpcRequestParser();
         OutputClientLease lease = mOutputRegistry == null ? null : new OutputClientLease(mOutputRegistry, mDispatch, mScopes);
-        RpcDispatcher dispatcher = new RpcDispatcher(mCore, lease);
+        RpcDispatcher dispatcher = new RpcDispatcher(mCore, lease, mServices);
         try {
         while (mRunning.get()) {
             try { mPermit.await(); }
@@ -83,7 +100,11 @@ final class RpcConnection {
             final String token = mTokenRandom != null && "session.output.subscribe".equals(request.method) && request.hasId ? freshToken() : null;
             RpcDispatcher.Result response;
             try {
-                response = mDispatch.call(() -> !mRunning.get() ? null : dispatcher.dispatchResult(request, mScopes, payload, token), 3000);
+                if (ControlMethodRegistry.runsOffServiceThread(request.method)) {
+                    response = !mRunning.get() ? null : dispatcher.dispatchResult(request, mScopes, payload, token);
+                } else {
+                    response = mDispatch.call(() -> !mRunning.get() ? null : dispatcher.dispatchResult(request, mScopes, payload, token), 3000);
+                }
             } catch (ServiceThreadDispatch.DispatchException e) {
                 byte[] failure = RpcDispatcher.transportFailure(request, e.reason);
                 if (failure != null) frames.write(output, failure);

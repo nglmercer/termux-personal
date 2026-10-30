@@ -83,7 +83,7 @@ public final class AppShell {
                                    @Nullable HashMap<String, String> additionalEnvironment,
                                    final boolean isSynchronous) {
         return executeInternal(currentPackageContext, executionCommand, appShellClient, shellEnvironmentClient,
-            additionalEnvironment, isSynchronous, null);
+            additionalEnvironment, isSynchronous, null, null);
     }
 
     /** Internal managed-job hook. The caller must publish its job record before starting on a worker. */
@@ -91,18 +91,28 @@ public final class AppShell {
                                           final AppShellClient appShellClient, @NonNull final IShellEnvironment shellEnvironmentClient,
                                           @Nullable HashMap<String, String> additionalEnvironment,
                                           @NonNull ManagedCapture managedCapture) {
+        return executeManaged(currentPackageContext, executionCommand, appShellClient, shellEnvironmentClient,
+            additionalEnvironment, managedCapture, null);
+    }
+
+    /** As above; a non-null launcher replaces {@link Runtime#exec} so the caller can own the child's identity. */
+    public static AppShell executeManaged(@NonNull final Context currentPackageContext, @NonNull ExecutionCommand executionCommand,
+                                          final AppShellClient appShellClient, @NonNull final IShellEnvironment shellEnvironmentClient,
+                                          @Nullable HashMap<String, String> additionalEnvironment,
+                                          @NonNull ManagedCapture managedCapture, @Nullable ManagedLauncher launcher) {
         if (managedCapture == null) throw new IllegalArgumentException("Managed capture required");
         android.os.Looper main = android.os.Looper.getMainLooper();
         if (main != null && android.os.Looper.myLooper() == main)
             throw new IllegalStateException("Managed process launch must run off the main thread");
         return executeInternal(currentPackageContext, executionCommand, appShellClient, shellEnvironmentClient,
-            additionalEnvironment, false, managedCapture);
+            additionalEnvironment, false, managedCapture, launcher);
     }
 
     private static AppShell executeInternal(@NonNull final Context currentPackageContext, @NonNull ExecutionCommand executionCommand,
                                             final AppShellClient appShellClient, @NonNull final IShellEnvironment shellEnvironmentClient,
                                             @Nullable HashMap<String, String> additionalEnvironment,
-                                            final boolean isSynchronous, @Nullable ManagedCapture managedCapture) {
+                                            final boolean isSynchronous, @Nullable ManagedCapture managedCapture,
+                                            @Nullable ManagedLauncher launcher) {
         if (executionCommand.executable == null || executionCommand.executable.isEmpty()) {
             executionCommand.setStateFailed(Errno.ERRNO_FAILED.getCode(),
                 currentPackageContext.getString(R.string.error_executable_unset, executionCommand.getCommandIdAndLabelLogString()));
@@ -153,7 +163,8 @@ public final class AppShell {
         // Exec the process
         final Process process;
         try {
-            process = Runtime.getRuntime().exec(commandArray, environmentArray, new File(executionCommand.workingDirectory));
+            process = launcher != null ? launcher.launch(commandArray, environmentArray, executionCommand.workingDirectory) :
+                Runtime.getRuntime().exec(commandArray, environmentArray, new File(executionCommand.workingDirectory));
         } catch (IOException e) {
             executionCommand.setStateFailed(Errno.ERRNO_FAILED.getCode(), currentPackageContext.getString(R.string.error_failed_to_execute_app_shell_command, executionCommand.getCommandIdAndLabelLogString()), e);
             AppShell.processAppShellResult(null, executionCommand);
@@ -325,6 +336,11 @@ public final class AppShell {
     /** Runs on the AppShell worker and owns the child's three streams. Never log captured bytes. */
     public interface ManagedCapture {
         int captureAndWait(Process process) throws IOException, InterruptedException;
+    }
+
+    /** Creates the managed child on the calling worker; must return a started process or throw. */
+    public interface ManagedLauncher {
+        Process launch(String[] command, String[] environment, String workingDirectory) throws IOException;
     }
 
     /**

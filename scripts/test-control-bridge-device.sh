@@ -18,10 +18,10 @@ binary, test = (base64.b64encode(pathlib.Path(path).read_bytes()).decode("ascii"
 script = """set -eu
 d=$(mktemp -d "$TMPDIR/control-bridge.XXXXXXXX")
 trap 'rm -rf "$d"' EXIT
-printf %s 'BIN' | base64 -d > "$d/termux-control"
-printf %s 'TEST' | base64 -d > "$d/test.py"
+printf %s '@BIN@' | base64 -d > "$d/termux-control"
+printf %s '@TEST@' | base64 -d > "$d/test.py"
 chmod 700 "$d/termux-control"
 python3 "$d/test.py" "$d/termux-control"
-""".replace("BIN", binary).replace("TEST", test)
+""".replace("@BIN@", binary).replace("@TEST@", test)
 sys.exit(subprocess.run(["python3", "tools/termux-control/python/termux-adb", "exec"], input=script.encode()).returncode)
 PY

@@ -6,3 +6,7 @@ cc -std=c11 -Wall -Wextra -Werror -I "$repo_dir/app/src/main/cpp" \
     "$repo_dir/app/src/main/cpp/managed-fork.c" "$repo_dir/app/src/test/native/managed-fork-test.c" \
     -o "$repo_dir/build/managed-fork-test/managed-fork-test"
 "$repo_dir/build/managed-fork-test/managed-fork-test"
+cc -std=c11 -Wall -Wextra -Werror -I "$repo_dir/app/src/main/cpp" \
+    "$repo_dir/app/src/main/cpp/managed-fork.c" "$repo_dir/app/src/main/cpp/managed-child.c" \
+    "$repo_dir/app/src/test/native/managed-child-test.c" -o "$repo_dir/build/managed-fork-test/managed-child-test"
+"$repo_dir/build/managed-fork-test/managed-child-test"

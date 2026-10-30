@@ -36,6 +36,15 @@ public class ControlMethodRegistryTest {
         }
     }
 
+    /** Only job, process, file and workspace methods may leave the service-thread dispatch; session state must stay there. */
+    @Test public void onlyWorkerDomainMethodsRunOffServiceThread() {
+        for (ControlMethodRegistry.Descriptor descriptor : ControlMethodRegistry.all()) {
+            boolean worker = descriptor.name.startsWith("job.") || descriptor.name.startsWith("process.")
+                || descriptor.name.startsWith("file.") || descriptor.name.startsWith("workspace.");
+            assertEquals(descriptor.name, worker, ControlMethodRegistry.runsOffServiceThread(descriptor.name));
+        }
+    }
+
     @Test public void binaryRequestRoutesMatchRegistry() {
         Set<String> requests = new HashSet<>();
         for (ControlMethodRegistry.Descriptor descriptor : ControlMethodRegistry.all())

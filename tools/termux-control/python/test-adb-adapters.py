@@ -37,7 +37,8 @@ class AdapterTest(unittest.TestCase):
 
     def invoke(self, adapter, args, data=None, status=0):
         env = dict(self.env, ADB_STATUS=str(status))
-        result = subprocess.run(adapter + args, input=data, text=True, capture_output=True, env=env)
+        # Always close the child stdin. The fake adb reads stdin to EOF, so an inherited open pipe would block forever.
+        result = subprocess.run(adapter + args, input=data if data is not None else "", text=True, capture_output=True, env=env)
         self.assertEqual(status, result.returncode, result.stderr)
         return json.loads(self.capture.read_text())
 

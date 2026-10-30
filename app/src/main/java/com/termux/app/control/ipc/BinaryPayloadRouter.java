@@ -16,6 +16,7 @@ final class BinaryPayloadRouter {
     static {
         Map<String, Preparer> routes = new LinkedHashMap<>();
         routes.put("session.write", RpcDispatcher::prepareSessionWrite);
+        routes.put("file.transfer.write", RpcDispatcher::prepareFileTransferWrite);
         REQUESTS = Collections.unmodifiableMap(routes);
     }
 

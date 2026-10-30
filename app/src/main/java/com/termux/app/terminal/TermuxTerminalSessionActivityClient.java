@@ -602,6 +602,21 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
         }
     }
 
+    /** A new session in an explicit directory; existing sessions keep their own working directories. */
+    public void addNewSessionIn(String workingDirectory, String sessionName) {
+        TermuxService service = mActivity.getTermuxService();
+        if (service == null) return;
+        if (service.getTermuxSessionsSize() >= MAX_SESSIONS) {
+            new AlertDialog.Builder(mActivity).setTitle(R.string.title_max_terminals_reached).setMessage(R.string.msg_max_terminals_reached)
+                .setPositiveButton(android.R.string.ok, null).show();
+            return;
+        }
+        TermuxSession newTermuxSession = service.createTermuxSession(null, null, null, workingDirectory, false, sessionName);
+        if (newTermuxSession == null) return;
+        setCurrentSession(newTermuxSession.getTerminalSession());
+        mActivity.getDrawer().closeDrawers();
+    }
+
     public void addNewSession(boolean isFailSafe, String sessionName) {
         TermuxService service = mActivity.getTermuxService();
         if (service == null) return;

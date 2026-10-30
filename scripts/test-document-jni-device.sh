@@ -30,11 +30,11 @@ dex, library = (base64.b64encode(pathlib.Path(path).read_bytes()).decode("ascii"
 script = """set -eu
 d=$(mktemp -d "$TMPDIR/document-jni.XXXXXXXX")
 trap 'rm -rf "$d"' EXIT
-printf %s 'DEX' | base64 -d > "$d/classes.dex"
-printf %s 'LIB' | base64 -d > "$d/libtermux-document-path.so"
+printf %s '@DEX@' | base64 -d > "$d/classes.dex"
+printf %s '@LIB@' | base64 -d > "$d/libtermux-document-path.so"
 chmod 400 "$d/classes.dex"
 CLASSPATH="$d/classes.dex" app_process -Djava.library.path="$d" /system/bin com.termux.filepicker.DocumentJniSmoke
 CLASSPATH="$d/classes.dex" app_process -Djava.library.path="$d" /system/bin com.termux.filepicker.DocumentProviderRace
-""".replace("DEX", dex).replace("LIB", library)
+""".replace("@DEX@", dex).replace("@LIB@", library)
 sys.exit(subprocess.call(["python3", "tools/termux-control/python/termux-adb", "exec", script]))
 PY

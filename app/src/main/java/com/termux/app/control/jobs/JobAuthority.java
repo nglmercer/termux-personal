@@ -7,7 +7,7 @@ import java.util.Set;
 
 /** Service-owned consent epochs. Never construct grants from RPC parameters. */
 public final class JobAuthority {
-    public enum Permission { READ, OUTPUT, EXECUTE, CANCEL }
+    public enum Permission { READ, OUTPUT, EXECUTE, CANCEL, SIGNAL }
     private long mEpoch;
     private Set<Permission> mPermissions = Collections.emptySet();
     private boolean mEnabled;
@@ -29,7 +29,14 @@ public final class JobAuthority {
         if (scopes.contains(ControlCore.Scope.JOBS_OUTPUT)) permissions.add(Permission.OUTPUT);
         if (scopes.contains(ControlCore.Scope.JOBS_EXECUTE)) permissions.add(Permission.EXECUTE);
         if (scopes.contains(ControlCore.Scope.JOBS_CANCEL)) permissions.add(Permission.CANCEL);
+        // Signalling targets owned job handles only, so it is a job permission granted by the process scope.
+        if (scopes.contains(ControlCore.Scope.PROCESSES_SIGNAL)) permissions.add(Permission.SIGNAL);
         return grant(permissions);
+    }
+
+    /** Current trusted consent lease, or null when consent is disabled. Callers must still check connection scopes. */
+    public synchronized Lease currentLease() {
+        return mEnabled ? new Lease(this, mEpoch) : null;
     }
 
     /** Revocation is immediate for future lease checks and does not imply a running child stopped. */

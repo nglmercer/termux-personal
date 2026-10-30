@@ -5,6 +5,17 @@ import java.util.Set;
 import static org.junit.Assert.*;
 
 public class LocalControlOptionsTest {
+    @Test public void jobConsentIsIndependentOfSessionConsent() {
+        assertTrue(LocalControlOptions.jobScopes(false, false, false, false).isEmpty());
+        Set<ControlCore.Scope> execute = LocalControlOptions.jobScopes(false, false, true, false);
+        assertEquals(java.util.EnumSet.of(ControlCore.Scope.JOBS_EXECUTE), execute);
+        for (int mask = 0; mask < 16; mask++) {
+            Set<ControlCore.Scope> jobs = LocalControlOptions.jobScopes((mask & 1) != 0, (mask & 2) != 0,
+                (mask & 4) != 0, (mask & 8) != 0);
+            for (ControlCore.Scope scope : jobs) assertTrue(scope.name().startsWith("JOBS_"));
+            for (ControlCore.Scope scope : LocalControlOptions.scopes(true, true, true, true)) assertFalse(scope.name().startsWith("JOBS_"));
+        }
+    }
     @Test public void existingConsentNeverGrantsNewDomainScopes() {
         for (int mask = 0; mask < 16; mask++) {
             Set<ControlCore.Scope> granted = LocalControlOptions.scopes((mask & 1) != 0, (mask & 2) != 0,
@@ -27,5 +38,18 @@ public class LocalControlOptionsTest {
         assertFalse(LocalControlOptions.scopes(true, false, false, true).contains(ControlCore.Scope.SESSIONS_OUTPUT_RESUME));
         assertFalse(LocalControlOptions.scopes(true, true, false, false).contains(ControlCore.Scope.SESSIONS_OUTPUT_RESUME));
         assertTrue(LocalControlOptions.scopes(true, true, false, true).contains(ControlCore.Scope.SESSIONS_OUTPUT_RESUME));
+    }
+
+    @Test public void rememberedConsentRoundTripsAndCanOnlyNarrow() {
+        java.util.EnumSet<ControlCore.Scope> chosen = LocalControlOptions.scopes(true, true, true, true);
+        chosen.add(ControlCore.Scope.JOBS_EXECUTE); chosen.add(ControlCore.Scope.FILES_WRITE);
+        org.junit.Assert.assertEquals(chosen, LocalControlOptions.decode(LocalControlOptions.encode(chosen)));
+        org.junit.Assert.assertEquals("unknown names are dropped and read access is the floor",
+            java.util.EnumSet.of(ControlCore.Scope.SESSIONS_READ, ControlCore.Scope.JOBS_READ),
+            LocalControlOptions.decode("NOT_A_SCOPE, JOBS_READ,,jobs_execute"));
+        org.junit.Assert.assertEquals("dependent scopes without their base are removed",
+            java.util.EnumSet.of(ControlCore.Scope.SESSIONS_READ),
+            LocalControlOptions.decode("SESSIONS_CLOSE,SESSIONS_OUTPUT_RESUME"));
+        org.junit.Assert.assertEquals(java.util.EnumSet.of(ControlCore.Scope.SESSIONS_READ), LocalControlOptions.decode(null));
     }
 }

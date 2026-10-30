@@ -65,3 +65,29 @@ The `bridge` command copies bytes between stdin/stdout and the authorized local 
 Attachment uses the current bounded polling protocol, with no screen snapshot or pre-subscription history. Gaps are reported; a disconnect ends an ordinary attachment. Resize requests follow local terminal geometry; the app can reject them when its local UI owns the target geometry. Android `/proc` restrictions, peer credentials, terminal resizing, keyboard behavior, live PTY concurrency and recovery still require device tests.
 
 Active socket connections have no fixed lifetime; incoming frames still have a five-second deadline and requests are rate-limited. With the app's separate output-resume option enabled, `termux-control --resume follow ID` or `termux-control --resume attach ID` requests a short-lived replay token. After an output-read transport failure, the client tries to reconnect and resume from the last output offset fully written to stdout. Retry attempts start for up to 10 seconds; an individual connection or request may take longer. The server rejects tickets after 15 seconds, and overwritten output is reported as a gap. Resume is best effort: a service restart, stopped listener, expiry, session exit or failed reauthentication ends recovery. The client does not retry input writes with an unknown outcome, and it exits if an input or resize request loses its connection. An ordinary attachment exits on disconnect. Explicit detachment unsubscribes the retained ticket when possible. Output and replay tokens are sensitive and remain local to the process. Device testing is still required.
+
+## Managed jobs and workspaces
+
+These commands call fixed v1 methods. Each one needs the matching local consent on the device, and each is absent from `capabilities` until consent is granted.
+
+```text
+termux-control jobs list
+termux-control jobs get ID
+termux-control jobs cancel ID              # TERM to the job's process group, KILL after 10 s
+termux-control jobs start [--cwd DIR] [--workspace ID] [--timeout MS] -- EXECUTABLE [ARG...]
+termux-control jobs run   [--cwd DIR] [--workspace ID] [--timeout MS] -- EXECUTABLE [ARG...]
+termux-control jobs logs ID [--stream stdout|stderr] [--follow]
+termux-control workspaces list
+termux-control workspaces get ID
+termux-control workspaces tasks ID
+termux-control workspaces git ID status|branch|diff|log   # read-only; other subcommands are refused before connecting
+termux-control workspaces run ID TASK      # runs a stored preset in the workspace directory
+termux-control workspaces create NAME ROOT PATH   # ROOT is a configured file root, PATH a directory under it
+termux-control workspaces update ID NAME ROOT PATH
+termux-control workspaces select ID
+termux-control workspaces remove ID
+```
+
+`jobs start` and `jobs run` send the executable and each argument as separate JSON strings; nothing is joined into a shell string, so run a shell explicitly (`-- $PREFIX/bin/sh -c '...'`) when you want one. `EXECUTABLE` is an absolute path under the Termux prefix or a server-approved name such as `git`. `start` prints the accepted job record. `run` also copies the job's stdout and stderr to its own, then exits with the job's exit code. A job that did not exit normally gives a fixed status instead: 124 timed out, 130 cancelled, 125 failed or lost. `--timeout` and cancelling a running job need `jobStopAvailable` in `system.describe`. `jobs logs` prints the output available now, or with `--follow` polls until the stream is finished; a gap message on stderr means older bytes were overwritten.
+
+Other commands send only identifiers and the subcommand; the server supplies the executable, arguments and directory. A lost response to a mutating command (`cancel`, `start`, `run`, `git`, workspace changes) prints that the outcome may be unknown, and the client never retries it. Exit status 2 means a usage error that never reached the socket; 1 means a transport, protocol or server error.

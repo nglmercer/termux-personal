@@ -102,6 +102,119 @@ public class JobCoordinatorTest {
         } finally { coordinator.stopAccepting(); if (callback.get() != null) callback.get().finished(9, false); closeEventually(coordinator); }
     }
 
+    /** An owned backend whose child exits when TERM reaches its group, as a shell job would. */
+    private static AppShellJobAdapter ownedAdapter(AtomicInteger terms) {
+        return new AppShellJobAdapter(new AppShellJobAdapter.Backend() {
+            @Override public Process launch(JobSpec job, String exe, String cwd, AppShellJobCapture capture,
+                                            AppShellJobAdapter.Completion done) {
+                capture.discardBeforeLaunch();
+                CountDownLatch exited = new CountDownLatch(1);
+                OwnedChildProcess child = new OwnedChildProcess(77, new OwnedChildProcess.Ops() {
+                    @Override public int waitExit(int pid) { await(exited); return 0; }
+                    @Override public int reap(int pid, int[] out) { out[2] = 1; out[3] = 15; return 0; }
+                    @Override public int signal(int pid, int signal) {
+                        if (signal == OwnedChildProcess.SIGTERM) { terms.incrementAndGet(); exited.countDown(); }
+                        return 0;
+                    }
+                }, new ByteArrayOutputStream(), new ByteArrayInputStream(new byte[0]), new ByteArrayInputStream(new byte[0]));
+                Thread waiter = new Thread(() -> done.finished(child.waitFor(), false));
+                waiter.setDaemon(true); waiter.start();
+                return child;
+            }
+            @Override public boolean ownsChildIdentity() { return true; }
+        });
+    }
+
+    @Test public void ownedChildrenSupportCancellationTimeoutAndShutdown() throws Exception {
+        JobRegistry registry = registry(); JobAuthority authority = new JobAuthority();
+        JobAuthority.Lease lease = authority.grant(EnumSet.of(JobAuthority.Permission.EXECUTE, JobAuthority.Permission.CANCEL));
+        AtomicInteger terms = new AtomicInteger();
+        JobCoordinator coordinator = new JobCoordinator(registry, ownedAdapter(terms),
+            (job, epoch) -> new JobCoordinator.Resolution("/bin/echo", "/home"), authority, 4);
+        try {
+            JobCoordinator.StartResult cancelled = coordinator.start(spec("cancel", 0), lease);
+            JobRecord cancelledRecord = registry.get(cancelled.job.id, lease.epoch()).record();
+            waitForState(cancelledRecord, JobRecord.State.RUNNING);
+            assertEquals(JobCoordinator.CancelStatus.ACCEPTED, coordinator.cancel(cancelled.job.id, lease));
+            waitForTerminal(cancelledRecord);
+            assertEquals(JobRecord.State.CANCELLED, cancelledRecord.snapshot().state);
+            assertNull(cancelledRecord.snapshot().exitCode);
+            assertEquals(JobCoordinator.CancelStatus.FINISHED, coordinator.cancel(cancelled.job.id, lease));
+
+            JobCoordinator.StartResult timed = coordinator.start(spec("timeout", 50), lease);
+            assertEquals(JobCoordinator.StartStatus.ACCEPTED, timed.status);
+            JobRecord timedRecord = registry.get(timed.job.id, lease.epoch()).record();
+            waitForTerminal(timedRecord);
+            assertEquals(JobRecord.State.TIMED_OUT, timedRecord.snapshot().state);
+
+            JobCoordinator.StartResult running = coordinator.start(spec("shutdown", 0), lease);
+            JobRecord runningRecord = registry.get(running.job.id, lease.epoch()).record();
+            waitForState(runningRecord, JobRecord.State.RUNNING);
+            coordinator.stopAccepting();
+            waitForTerminal(runningRecord);
+            assertEquals("shutdown stops an owned child; its signal exit is reported",
+                Integer.valueOf(143), runningRecord.snapshot().exitCode);
+            assertEquals(JobRecord.StopReason.SHUTDOWN, runningRecord.snapshot().stopReason);
+            assertEquals(3, terms.get());
+        } finally { coordinator.stopAccepting(); closeEventually(coordinator); }
+    }
+
+    @Test public void signalTargetsOnlyOwnedJobsOfTheCurrentEpoch() throws Exception {
+        JobRegistry registry = registry(); JobAuthority authority = new JobAuthority();
+        JobAuthority.Lease lease = authority.grant(EnumSet.of(JobAuthority.Permission.EXECUTE, JobAuthority.Permission.SIGNAL));
+        AtomicInteger terms = new AtomicInteger();
+        JobCoordinator coordinator = new JobCoordinator(registry, ownedAdapter(terms),
+            (job, epoch) -> new JobCoordinator.Resolution("/bin/echo", "/home"), authority, 4);
+        try {
+            JobCoordinator.StartResult started = coordinator.start(spec("signal", 0), lease);
+            JobRecord record = registry.get(started.job.id, lease.epoch()).record();
+            waitForState(record, JobRecord.State.RUNNING);
+            assertEquals(JobCoordinator.SignalStatus.INVALID_REQUEST, coordinator.signal(started.job.id, lease, 1));
+            assertEquals(JobCoordinator.SignalStatus.NOT_FOUND, coordinator.signal("job_missing", lease, OwnedChildProcess.SIGTERM));
+            JobAuthority.Lease noSignal = new JobAuthority().grant(EnumSet.of(JobAuthority.Permission.SIGNAL));
+            assertEquals(JobCoordinator.SignalStatus.DENIED, coordinator.signal(started.job.id, noSignal, OwnedChildProcess.SIGTERM));
+            assertEquals(JobCoordinator.SignalStatus.SENT, coordinator.signal(started.job.id, lease, OwnedChildProcess.SIGTERM));
+            waitForTerminal(record);
+            assertEquals("a signal is not a recorded stop; the child's own outcome is kept",
+                JobRecord.State.EXITED, record.snapshot().state);
+            assertEquals(Integer.valueOf(143), record.snapshot().exitCode);
+            assertEquals(JobCoordinator.SignalStatus.FINISHED, coordinator.signal(started.job.id, lease, OwnedChildProcess.SIGKILL));
+            JobAuthority.Lease renewed = authority.grant(EnumSet.of(JobAuthority.Permission.SIGNAL));
+            assertEquals("an older epoch's job is not reachable", JobCoordinator.SignalStatus.NOT_FOUND,
+                coordinator.signal(started.job.id, renewed, OwnedChildProcess.SIGTERM));
+            assertEquals(1, terms.get());
+        } finally { coordinator.stopAccepting(); closeEventually(coordinator); }
+    }
+
+    @Test public void localViewsReachJobsAcrossConsentEpochs() throws Exception {
+        JobRegistry registry = registry(); JobAuthority authority = new JobAuthority();
+        JobAuthority.Lease lease = authority.grant(EnumSet.of(JobAuthority.Permission.EXECUTE));
+        AtomicInteger terms = new AtomicInteger();
+        JobCoordinator coordinator = new JobCoordinator(registry, ownedAdapter(terms),
+            (job, epoch) -> new JobCoordinator.Resolution("/bin/echo", "/home"), authority, 4);
+        try {
+            JobCoordinator.StartResult started = coordinator.start(spec("local", 0), lease);
+            JobRecord record = registry.get(started.job.id, lease.epoch()).record();
+            waitForState(record, JobRecord.State.RUNNING);
+            authority.revoke();
+            assertEquals(1, coordinator.localJobs().size());
+            assertEquals(started.job.id, coordinator.localJobs().get(0).job.id);
+            assertNotNull(coordinator.localOutput(started.job.id, JobOutputStore.Stream.STDOUT, 0, 1));
+            assertNull(coordinator.localOutput("job_missing", JobOutputStore.Stream.STDOUT, 0, 1));
+            assertEquals("the device user can stop a job after consent was revoked",
+                JobCoordinator.CancelStatus.ACCEPTED, coordinator.localCancel(started.job.id));
+            waitForTerminal(record);
+            assertEquals(JobRecord.State.CANCELLED, record.snapshot().state);
+            assertEquals(JobCoordinator.CancelStatus.NOT_FOUND, coordinator.localCancel("job_missing"));
+        } finally { coordinator.stopAccepting(); closeEventually(coordinator); }
+    }
+
+    private static void waitForState(JobRecord record, JobRecord.State state) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (record.snapshot().state != state && System.nanoTime() < deadline) Thread.sleep(5);
+        assertEquals(state, record.snapshot().state);
+    }
+
     @Test public void revokedLeaseCannotStartQueuedJobOrAuthorizeNewRequests() throws Exception {
         JobRegistry registry = registry(); JobAuthority authority = new JobAuthority();
         JobAuthority.Lease lease = authority.grant(EnumSet.of(JobAuthority.Permission.EXECUTE, JobAuthority.Permission.CANCEL));

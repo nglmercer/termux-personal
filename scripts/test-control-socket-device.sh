@@ -28,9 +28,9 @@ dex = base64.b64encode(pathlib.Path(sys.argv[1]).read_bytes()).decode("ascii")
 script = """set -eu
 d=$(mktemp -d "$TMPDIR/control-socket.XXXXXXXX")
 trap 'rm -rf "$d"' EXIT
-printf %s 'DEX' | base64 -d > "$d/classes.dex"
+printf %s '@DEX@' | base64 -d > "$d/classes.dex"
 chmod 400 "$d/classes.dex"
 CLASSPATH="$d/classes.dex" app_process /system/bin com.termux.app.control.ipc.LocalSocketSmoke
-""".replace("DEX", dex)
+""".replace("@DEX@", dex)
 sys.exit(subprocess.run(["python3", "tools/termux-control/python/termux-adb", "exec"], input=script.encode()).returncode)
 PY

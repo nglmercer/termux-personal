@@ -47,6 +47,22 @@ public final class LocalControlServer implements AutoCloseable {
     private LocalServerSocket mServer;
     private File mSocketFile;
     private long mSocketDev, mSocketInode;
+    private volatile DomainServices mServices = DomainServices.NONE;
+
+    /**
+     * Trusted domain wiring. It must be supplied before start, so every accepted connection sees the same services.
+     * Clients cannot supply or change them. A null service hides its methods from discovery.
+     */
+    public synchronized void configureDomains(com.termux.app.control.jobs.JobCoordinator jobs,
+                                              com.termux.app.control.jobs.JobAuthority jobAuthority,
+                                              com.termux.app.control.process.ProcessService processes,
+                                              com.termux.app.control.files.FileService files,
+                                              com.termux.app.control.workspace.WorkspaceRepository workspaces) {
+        if (mState.get() != NEW) throw new IllegalStateException("Domains must be configured before start");
+        // A client-facing file service must not be redirectable by a concurrent same-UID directory swap.
+        if (files != null && !files.raceSafe()) throw new IllegalArgumentException("File service is not race-safe");
+        mServices = new DomainServices(jobs, jobAuthority, processes, files, workspaces);
+    }
 
     /** Scopes must come from an explicit trusted local configuration, not a client request. */
     public LocalControlServer(Context context, ControlCore core, ServiceThreadDispatch dispatch,
@@ -117,6 +133,14 @@ public final class LocalControlServer implements AutoCloseable {
 
     public boolean allowsOutputResume() { return mScopes.contains(ControlCore.Scope.SESSIONS_OUTPUT_RESUME); }
 
+    public boolean allowsJobExecute() { return mScopes.contains(ControlCore.Scope.JOBS_EXECUTE); }
+
+    /** True when any managed-job scope was selected by local consent. */
+    public boolean allowsJobs() {
+        for (ControlCore.Scope scope : mScopes) if (scope.name().startsWith("JOBS_")) return true;
+        return false;
+    }
+
     private void acceptLoop() {
         try {
             while (isRunning()) {
@@ -146,7 +170,8 @@ public final class LocalControlServer implements AutoCloseable {
                 StructTimeval.fromMillis(IDLE_TIMEOUT_MS));
             InputStream input = new FrameDeadlineInput(client.getInputStream(), SystemClock::elapsedRealtime,
                 client::setSoTimeout, IDLE_TIMEOUT_MS);
-            RpcConnection connection = new RpcConnection(mCore, mDispatch, mScopes, this::isRunning, mOutputRegistry);
+            RpcConnection connection = new RpcConnection(mCore, mDispatch, mScopes, this::isRunning, mOutputRegistry,
+                new RequestRateLimiter(System.nanoTime())::await, mServices);
             connection.serve(Process.myUid(), peerUid, input, client.getOutputStream());
         } catch (IOException | ErrnoException | RuntimeException ignored) {
             // Never log peer requests, session content, or provider paths.

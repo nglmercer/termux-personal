@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit;
 public final class JobCoordinator {
     public enum StartStatus { ACCEPTED, REPLAY, CONFLICT, DENIED, LIMIT_REACHED, UNSUPPORTED, UNAVAILABLE }
     public enum CancelStatus { ACCEPTED, DENIED, NOT_FOUND, INVALID_REQUEST, FINISHED, ALREADY_REQUESTED, UNSUPPORTED }
+    public enum SignalStatus { SENT, DENIED, NOT_FOUND, INVALID_REQUEST, NOT_STARTED, FINISHED, UNSUPPORTED, FAILED }
     public enum ReadStatus { OK, DENIED, NOT_FOUND, INVALID_REQUEST, UNAVAILABLE }
 
     /** Implementations must check server-derived authority and resolve executable and cwd on this worker. */
@@ -32,7 +33,12 @@ public final class JobCoordinator {
     public static final class StartResult {
         public final StartStatus status;
         public final JobRecord.Snapshot job;
-        private StartResult(StartStatus status, JobRecord.Snapshot job) { this.status = status; this.job = job; }
+        /** Output positions of the returned record; null when no record was admitted or replayed. */
+        public final JobOutputStore.Offsets output;
+        private StartResult(StartStatus status, JobRecord.Snapshot job) { this(status, job, null); }
+        private StartResult(StartStatus status, JobRecord.Snapshot job, JobOutputStore.Offsets output) {
+            this.status = status; this.job = job; this.output = output;
+        }
     }
     public static final class JobView {
         public final JobRecord.Snapshot job;
@@ -56,6 +62,9 @@ public final class JobCoordinator {
             this.status = status; this.output = output; this.finished = finished; this.complete = complete;
         }
     }
+
+    /** Time between the graceful TERM and the forced KILL of a stopping job's process group. */
+    static final long CANCEL_GRACE_MILLIS = 10000;
 
     private final JobRegistry mRegistry;
     private final AppShellJobAdapter mAdapter;
@@ -100,7 +109,7 @@ public final class JobCoordinator {
                 try { allowed = mPolicy.authorizeReplay(spec, authorizationEpoch); }
                 catch (SecurityException e) { return new StartResult(StartStatus.DENIED, null); }
                 catch (RuntimeException e) { return new StartResult(StartStatus.UNAVAILABLE, null); }
-                return allowed ? new StartResult(StartStatus.REPLAY, replay.entry.record().snapshot()) :
+                return allowed ? new StartResult(StartStatus.REPLAY, replay.entry.record().snapshot(), replay.entry.output().offsets()) :
                     new StartResult(StartStatus.DENIED, null);
             }
         }
@@ -109,8 +118,8 @@ public final class JobCoordinator {
         catch (SecurityException e) { return new StartResult(StartStatus.DENIED, null); }
         catch (RuntimeException e) { return new StartResult(StartStatus.UNAVAILABLE, null); }
         if (resolution == null) return new StartResult(StartStatus.DENIED, null);
-        // Never accept a wall timeout that cannot currently terminate a live Android child safely.
-        if (spec.timeoutMillis() != 0) return new StartResult(StartStatus.UNSUPPORTED, null);
+        // Never accept a wall timeout that cannot terminate a live Android child safely.
+        if (spec.timeoutMillis() != 0 && !mAdapter.ownsChildIdentity()) return new StartResult(StartStatus.UNSUPPORTED, null);
         synchronized (this) {
             if (mStopping) return new StartResult(StartStatus.UNAVAILABLE, null);
             if (!mAuthority.allows(lease, JobAuthority.Permission.EXECUTE)) return new StartResult(StartStatus.DENIED, null);
@@ -123,7 +132,8 @@ public final class JobCoordinator {
                 }
                 StartStatus status = admission.status == JobRegistry.Status.REPLAY ? StartStatus.REPLAY :
                     admission.status == JobRegistry.Status.CONFLICT ? StartStatus.CONFLICT : StartStatus.LIMIT_REACHED;
-                return new StartResult(status, admission.entry == null ? null : admission.entry.record().snapshot());
+                return admission.entry == null ? new StartResult(status, null) :
+                    new StartResult(status, admission.entry.record().snapshot(), admission.entry.output().offsets());
             }
             Work work = new Work(admission.entry, spec, resolution, lease);
             mWork.put(admission.entry.record().snapshot().id, work);
@@ -131,9 +141,12 @@ public final class JobCoordinator {
             catch (RejectedExecutionException e) {
                 work.failQueued();
             }
-            return new StartResult(StartStatus.ACCEPTED, admission.entry.record().snapshot());
+            return new StartResult(StartStatus.ACCEPTED, admission.entry.record().snapshot(), admission.entry.output().offsets());
         }
     }
+
+    /** True when running jobs can be cancelled and wall timeouts are accepted. */
+    public boolean canStopRunningJobs() { return mAdapter.ownsChildIdentity(); }
 
     /** Scope checks must occur before calling; only the current epoch can access a job. */
     public CancelStatus cancel(String id, JobAuthority.Lease lease) {
@@ -142,17 +155,74 @@ public final class JobCoordinator {
             if (!validId(id)) return CancelStatus.INVALID_REQUEST;
             JobRegistry.Entry entry = mRegistry.get(id, lease.epoch());
             if (entry == null) return CancelStatus.NOT_FOUND;
+            return cancelEntry(id, entry);
+        }
+    }
+
+    // In-process views for the app's own UI. The device user acts here directly, so no IPC lease applies;
+    // never call these with values taken from a client request.
+
+    /** Every retained job, oldest first. */
+    public synchronized List<JobView> localJobs() {
+        List<JobView> jobs = new ArrayList<>();
+        if (mClosed) return jobs;
+        for (JobRegistry.Entry entry : mRegistry.retainedEntries()) jobs.add(new JobView(entry));
+        return jobs;
+    }
+
+    /** Retained output of any job; null when the job is unknown. */
+    public synchronized OutputResult localOutput(String id, JobOutputStore.Stream stream, long offset, int limit) {
+        if (mClosed || !validId(id) || stream == null || offset < 0 || limit < 1 || limit > OutputReplayBuffer.MAX_READ) return null;
+        JobRegistry.Entry entry = mRegistry.getRetained(id);
+        if (entry == null) return null;
+        try {
+            JobOutputStore.Read read = entry.output().readSnapshot(stream, offset, limit);
+            return new OutputResult(ReadStatus.OK, read.data, read.finished, read.complete);
+        } catch (IllegalArgumentException e) { return null; }
+    }
+
+    /** Cancels any retained job, including one started under an earlier consent epoch. */
+    public synchronized CancelStatus localCancel(String id) {
+        if (!validId(id)) return CancelStatus.INVALID_REQUEST;
+        JobRegistry.Entry entry = mRegistry.getRetained(id);
+        return entry == null ? CancelStatus.NOT_FOUND : cancelEntry(id, entry);
+    }
+
+    private CancelStatus cancelEntry(String id, JobRegistry.Entry entry) {
+        Work work = mWork.get(id);
+        if (work == null || JobRecord.isTerminal(entry.record().snapshot().state)) return CancelStatus.FINISHED;
+        if (!work.claimed) {
+            work.cancelQueued(); mLaunchers.remove(work); return CancelStatus.ACCEPTED;
+        }
+        switch (work.control.requestStop(JobRecord.StopReason.CANCEL)) {
+            case ACCEPTED: return CancelStatus.ACCEPTED;
+            case ALREADY_REQUESTED: return CancelStatus.ALREADY_REQUESTED;
+            case UNSUPPORTED: return CancelStatus.UNSUPPORTED;
+            default: return CancelStatus.FINISHED;
+        }
+    }
+
+    /**
+     * Signals a job of the current consent epoch through its owned handle. The job ID is the only target:
+     * there is no PID parameter, so an observed or recycled PID can never be signalled.
+     */
+    public SignalStatus signal(String id, JobAuthority.Lease lease, int signal) {
+        if (signal != OwnedChildProcess.SIGTERM && signal != OwnedChildProcess.SIGKILL && signal != OwnedChildProcess.SIGINT)
+            return SignalStatus.INVALID_REQUEST;
+        synchronized (this) {
+            if (!mAuthority.allows(lease, JobAuthority.Permission.SIGNAL)) return SignalStatus.DENIED;
+            if (!validId(id)) return SignalStatus.INVALID_REQUEST;
+            JobRegistry.Entry entry = mRegistry.get(id, lease.epoch());
+            if (entry == null) return SignalStatus.NOT_FOUND;
             Work work = mWork.get(id);
-            if (work == null || JobRecord.isTerminal(entry.record().snapshot().state)) return CancelStatus.FINISHED;
-            if (!work.claimed) {
-                work.cancelQueued(); mLaunchers.remove(work); return CancelStatus.ACCEPTED;
-            }
-            OwnedProcessControl.Request request = work.control.requestStop(JobRecord.StopReason.CANCEL);
-            switch (request) {
-                case ACCEPTED: return CancelStatus.ACCEPTED;
-                case ALREADY_REQUESTED: return CancelStatus.ALREADY_REQUESTED;
-                case UNSUPPORTED: return CancelStatus.UNSUPPORTED;
-                default: return CancelStatus.FINISHED;
+            if (work == null || JobRecord.isTerminal(entry.record().snapshot().state)) return SignalStatus.FINISHED;
+            if (!work.claimed) return SignalStatus.NOT_STARTED;
+            switch (work.control.signal(signal)) {
+                case SENT: return SignalStatus.SENT;
+                case NOT_STARTED: return SignalStatus.NOT_STARTED;
+                case UNSUPPORTED: return SignalStatus.UNSUPPORTED;
+                case FAILED: return SignalStatus.FAILED;
+                default: return SignalStatus.FINISHED;
             }
         }
     }
@@ -201,11 +271,17 @@ public final class JobCoordinator {
     private static ListResult listError(ReadStatus status) { return new ListResult(status, Collections.emptyList(), null); }
     private static OutputResult outputError(ReadStatus status) { return new OutputResult(status, null, false, false); }
 
-    /** Stop admission and abandon only queued work. Live children are never forgotten or signalled by PID. */
+    /**
+     * Stop admission, abandon queued work and ask owned running children to stop. Live children are
+     * never forgotten or signalled by PID; without owned identity they keep running until they exit.
+     */
     public synchronized void stopAccepting() {
         if (mStopping) return;
         mStopping = true;
-        for (Work work : mWork.values()) if (!work.claimed && !work.done) { work.failQueued(); mLaunchers.remove(work); }
+        for (Work work : mWork.values()) {
+            if (!work.claimed && !work.done) { work.failQueued(); mLaunchers.remove(work); }
+            else if (work.claimed && work.control.canStop()) work.control.requestStop(JobRecord.StopReason.SHUTDOWN);
+        }
         mLaunchers.shutdown();
     }
 
@@ -228,7 +304,7 @@ public final class JobCoordinator {
         boolean claimed, done;
         Work(JobRegistry.Entry entry, JobSpec spec, Resolution resolution, JobAuthority.Lease lease) {
             this.entry = entry; this.spec = spec; this.resolution = resolution; this.lease = lease;
-            this.control = OwnedProcessControl.forAndroid(entry.record(), mTimers, 10000);
+            this.control = OwnedProcessControl.forAndroid(entry.record(), mTimers, CANCEL_GRACE_MILLIS, mAdapter.ownsChildIdentity());
         }
         @Override public void run() {
             synchronized (JobCoordinator.this) {
@@ -246,6 +322,9 @@ public final class JobCoordinator {
                     if (mStopping || !mAuthority.allows(lease, JobAuthority.Permission.EXECUTE))
                         throw new SecurityException("Job consent revoked or service stopping");
                 }
+                // Armed before launch so the wall time includes startup; a pending stop applies on attach.
+                if (spec.timeoutMillis() != 0 && !control.scheduleTimeout(spec.timeoutMillis()))
+                    throw new IllegalStateException("Job timeout unavailable");
                 mAdapter.launchBegun(entry, spec, current.executable, current.cwd, control);
             }
             catch (RuntimeException | Error e) {

@@ -9,6 +9,7 @@ import java.util.concurrent.TimeUnit;
 public final class OwnedProcessControl {
     public enum Status { NOT_REQUESTED, PENDING_HANDLE, REQUESTED, ALREADY_EXITED, STOP_UNAVAILABLE, FORCE_UNAVAILABLE, FAILED }
     public enum Request { ACCEPTED, ALREADY_REQUESTED, NOT_STARTED, FINISHED, UNSUPPORTED }
+    public enum SignalResult { SENT, NOT_STARTED, FINISHED, UNSUPPORTED, FAILED }
     interface SignalAction { void signal(Process process); }
 
     private final JobRecord mRecord;
@@ -16,15 +17,24 @@ public final class OwnedProcessControl {
     private final long mGraceMillis;
     private final SignalAction mGraceful, mForce;
     private Process mProcess;
-    private ScheduledFuture<?> mEscalation;
+    private ScheduledFuture<?> mEscalation, mTimeout;
     private boolean mDone, mAttached;
     private Status mStatus = Status.NOT_REQUESTED;
 
     /** The owner must provide a bounded, service-owned scheduler and invoke stop off the main thread. */
-    public static OwnedProcessControl forAndroid(JobRecord record, ScheduledExecutorService timers, long graceMillis) {
+    public static OwnedProcessControl forAndroid(JobRecord record, ScheduledExecutorService timers, long graceMillis,
+                                                 boolean ownedChildren) {
         // Android Process.destroy implementations vary and some use a recyclable PID internally.
-        // Until launch provides a verified stable signalling handle, refuse rather than guess.
-        return new OwnedProcessControl(record, timers, graceMillis, null, null);
+        // Only a child this process alone reaps can be signalled; otherwise refuse rather than guess.
+        if (!ownedChildren) return new OwnedProcessControl(record, timers, graceMillis, null, null);
+        return new OwnedProcessControl(record, timers, graceMillis,
+            process -> ownedSignal(process, OwnedChildProcess.SIGTERM), process -> ownedSignal(process, OwnedChildProcess.SIGKILL));
+    }
+
+    /** An exited child returns false, which is not a failure; a foreign handle is never signalled. */
+    private static void ownedSignal(Process process, int signal) {
+        if (!(process instanceof OwnedChildProcess)) throw new IllegalStateException("Process identity is not owned");
+        ((OwnedChildProcess) process).signal(signal);
     }
 
     OwnedProcessControl(JobRecord record, ScheduledExecutorService timers, long graceMillis,
@@ -51,6 +61,30 @@ public final class OwnedProcessControl {
         return Request.ACCEPTED;
     }
 
+    /**
+     * One signal to the attached owned child's group, without recording a stop. The job's outcome stays the
+     * child's own; {@link #requestStop} is the path for cancellation and timeouts.
+     */
+    public synchronized SignalResult signal(int signal) {
+        if (mDone || JobRecord.isTerminal(mRecord.snapshot().state)) return SignalResult.FINISHED;
+        if (mGraceful == null) return SignalResult.UNSUPPORTED;
+        if (!mAttached) return SignalResult.NOT_STARTED;
+        if (!(mProcess instanceof OwnedChildProcess)) return SignalResult.UNSUPPORTED;
+        try { return ((OwnedChildProcess) mProcess).signal(signal) ? SignalResult.SENT : SignalResult.FINISHED; }
+        catch (RuntimeException e) { return SignalResult.FAILED; }
+    }
+
+    /** True when stop requests can reach a running child. */
+    public boolean canStop() { return mGraceful != null; }
+
+    /** Arms a wall-clock stop; completion cancels it. False when stopping is unsupported or already armed. */
+    public synchronized boolean scheduleTimeout(long timeoutMillis) {
+        if (timeoutMillis < 1 || mGraceful == null || mTimeout != null || mDone) return false;
+        try { mTimeout = mTimers.schedule(() -> requestStop(JobRecord.StopReason.TIMEOUT), timeoutMillis, TimeUnit.MILLISECONDS); }
+        catch (RejectedExecutionException e) { return false; }
+        return true;
+    }
+
     /** Called once by the launcher, including when completion raced with launch return. */
     synchronized void attach(Process process) {
         if (process == null || mAttached) throw new IllegalArgumentException("Invalid process handle");
@@ -64,6 +98,7 @@ public final class OwnedProcessControl {
     synchronized void completed() {
         mDone = true; mProcess = null;
         if (mEscalation != null) { mEscalation.cancel(false); mEscalation = null; }
+        if (mTimeout != null) { mTimeout.cancel(false); mTimeout = null; }
     }
 
     public synchronized Status status() { return mStatus; }

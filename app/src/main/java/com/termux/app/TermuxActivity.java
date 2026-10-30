@@ -217,6 +217,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private static final String STATE_IMAGE_IMPORT_URIS = "image_import_uris";
     private String mImageImportSessionHandle;
     private static final int CONTEXT_MENU_PROCESS_SNAPSHOT = 15;
+    private static final int CONTEXT_MENU_JOBS = 16;
+    private static final int CONTEXT_MENU_FILES = 17;
+    private static final int CONTEXT_MENU_WORKSPACES = 18;
     private final java.util.concurrent.atomic.AtomicBoolean mProcessSnapshotBusy = new java.util.concurrent.atomic.AtomicBoolean();
     private AlertDialog mProcessDialog;
     private final android.os.Handler mProcessRefreshHandler = new android.os.Handler(android.os.Looper.getMainLooper());
@@ -730,6 +733,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         menu.add(Menu.NONE, CONTEXT_MENU_DIAGNOSTICS, Menu.NONE, R.string.action_diagnostics);
         menu.add(Menu.NONE, CONTEXT_MENU_IMPORT_IMAGE, Menu.NONE, R.string.action_import_image).setEnabled(currentSession.isRunning());
         menu.add(Menu.NONE, CONTEXT_MENU_PROCESS_SNAPSHOT, Menu.NONE, R.string.action_process_snapshot);
+        menu.add(Menu.NONE, CONTEXT_MENU_JOBS, Menu.NONE, R.string.action_jobs);
+        menu.add(Menu.NONE, CONTEXT_MENU_FILES, Menu.NONE, R.string.action_files);
+        menu.add(Menu.NONE, CONTEXT_MENU_WORKSPACES, Menu.NONE, R.string.action_workspaces);
         menu.add(Menu.NONE, CONTEXT_MENU_SELECT_URL_ID, Menu.NONE, R.string.action_select_url);
         menu.add(Menu.NONE, CONTEXT_MENU_SHARE_TRANSCRIPT_ID, Menu.NONE, R.string.action_share_transcript);
         if (!DataUtils.isNullOrEmpty(mTerminalView.getStoredSelectedText()))
@@ -770,6 +776,15 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                 return true;
             case CONTEXT_MENU_PROCESS_SNAPSHOT:
                 requestProcessSnapshot();
+                return true;
+            case CONTEXT_MENU_JOBS:
+                showJobs();
+                return true;
+            case CONTEXT_MENU_FILES:
+                showFiles("home", "");
+                return true;
+            case CONTEXT_MENU_WORKSPACES:
+                showWorkspaces();
                 return true;
             case CONTEXT_MENU_SELECT_URL_ID:
                 mTermuxTerminalViewClient.showUrlSelection();
@@ -817,6 +832,208 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         super.onContextMenuClosed(menu);
         // onContextMenuClosed() is triggered twice if back button is pressed to dismiss instead of tap for some reason
         mTerminalView.onContextMenuClosed(menu);
+    }
+
+    /**
+     * Managed jobs started by local clients. The UI reads the same coordinator as IPC, never a terminal
+     * transcript; job data is in memory, so these short reads stay on the main thread.
+     */
+    private void showJobs() {
+        TermuxService service = getTermuxService();
+        com.termux.app.control.jobs.JobCoordinator jobs = service == null ? null : service.getJobCoordinatorIfCreated();
+        java.util.List<com.termux.app.control.jobs.JobCoordinator.JobView> views =
+            jobs == null ? java.util.Collections.emptyList() : jobs.localJobs();
+        if (views.isEmpty()) {
+            new AlertDialog.Builder(this).setTitle(R.string.action_jobs).setMessage(R.string.jobs_empty)
+                .setPositiveButton(android.R.string.ok, null).show();
+            return;
+        }
+        String[] rows = new String[views.size()];
+        for (int i = 0; i < rows.length; i++) {
+            // Newest first; the coordinator returns oldest first.
+            com.termux.app.control.jobs.JobRecord.Snapshot job = views.get(views.size() - 1 - i).job;
+            rows[i] = job.id + "  " + jobStateLabel(job);
+        }
+        new AlertDialog.Builder(this).setTitle(R.string.action_jobs)
+            .setItems(rows, (dialog, which) -> showJob(jobs, views.get(views.size() - 1 - which).job.id))
+            .setNegativeButton(android.R.string.cancel, null).show();
+    }
+
+    private String jobStateLabel(com.termux.app.control.jobs.JobRecord.Snapshot job) {
+        String state = job.state.name().toLowerCase(java.util.Locale.ROOT);
+        return job.exitCode == null ? state : getString(R.string.jobs_state_exit, state, job.exitCode);
+    }
+
+    private void showJob(com.termux.app.control.jobs.JobCoordinator jobs, String id) {
+        com.termux.app.control.jobs.JobRecord.Snapshot job = null;
+        for (com.termux.app.control.jobs.JobCoordinator.JobView view : jobs.localJobs())
+            if (view.job.id.equals(id)) job = view.job;
+        if (job == null) return;
+        StringBuilder text = new StringBuilder(getString(R.string.jobs_detail_state, jobStateLabel(job)));
+        if (job.failure != null) text.append("\n").append(getString(R.string.jobs_detail_failure, job.failure.name()));
+        appendJobOutput(text, jobs, id, com.termux.app.control.jobs.JobOutputStore.Stream.STDOUT, R.string.jobs_detail_stdout);
+        appendJobOutput(text, jobs, id, com.termux.app.control.jobs.JobOutputStore.Stream.STDERR, R.string.jobs_detail_stderr);
+        android.widget.TextView body = new android.widget.TextView(this);
+        body.setText(text); // Plain text: output is never interpreted as markup.
+        body.setTextIsSelectable(true);
+        body.setTypeface(android.graphics.Typeface.MONOSPACE);
+        int padding = (int) (16 * getResources().getDisplayMetrics().density);
+        body.setPadding(padding, padding, padding, padding);
+        android.widget.ScrollView scroll = new android.widget.ScrollView(this);
+        scroll.addView(body);
+        AlertDialog.Builder builder = new AlertDialog.Builder(this).setTitle(id).setView(scroll)
+            .setPositiveButton(R.string.jobs_refresh, (dialog, which) -> showJob(jobs, id))
+            .setNegativeButton(android.R.string.cancel, null);
+        if (!com.termux.app.control.jobs.JobRecord.isTerminal(job.state))
+            builder.setNeutralButton(R.string.jobs_cancel, (dialog, which) -> confirmJobCancel(jobs, id));
+        builder.show();
+    }
+
+    /** Shows the newest retained bytes of one stream, at most one read's worth. */
+    private void appendJobOutput(StringBuilder text, com.termux.app.control.jobs.JobCoordinator jobs, String id,
+                                 com.termux.app.control.jobs.JobOutputStore.Stream stream, int label) {
+        final int window = 16 * 1024;
+        com.termux.app.control.jobs.JobCoordinator.OutputResult probe = jobs.localOutput(id, stream, 0, 1);
+        if (probe == null) return;
+        long end = probe.output.endOffset;
+        com.termux.app.control.jobs.JobCoordinator.OutputResult tail = jobs.localOutput(id, stream, Math.max(0, end - window), window);
+        if (tail == null) return;
+        text.append("\n\n").append(getString(label)).append("\n");
+        if (tail.output.offset > 0) text.append(getString(R.string.jobs_detail_truncated)).append("\n");
+        text.append(new String(tail.output.data, java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    private void confirmJobCancel(com.termux.app.control.jobs.JobCoordinator jobs, String id) {
+        new AlertDialog.Builder(this).setTitle(R.string.jobs_cancel).setMessage(getString(R.string.jobs_cancel_confirm, id))
+            .setPositiveButton(R.string.jobs_cancel, (dialog, which) -> {
+                com.termux.app.control.jobs.JobCoordinator.CancelStatus status = jobs.localCancel(id);
+                if (status == com.termux.app.control.jobs.JobCoordinator.CancelStatus.UNSUPPORTED)
+                    showToast(getString(R.string.jobs_cancel_unsupported), true);
+                showJob(jobs, id);
+            })
+            .setNegativeButton(android.R.string.cancel, null).show();
+    }
+
+    /** java.util.function.Consumer needs API 24; the app supports API 21. */
+    private interface UiResult<T> { void accept(T value); }
+
+    /** Runs I/O on a worker and shows the result only if this activity is still visible. */
+    private <T> void loadInBackground(java.util.concurrent.Callable<T> load, UiResult<T> show) {
+        WeakReference<TermuxActivity> activity = new WeakReference<>(this);
+        new Thread(() -> {
+            T value;
+            try { value = load.call(); } catch (Exception e) { value = null; }
+            final T result = value;
+            runOnUiThread(() -> {
+                TermuxActivity current = activity.get();
+                if (current == null || !current.isVisible()) return;
+                if (result == null) current.showToast(current.getString(R.string.files_unavailable), true);
+                else show.accept(result);
+            });
+        }, "TermuxUiLoad").start();
+    }
+
+    /**
+     * Read-only browser over the same race-safe file access as the file RPC. Links are shown and never followed;
+     * names are plain text. Listing and previews run off the main thread.
+     */
+    private void showFiles(String rootId, String path) {
+        loadInBackground(() -> {
+            com.termux.app.control.files.DescriptorAccess access = com.termux.app.control.files.DescriptorAccess.createIfAvailable();
+            if (access == null) return null;
+            java.util.Map<String, java.io.File> roots = new java.util.LinkedHashMap<>();
+            roots.put("home", new java.io.File(com.termux.shared.termux.TermuxConstants.TERMUX_HOME_DIR_PATH));
+            roots.put("prefix", new java.io.File(com.termux.shared.termux.TermuxConstants.TERMUX_PREFIX_DIR_PATH));
+            com.termux.app.control.files.FileService files = new com.termux.app.control.files.FileService(roots, access);
+            return files.list(rootId, path, 0, com.termux.app.control.files.FileService.MAX_PAGE).entries;
+        }, entries -> {
+            java.util.List<String> rows = new java.util.ArrayList<>();
+            boolean atRoot = path.isEmpty();
+            rows.add(atRoot ? getString("home".equals(rootId) ? R.string.files_switch_prefix : R.string.files_switch_home) : "..");
+            for (com.termux.app.control.files.FileService.Entry entry : entries)
+                rows.add(entry.name + ("directory".equals(entry.type) ? "/" : "symlink".equals(entry.type) ? " →" : ""));
+            String title = rootId + ":" + (atRoot ? "/" : path) + (entries.size() >= com.termux.app.control.files.FileService.MAX_PAGE ?
+                " " + getString(R.string.files_first_page) : "");
+            new AlertDialog.Builder(this).setTitle(title)
+                .setItems(rows.toArray(new String[0]), (dialog, which) -> {
+                    if (which == 0) {
+                        if (atRoot) showFiles("home".equals(rootId) ? "prefix" : "home", "");
+                        else showFiles(rootId, path.contains("/") ? path.substring(0, path.lastIndexOf('/')) : "");
+                        return;
+                    }
+                    com.termux.app.control.files.FileService.Entry entry = entries.get(which - 1);
+                    if ("directory".equals(entry.type)) showFiles(rootId, entry.path);
+                    else if ("file".equals(entry.type)) previewFile(rootId, entry);
+                    else showToast(getString(R.string.files_not_followed), false);
+                })
+                .setNegativeButton(android.R.string.cancel, null).show();
+        });
+    }
+
+    private void previewFile(String rootId, com.termux.app.control.files.FileService.Entry entry) {
+        loadInBackground(() -> {
+            com.termux.app.control.files.DescriptorAccess access = com.termux.app.control.files.DescriptorAccess.createIfAvailable();
+            if (access == null) return null;
+            java.util.Map<String, java.io.File> roots = new java.util.LinkedHashMap<>();
+            roots.put("home", new java.io.File(com.termux.shared.termux.TermuxConstants.TERMUX_HOME_DIR_PATH));
+            roots.put("prefix", new java.io.File(com.termux.shared.termux.TermuxConstants.TERMUX_PREFIX_DIR_PATH));
+            return new com.termux.app.control.files.FileService(roots, access).read(rootId, entry.path, 0, 16 * 1024);
+        }, chunk -> {
+            java.nio.charset.CharsetDecoder decoder = java.nio.charset.StandardCharsets.UTF_8.newDecoder();
+            String text;
+            try { text = decoder.decode(java.nio.ByteBuffer.wrap(chunk.data)).toString(); }
+            catch (java.nio.charset.CharacterCodingException e) { text = null; }
+            if (text != null && text.indexOf('\0') >= 0) text = null;
+            String body = text == null ? getString(R.string.files_binary, entry.size) :
+                text + (chunk.eof ? "" : "\n\n" + getString(R.string.files_preview_truncated));
+            android.widget.TextView view = new android.widget.TextView(this);
+            view.setText(body); // Plain text only; file contents are never interpreted as markup.
+            view.setTextIsSelectable(true);
+            view.setTypeface(android.graphics.Typeface.MONOSPACE);
+            int padding = (int) (16 * getResources().getDisplayMetrics().density);
+            view.setPadding(padding, padding, padding, padding);
+            android.widget.ScrollView scroll = new android.widget.ScrollView(this);
+            scroll.addView(view);
+            new AlertDialog.Builder(this).setTitle(entry.name).setView(scroll).setPositiveButton(android.R.string.ok, null).show();
+        });
+    }
+
+    /** Workspaces are references to directories. Opening one starts a new session there; others are unchanged. */
+    private void showWorkspaces() {
+        TermuxService service = getTermuxService();
+        if (service == null) return;
+        loadInBackground(() -> service.workspaceRepositoryForUi().list(), workspaces -> {
+            if (workspaces.isEmpty()) {
+                new AlertDialog.Builder(this).setTitle(R.string.action_workspaces).setMessage(R.string.workspaces_empty)
+                    .setPositiveButton(android.R.string.ok, null).show();
+                return;
+            }
+            String[] rows = new String[workspaces.size()];
+            for (int i = 0; i < rows.length; i++) {
+                com.termux.app.control.workspace.WorkspaceRepository.Workspace workspace = workspaces.get(i);
+                rows[i] = workspace.name + "  " + workspace.rootId + ":" + (workspace.path.isEmpty() ? "/" : workspace.path) +
+                    (workspace.available ? "" : "  " + getString(R.string.workspaces_unavailable));
+            }
+            new AlertDialog.Builder(this).setTitle(R.string.action_workspaces)
+                .setItems(rows, (dialog, which) -> showWorkspace(service, workspaces.get(which)))
+                .setNegativeButton(android.R.string.cancel, null).show();
+        });
+    }
+
+    private void showWorkspace(TermuxService service, com.termux.app.control.workspace.WorkspaceRepository.Workspace workspace) {
+        StringBuilder text = new StringBuilder(workspace.rootId + ":" + (workspace.path.isEmpty() ? "/" : workspace.path));
+        if (!workspace.taskPresets.isEmpty()) {
+            text.append("\n\n").append(getString(R.string.workspaces_presets));
+            for (com.termux.app.control.workspace.WorkspaceRepository.TaskPreset preset : workspace.taskPresets)
+                text.append("\n• ").append(preset.label).append(": ").append(preset.executable).append(' ')
+                    .append(android.text.TextUtils.join(" ", preset.args));
+        }
+        AlertDialog.Builder builder = new AlertDialog.Builder(this).setTitle(workspace.name).setMessage(text)
+            .setNegativeButton(android.R.string.cancel, null);
+        if (workspace.available) builder.setPositiveButton(R.string.workspaces_open_terminal, (dialog, which) ->
+            loadInBackground(() -> service.workspaceRepositoryForUi().directory(workspace.id).getPath(),
+                directory -> mTermuxTerminalSessionActivityClient.addNewSessionIn(directory, workspace.name)));
+        builder.show();
     }
 
     private void showKillSessionDialog(TerminalSession session) {
@@ -970,14 +1187,22 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                         R.string.local_control_running_write : R.string.local_control_running_read) : R.string.local_control_starting) +
                     (service.localControlAllowsOutput() ? "\n\n" + getString(R.string.local_control_output_enabled) : "") +
                     (service.isSafeControlCloseEnabled() ? "\n\n" + getString(R.string.local_control_close_enabled) : "") +
-                    (service.localControlAllowsOutputResume() ? "\n\n" + getString(R.string.local_control_resume_enabled) : ""))
+                    (service.localControlAllowsOutputResume() ? "\n\n" + getString(R.string.local_control_resume_enabled) : "") +
+                    (service.localControlAllowsJobs() ? "\n\n" + getString(R.string.local_control_jobs_enabled) : ""))
                 .setPositiveButton(R.string.local_control_stop, (dialog, which) -> {
                     service.stopLocalControl();
                     showToast(getString(R.string.local_control_stopping), false);
                 })
+                .setNeutralButton(R.string.local_control_forget, (dialog, which) -> {
+                    // Stops automatic start; the running listener keeps its current consent until stopped.
+                    service.forgetLocalControlConsent();
+                    showToast(getString(R.string.local_control_forgotten), false);
+                })
                 .setNegativeButton(android.R.string.cancel, null).show();
             return;
         }
+        // A remembered choice pre-fills the boxes; the user still confirms it here.
+        final EnumSet<ControlCore.Scope> saved = service.savedLocalControlScopes();
         android.widget.CheckBox output = new android.widget.CheckBox(this);
         output.setText(R.string.local_control_output_checkbox);
         android.widget.CheckBox resume = new android.widget.CheckBox(this);
@@ -991,18 +1216,75 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         close.setText(R.string.local_control_close_checkbox);
         android.widget.LinearLayout options = new android.widget.LinearLayout(this);
         options.setOrientation(android.widget.LinearLayout.VERTICAL);
+        int padding = (int) (16 * getResources().getDisplayMetrics().density);
+        options.setPadding(padding, 0, padding, 0);
+        android.widget.CheckBox all = new android.widget.CheckBox(this);
+        all.setText(R.string.local_control_select_all);
+        options.addView(all);
         options.addView(output); options.addView(resume); options.addView(close);
+        // Domain consent is separate from session consent. Each scope is explicit; without a remembered
+        // choice every box starts unchecked.
+        final com.termux.app.control.ControlCore.Scope[] domainScopes = {
+            com.termux.app.control.ControlCore.Scope.JOBS_READ, com.termux.app.control.ControlCore.Scope.JOBS_OUTPUT,
+            com.termux.app.control.ControlCore.Scope.JOBS_EXECUTE, com.termux.app.control.ControlCore.Scope.JOBS_CANCEL,
+            com.termux.app.control.ControlCore.Scope.PROCESSES_READ, com.termux.app.control.ControlCore.Scope.PROCESSES_SIGNAL,
+            com.termux.app.control.ControlCore.Scope.FILES_READ, com.termux.app.control.ControlCore.Scope.FILES_WRITE,
+            com.termux.app.control.ControlCore.Scope.WORKSPACES_READ, com.termux.app.control.ControlCore.Scope.WORKSPACES_WRITE};
+        final int[] domainLabels = {
+            R.string.local_control_jobs_read_checkbox, R.string.local_control_jobs_output_checkbox,
+            R.string.local_control_jobs_execute_checkbox, R.string.local_control_jobs_cancel_checkbox,
+            R.string.local_control_processes_checkbox, R.string.local_control_processes_signal_checkbox,
+            R.string.local_control_files_read_checkbox, R.string.local_control_files_write_checkbox,
+            R.string.local_control_workspaces_read_checkbox, R.string.local_control_workspaces_write_checkbox};
+        final android.widget.CheckBox[] domainBoxes = new android.widget.CheckBox[domainScopes.length];
+        for (int i = 0; i < domainScopes.length; i++) {
+            domainBoxes[i] = new android.widget.CheckBox(this);
+            domainBoxes[i].setText(domainLabels[i]);
+            options.addView(domainBoxes[i]);
+        }
+        android.widget.CheckBox remember = new android.widget.CheckBox(this);
+        remember.setText(R.string.local_control_remember);
+        options.addView(remember);
+        if (saved != null) {
+            output.setChecked(saved.contains(ControlCore.Scope.SESSIONS_OUTPUT));
+            resume.setChecked(saved.contains(ControlCore.Scope.SESSIONS_OUTPUT_RESUME));
+            close.setChecked(saved.contains(ControlCore.Scope.SESSIONS_CLOSE));
+            for (int i = 0; i < domainScopes.length; i++) domainBoxes[i].setChecked(saved.contains(domainScopes[i]));
+            remember.setChecked(service.isLocalControlAutoStart());
+        }
+        all.setOnCheckedChangeListener((button, checked) -> {
+            output.setChecked(checked); resume.setChecked(checked); close.setChecked(checked);
+            for (android.widget.CheckBox box : domainBoxes) box.setChecked(checked);
+        });
+        android.widget.ScrollView scroll = new android.widget.ScrollView(this);
+        scroll.addView(options);
+        // Read/write is the positive button when the remembered choice included write access.
+        boolean savedWrite = saved != null && saved.contains(ControlCore.Scope.SESSIONS_WRITE);
         new AlertDialog.Builder(this)
             .setTitle(R.string.action_local_control)
             .setMessage(R.string.local_control_explanation)
-            .setView(options)
-            .setPositiveButton(R.string.local_control_read_only, (dialog, which) -> enableLocalControl(service, false, output.isChecked(), close.isChecked(), resume.isChecked()))
-            .setNeutralButton(R.string.local_control_read_write, (dialog, which) -> enableLocalControl(service, true, output.isChecked(), close.isChecked(), resume.isChecked()))
+            .setView(scroll)
+            .setPositiveButton(savedWrite ? R.string.local_control_read_write : R.string.local_control_read_only, (dialog, which) ->
+                enableLocalControl(service, savedWrite, output.isChecked(), close.isChecked(), resume.isChecked(),
+                    selectedDomainScopes(domainScopes, domainBoxes), remember.isChecked()))
+            .setNeutralButton(savedWrite ? R.string.local_control_read_only : R.string.local_control_read_write, (dialog, which) ->
+                enableLocalControl(service, !savedWrite, output.isChecked(), close.isChecked(), resume.isChecked(),
+                    selectedDomainScopes(domainScopes, domainBoxes), remember.isChecked()))
             .setNegativeButton(android.R.string.cancel, null).show();
     }
 
-    private void enableLocalControl(TermuxService service, boolean write, boolean output, boolean close, boolean resume) {
+    private static EnumSet<ControlCore.Scope> selectedDomainScopes(ControlCore.Scope[] scopes, android.widget.CheckBox[] boxes) {
+        EnumSet<ControlCore.Scope> selected = EnumSet.noneOf(ControlCore.Scope.class);
+        for (int i = 0; i < scopes.length; i++) if (boxes[i].isChecked()) selected.add(scopes[i]);
+        return selected;
+    }
+
+    private void enableLocalControl(TermuxService service, boolean write, boolean output, boolean close, boolean resume,
+                                    EnumSet<ControlCore.Scope> domainScopes, boolean remember) {
         EnumSet<ControlCore.Scope> scopes = com.termux.app.control.LocalControlOptions.scopes(write, output, close, resume);
+        scopes.addAll(domainScopes);
+        // The choice is always kept to pre-fill the next dialog; only "remember" starts it automatically.
+        service.saveLocalControlConsent(scopes, remember);
         WeakReference<TermuxActivity> activity = new WeakReference<>(this);
         final boolean requested;
         try {
