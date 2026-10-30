@@ -87,10 +87,12 @@ final class SafeDocumentOpen {
     /** Returns 0 or a negative errno. Neither final component is followed. */
     static int rename(File root, String from, String to, boolean replace) {
         if (!AVAILABLE || from == null || to == null || from.isEmpty() || to.isEmpty()) return -22;
+        // renameat2 is in Android's app seccomp allowlist from Android 11; earlier it could kill the process.
+        boolean atomicNoReplace = android.os.Build.VERSION.SDK_INT >= 30;
         return renameNative(root.getAbsolutePath().getBytes(StandardCharsets.UTF_8), from.getBytes(StandardCharsets.UTF_8),
-            to.getBytes(StandardCharsets.UTF_8), replace);
+            to.getBytes(StandardCharsets.UTF_8), replace, atomicNoReplace);
     }
-    private static native int renameNative(byte[] root, byte[] from, byte[] to, boolean replace);
+    private static native int renameNative(byte[] root, byte[] from, byte[] to, boolean replace, boolean atomicNoReplace);
 
     /** Root-relative form of {@link #create(File, String, boolean)}: 0 created, 1 exists, -1 other failure. */
     static int createRelative(File root, String relative, boolean directory) throws FileNotFoundException {

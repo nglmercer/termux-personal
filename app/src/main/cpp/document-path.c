@@ -5,7 +5,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <unistd.h>
+
+#ifndef RENAME_NOREPLACE
+#define RENAME_NOREPLACE 1
+#endif
 
 /* Walk each component relative to an open directory; never follow a link. */
 static int open_document(const char *root, char *path, int access, int truncate_file, int append) {
@@ -212,10 +217,11 @@ static int create_new_file(const char *root, char *path) {
     return fd >= 0 ? fd : -saved;
 }
 
-/* Renames within root without following either final component. Without replace, a regular file is
- * moved with link then unlink, which fails atomically on an existing target; a directory is checked
- * first and then renamed, which a concurrent same-UID creation can still race. */
-static int rename_entry(const char *root, char *from, char *to, int replace) {
+/* Renames within root without following either final component. Without replace, renameat2's
+ * RENAME_NOREPLACE refuses an existing target atomically when the caller allows it (Android's app seccomp
+ * policy permits it from Android 11). Otherwise the target is checked first and then renamed, which a
+ * concurrent same-UID creation can still race. Hard links are not used: Android forbids them in app data. */
+static int rename_entry(const char *root, char *from, char *to, int replace, int atomic_noreplace) {
     char *from_leaf, *to_leaf;
     int from_dir = open_parent(root, from, &from_leaf);
     if (from_dir < 0) return -ENOENT;
@@ -225,10 +231,10 @@ static int rename_entry(const char *root, char *from, char *to, int replace) {
     int result = 0;
     if (fstatat(from_dir, from_leaf, &st, AT_SYMLINK_NOFOLLOW) < 0) result = -errno;
     else if (replace) { if (renameat(from_dir, from_leaf, to_dir, to_leaf) < 0) result = -errno; }
-    else if (S_ISREG(st.st_mode)) {
-        if (linkat(from_dir, from_leaf, to_dir, to_leaf, 0) < 0) result = -errno;
-        else if (unlinkat(from_dir, from_leaf, 0) < 0) result = -errno;
-    } else if (fstatat(to_dir, to_leaf, &st, AT_SYMLINK_NOFOLLOW) == 0) result = -EEXIST;
+    else if (atomic_noreplace &&
+             syscall(__NR_renameat2, from_dir, from_leaf, to_dir, to_leaf, RENAME_NOREPLACE) == 0) result = 0;
+    else if (atomic_noreplace && errno != ENOSYS && errno != EINVAL) result = -errno;
+    else if (fstatat(to_dir, to_leaf, &st, AT_SYMLINK_NOFOLLOW) == 0) result = -EEXIST;
     else if (errno != ENOENT) result = -errno;
     else if (renameat(from_dir, from_leaf, to_dir, to_leaf) < 0) result = -errno;
     close(from_dir); close(to_dir);
@@ -260,9 +266,10 @@ Java_com_termux_filepicker_SafeDocumentOpen_createFileNative(JNIEnv *env, jclass
 /* Returns 0 or a negative errno. */
 JNIEXPORT jint JNICALL
 Java_com_termux_filepicker_SafeDocumentOpen_renameNative(JNIEnv *env, jclass cls, jbyteArray root_bytes,
-                                                          jbyteArray from_bytes, jbyteArray to_bytes, jboolean replace) {
+                                                          jbyteArray from_bytes, jbyteArray to_bytes, jboolean replace,
+                                                          jboolean atomic_noreplace) {
     (void) cls;
     char *root = copy_bytes(env, root_bytes, 4096), *from = copy_bytes(env, from_bytes, 4096), *to = copy_bytes(env, to_bytes, 4096);
-    int result = root && from && to ? rename_entry(root, from, to, replace) : -EINVAL;
+    int result = root && from && to ? rename_entry(root, from, to, replace, atomic_noreplace) : -EINVAL;
     free(root); free(from); free(to); return result;
 }
