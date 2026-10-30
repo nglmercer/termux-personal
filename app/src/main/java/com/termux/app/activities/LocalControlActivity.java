@@ -109,7 +109,8 @@ public final class LocalControlActivity extends AppCompatActivity {
             mApply.setPersistent(false);
             mApply.setTitle(R.string.local_control_screen_apply);
             mApply.setSummary(R.string.local_control_screen_apply_summary);
-            mApply.setVisible(false);
+            // Always present so the list never shifts under a tap; enabled only when there is something to apply.
+            mApply.setEnabled(false);
             mApply.setIconSpaceReserved(false);
             mApply.setOnPreferenceClickListener(preference -> { restart(); return true; });
             screen.addPreference(mApply);
@@ -200,7 +201,9 @@ public final class LocalControlActivity extends AppCompatActivity {
             mRunning.setSummary(summary);
             if (!present) mStartedWith = null;
             else if (mStartedWith == null) mStartedWith = current();
-            mApply.setVisible(present && mStartedWith != null && !mStartedWith.equals(current()));
+            boolean pending = present && mStartedWith != null && !mStartedWith.equals(current());
+            mApply.setEnabled(pending);
+            mApply.setSummary(pending ? R.string.local_control_screen_apply_summary : R.string.local_control_screen_applied);
         }
 
         private String current() { return com.termux.app.control.LocalControlOptions.encode(mConsent.scopesOrDefault()); }

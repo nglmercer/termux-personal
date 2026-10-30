@@ -270,6 +270,7 @@
     <string name="local_control_screen_stopping">Stopping…</string>
     <string name="local_control_screen_unavailable">Termux service is not available.</string>
     <string name="local_control_screen_apply">Restart to apply changes</string>
+    <string name="local_control_screen_applied">Saved permissions are in use.</string>
     <string name="local_control_screen_apply_summary">The running listener still uses the previous permissions.</string>
     <string name="local_control_screen_footer">Choices are saved. Only processes running as the Termux app can connect, and nothing here is reachable from the network.</string>
     <string name="local_control_group_sessions">Terminal sessions</string>

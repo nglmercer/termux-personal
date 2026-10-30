@@ -1,7 +1,7 @@
 """On-device managed job checks through the production control socket.
 
-Requires a debuggable install with local control running and job, process and workspace consent granted
-in the app, plus the native client at files/termux-control-adb. Run through scripts/test-control-jobs-device.sh.
+Requires local control running with job, process, file and workspace permissions. From a host, run
+scripts/test-control-jobs-device.sh (debuggable install, run-as). Inside Termux, run with --local.
 """
 import sys
 import time
@@ -28,8 +28,19 @@ def check(name, condition, detail=""):
     print("ok", name)
 
 
-serial = sys.argv[1] if len(sys.argv) > 1 else None
-with TermuxClient.connect_adb(serial=serial) as client:
+# "--local" runs inside Termux against the socket directly, for devices where run-as is unavailable;
+# otherwise the optional argument is an ADB serial.
+LOCAL = len(sys.argv) > 1 and sys.argv[1] == "--local"
+serial = None if LOCAL or len(sys.argv) < 2 else sys.argv[1]
+
+
+def connect():
+    if LOCAL:
+        return TermuxClient.connect("/data/data/com.termux/files/control-ipc/control.sock")
+    return TermuxClient.connect_adb(serial=serial)
+
+
+with connect() as client:
     methods = set(client.capabilities()["methods"])
     missing = {"job.start", "job.get", "job.output.read", "process.list", "workspace.list"} - methods
     if missing:
@@ -133,7 +144,7 @@ with TermuxClient.connect_adb(serial=serial) as client:
             except Exception as exc:
                 check("upload never overwrites without a revision", "CONFLICT" in str(exc), str(exc))
         if "file.rename" in methods:
-            with TermuxClient.connect_adb(serial=serial) as fresh:
+            with connect() as fresh:
                 writer = Files(fresh)
                 writer.mkdir("home", "e2e/dir")
                 renamed = writer.rename("home", "e2e/a.txt", "e2e/dir/a.txt")
