@@ -13,6 +13,7 @@ import com.termux.shared.shell.command.environment.ShellEnvironmentUtils;
 import com.termux.shared.shell.command.environment.ShellCommandShellEnvironment;
 import com.termux.shared.termux.TermuxBootstrap;
 import com.termux.shared.termux.TermuxConstants;
+import com.termux.shared.termux.settings.properties.TermuxPropertyConstants;
 import com.termux.shared.termux.shell.TermuxShellUtils;
 
 import java.nio.charset.Charset;
@@ -97,16 +98,44 @@ public class TermuxShellEnvironment extends AndroidShellEnvironment {
     }
 
 
-    /**
-     * Directories that tool installers commonly use, after the Termux prefix so they never shadow it. Listing a
-     * directory that does not exist yet is harmless, and lets a tool installed later work without editing PATH.
-     */
-    static final String[] USER_BIN_DIRS = {".local/bin", "bin", ".cargo/bin", ".bun/bin", ".deno/bin", "go/bin",
-        ".opencode/bin", ".npm-global/bin"};
+    /** The fixed part: the conventional per-user directories on Linux. Everything else comes from path-append. */
+    static final String[] USER_BIN_DIRS = {".local/bin", "bin"};
+    private static final int MAX_APPENDED = 32;
 
+    /**
+     * ":"-prefixed directories that follow $PREFIX/bin. Listing a directory that does not exist yet is harmless
+     * and lets a tool installed later work in new sessions without editing PATH.
+     */
     static String userBinPath() {
+        String configured = null;
+        try {
+            com.termux.shared.termux.settings.properties.TermuxAppSharedProperties properties =
+                com.termux.shared.termux.settings.properties.TermuxAppSharedProperties.getProperties();
+            if (properties != null) configured = properties.getPathAppend();
+        } catch (RuntimeException ignored) { }
+        return userBinPath(configured == null ? TermuxPropertyConstants.DEFAULT_IVALUE_PATH_APPEND : configured);
+    }
+
+    /** Expands "~/" and "$HOME/", keeps absolute entries only, drops duplicates and anything that could split PATH. */
+    static String userBinPath(String pathAppend) {
+        String home = TermuxConstants.TERMUX_HOME_DIR_PATH;
+        java.util.LinkedHashSet<String> dirs = new java.util.LinkedHashSet<>();
+        for (String dir : USER_BIN_DIRS) dirs.add(home + "/" + dir);
+        if (pathAppend != null) {
+            for (String raw : pathAppend.split(":")) {
+                String dir = raw.trim();
+                if (dir.equals("~")) dir = home;
+                else if (dir.startsWith("~/")) dir = home + dir.substring(1);
+                else if (dir.startsWith("$HOME/")) dir = home + dir.substring(5);
+                while (dir.length() > 1 && dir.endsWith("/")) dir = dir.substring(0, dir.length() - 1);
+                if (!dir.startsWith("/") || dir.indexOf('\0') >= 0 || dir.indexOf('\n') >= 0) continue;
+                if (dirs.size() >= MAX_APPENDED) break;
+                dirs.add(dir);
+            }
+        }
+        dirs.remove(TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH);
         StringBuilder path = new StringBuilder();
-        for (String dir : USER_BIN_DIRS) path.append(':').append(TermuxConstants.TERMUX_HOME_DIR_PATH).append('/').append(dir);
+        for (String dir : dirs) path.append(':').append(dir);
         return path.toString();
     }
 

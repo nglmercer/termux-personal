@@ -124,6 +124,15 @@ public final class AppShellJobAdapter {
                 @Override @NonNull public String[] setupShellCommandArguments(@NonNull String path, @Nullable String[] arguments) {
                     return ShellUtils.setupShellCommandArguments(path, arguments);
                 }
+                /** Jobs start no shell, so take PATH from what an interactive login shell would set. */
+                @Override @NonNull public HashMap<String, String> getEnvironment(@NonNull Context context, boolean isFailSafe) {
+                    HashMap<String, String> base = super.getEnvironment(context, isFailSafe);
+                    if (!isFailSafe) {
+                        String path = ShellPath.forJobs(base);
+                        if (path != null) base.put("PATH", path);
+                    }
+                    return base;
+                }
             };
             AppShell.ManagedLauncher launcher = !ownsChildIdentity() ? null : (argv, environ, directory) -> {
                 OwnedChildProcess process = OwnedChildProcess.launch(argv, environ, directory);

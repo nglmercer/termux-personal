@@ -331,6 +331,16 @@ public final class TermuxPropertyConstants {
 
 
 
+    /**
+     * Defines the key for directories appended to PATH after $PREFIX/bin, ~/.local/bin and ~/bin, separated by
+     * ":". A leading "~/" or "$HOME/" means the home directory. An empty value appends nothing.
+     */
+    public static final String KEY_PATH_APPEND =  "path-append"; // Default: "path-append"
+    /** Tool installer directories that are common enough to be on PATH without configuration. */
+    public static final String DEFAULT_IVALUE_PATH_APPEND = "~/.cargo/bin:~/.bun/bin:~/.deno/bin:~/go/bin:~/.opencode/bin:~/.npm-global/bin";
+
+
+
     /** Defines the key for extra keys */
     public static final String KEY_EXTRA_KEYS =  "extra-keys"; // Default: "extra-keys"
     //public static final String DEFAULT_IVALUE_EXTRA_KEYS = "[[ESC, TAB, CTRL, ALT, {key: '-', popup: '|'}, DOWN, UP]]"; // Single row
@@ -440,6 +450,7 @@ public final class TermuxPropertyConstants {
         KEY_EXTRA_KEYS,
         KEY_EXTRA_KEYS_STYLE,
         KEY_NIGHT_MODE,
+        KEY_PATH_APPEND,
         KEY_SOFT_KEYBOARD_TOGGLE_BEHAVIOUR,
         KEY_VOLUME_KEYS_BEHAVIOUR
     ));
