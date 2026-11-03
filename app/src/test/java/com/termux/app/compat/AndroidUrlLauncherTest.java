@@ -36,6 +36,8 @@ public class AndroidUrlLauncherTest {
         assertEquals(AndroidUrlLauncher.Status.DISPATCHED_UNCONFIRMED, AndroidUrlLauncher.open(a, "https://example.com/auth?code=secret"));
         assertEquals(Intent.ACTION_VIEW, a.dispatched.getAction());
         assertEquals("https://example.com/auth?code=secret", a.dispatched.getDataString());
+        assertEquals(AndroidUrlLauncher.Status.DISPATCHED_UNCONFIRMED, AndroidUrlLauncher.open(a, "https://例え.テスト/auth?state=secret"));
+        assertEquals("https://例え.テスト/auth?state=secret", a.dispatched.getDataString());
         assertEquals(AndroidUrlLauncher.Status.INVALID_URI, AndroidUrlLauncher.open(a, "file:///private"));
         a.failure = new ActivityNotFoundException();
         assertEquals(AndroidUrlLauncher.Status.NO_HANDLER, AndroidUrlLauncher.open(a, "https://example.com/"));

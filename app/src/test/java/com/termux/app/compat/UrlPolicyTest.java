@@ -8,7 +8,8 @@ public class UrlPolicyTest {
         assertTrue(UrlPolicy.isWebUrl("https://example.com/auth?state=abc#fragment"));
         assertTrue(UrlPolicy.isWebUrl("http://127.0.0.1:1234/callback"));
         assertTrue(UrlPolicy.isWebUrl("https://[::1]:1234/"));
-        for (String url : new String[]{"intent://example.com", "file:///tmp/a", "content://a/b", "https:///path", "https://user:pass@example.com", "https://example.com:99999", "https://example.com/\n"}) assertFalse(url, UrlPolicy.isWebUrl(url));
+        assertTrue(UrlPolicy.isWebUrl("https://例え.テスト:8443/auth?state=abc"));
+        for (String url : new String[]{"intent://example.com", "file:///tmp/a", "content://a/b", "https:///path", "https://user:pass@example.com", "https://example.com:99999", "https://example.com/\n", "https://user@例え.テスト/", "https://例え.テスト:99999/", "https://例え.テスト:abc/", "https://例え%40example.com/"}) assertFalse(url, UrlPolicy.isWebUrl(url));
     }
     @Test public void queueIsBoundedExpiresAndNeverAcceptsInvalidValues() {
         PendingUrlQueue queue = new PendingUrlQueue();
