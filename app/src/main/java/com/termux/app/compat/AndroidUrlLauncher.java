@@ -20,6 +20,7 @@ public final class AndroidUrlLauncher {
     public static void paused(Activity activity) {
         if (foreground.get() == activity) foreground.clear();
     }
+    public static Activity resumedActivity() { return foreground.get(); }
     public static boolean isResumed(Activity activity) { return foreground.get() == activity; }
     public static String takePending() { return PENDING.poll(SystemClock.elapsedRealtime()); }
 

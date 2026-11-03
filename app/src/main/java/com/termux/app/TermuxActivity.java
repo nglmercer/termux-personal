@@ -220,6 +220,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private static final int CONTEXT_MENU_JOBS = 16;
     private static final int CONTEXT_MENU_FILES = 17;
     private static final int CONTEXT_MENU_WORKSPACES = 18;
+    private static final java.util.concurrent.atomic.AtomicBoolean COMPAT_BROWSER_TEST_BUSY = new java.util.concurrent.atomic.AtomicBoolean();
+    private static final java.util.concurrent.atomic.AtomicReference<String> COMPAT_BROWSER_TEST_RESULT = new java.util.concurrent.atomic.AtomicReference<>();
     private static final java.util.concurrent.atomic.AtomicBoolean COMPAT_LOOPBACK_BUSY = new java.util.concurrent.atomic.AtomicBoolean();
     private static final java.util.concurrent.atomic.AtomicBoolean COMPAT_EXECUTABLE_BUSY = new java.util.concurrent.atomic.AtomicBoolean();
     private final java.util.concurrent.atomic.AtomicBoolean mProcessSnapshotBusy = new java.util.concurrent.atomic.AtomicBoolean();
@@ -391,6 +393,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         showPendingLocalControl();
         com.termux.app.compat.AndroidUrlLauncher.resumed(this);
         showPendingWebUrl();
+        showPendingBrowserTest();
     }
 
     @Override
@@ -430,7 +433,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                         .setPositiveButton(R.string.compat_pending_copy, (failure, button) ->
                             com.termux.shared.interact.ShareUtils.copyTextToClipboard(this, url, getString(R.string.msg_select_url_copied_to_clipboard)))
                         .setNegativeButton(android.R.string.cancel, null)
-                        .setOnDismissListener(failure -> { mPendingWebDialogShowing = false; showPendingWebUrl(); })
+                        .setOnDismissListener(failure -> { mPendingWebDialogShowing = false; showPendingWebUrl(); showPendingBrowserTest(); })
                         .show();
                 }
             })
@@ -438,7 +441,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                 com.termux.shared.interact.ShareUtils.copyTextToClipboard(this, url, getString(R.string.msg_select_url_copied_to_clipboard)))
             .setNegativeButton(android.R.string.cancel, null)
             .setOnDismissListener(dialog -> {
-                if (!showingFailure[0]) { mPendingWebDialogShowing = false; showPendingWebUrl(); }
+                if (!showingFailure[0]) { mPendingWebDialogShowing = false; showPendingWebUrl(); showPendingBrowserTest(); }
             }).show();
     }
 
@@ -1261,7 +1264,55 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                 }, "compat-loopback-probe");
                 worker.setDaemon(true);
                 worker.start();
-            }).setNegativeButton(android.R.string.cancel, null).show();
+            }).setNeutralButton(R.string.compat_auth_browser_test, (dialog, which) -> startBrowserCallbackTest())
+            .setNegativeButton(android.R.string.cancel, null).show();
+    }
+
+    private void showPendingBrowserTest() {
+        if (mPendingWebDialogShowing || !com.termux.app.compat.AndroidUrlLauncher.isResumed(this) || isFinishing()) return;
+        String result = COMPAT_BROWSER_TEST_RESULT.getAndSet(null);
+        if (result != null) new AlertDialog.Builder(this).setTitle(R.string.compat_auth_title)
+            .setMessage(result).setPositiveButton(android.R.string.ok, null).show();
+    }
+
+    private void startBrowserCallbackTest() {
+        if (!COMPAT_BROWSER_TEST_BUSY.compareAndSet(false, true)) {
+            Toast.makeText(this, R.string.compat_auth_busy, Toast.LENGTH_LONG).show();
+            return;
+        }
+        Toast.makeText(this, R.string.compat_auth_browser_started, Toast.LENGTH_LONG).show();
+        android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
+        Context application = getApplicationContext();
+        Thread worker = new Thread(() -> {
+            java.util.concurrent.atomic.AtomicBoolean active = new java.util.concurrent.atomic.AtomicBoolean(true);
+            com.termux.app.compat.auth.BrowserCallbackProbe.Status result = com.termux.app.compat.auth.BrowserCallbackProbe.Status.FAILED;
+            java.util.concurrent.atomic.AtomicReference<com.termux.app.compat.AndroidUrlLauncher.Status> launch = new java.util.concurrent.atomic.AtomicReference<>();
+            try (com.termux.app.compat.auth.BrowserCallbackProbe probe = new com.termux.app.compat.auth.BrowserCallbackProbe()) {
+                handler.post(() -> {
+                    if (!active.get()) return;
+                    android.app.Activity current = com.termux.app.compat.AndroidUrlLauncher.resumedActivity();
+                    com.termux.app.compat.AndroidUrlLauncher.Status status = current == null ?
+                        com.termux.app.compat.AndroidUrlLauncher.Status.UNAVAILABLE : com.termux.app.compat.AndroidUrlLauncher.open(current, probe.url());
+                    launch.set(status);
+                    if (status != com.termux.app.compat.AndroidUrlLauncher.Status.DISPATCHED_UNCONFIRMED)
+                        try { probe.close(); } catch (java.io.IOException ignored) { }
+                });
+                result = probe.await();
+            } catch (java.io.IOException | SecurityException ignored) { }
+            finally { active.set(false); }
+            final com.termux.app.compat.auth.BrowserCallbackProbe.Status outcome = result;
+            handler.post(() -> {
+                com.termux.app.compat.AndroidUrlLauncher.Status launchStatus = launch.get();
+                String message = application.getString(R.string.compat_auth_browser_result,
+                    launchStatus == null ? "UNAVAILABLE" : launchStatus.name(), outcome.name());
+                COMPAT_BROWSER_TEST_RESULT.set(message);
+                COMPAT_BROWSER_TEST_BUSY.set(false);
+                android.app.Activity current = com.termux.app.compat.AndroidUrlLauncher.resumedActivity();
+                if (current instanceof TermuxActivity) ((TermuxActivity) current).showPendingBrowserTest();
+            });
+        }, "compat-browser-callback-probe");
+        worker.setDaemon(true);
+        worker.start();
     }
 
     private void showExecutableInspector() {
