@@ -483,9 +483,10 @@
     <string name="compat_auth_description">Test temporary IPv4 and IPv6 localhost listeners without opening a browser or accessing an authentication session. If a CLI supports BROWSER, you can explicitly run it with BROWSER=termux-open. Existing BROWSER settings are not changed. External browser callbacks and the CLI’s own listener require separate testing.</string>
     <string name="compat_auth_test">Test localhost</string>
     <string name="compat_auth_busy">A localhost test is already running.</string>
-    <string name="compat_auth_browser_test">Test IPv4 browser callback</string>
+    <string name="compat_auth_browser_test">Test browser callback</string>
+    <string name="compat_auth_browser_family">Choose loopback address</string>
     <string name="compat_auth_browser_started">Opening a temporary localhost test in your browser. Return to Termux for the result.</string>
-    <string name="compat_auth_browser_result">Browser launch: %1$s\nTemporary IPv4 localhost request: %2$s\n\nA received request tests only the temporary Termux listener. It does not verify a CLI listener, OAuth redirect, token exchange, or that the browser page was visible. No authentication session was used.</string>
+    <string name="compat_auth_browser_result">Browser launch: %1$s\nTemporary %3$s localhost request: %2$s\n\nA received request tests only the temporary Termux listener. It does not verify a CLI listener, OAuth redirect, token exchange, or that the browser page was visible. No authentication session was used.</string>
     <string name="compat_url_shim_description">Optional URL wrapper: %1$s. For a single command, set BROWSER to "$TERMUX_APP__FILES_DIR/compat-v1/termux-open-url". To opt this shell into the wrapper for the termux-open-url command, prepend "$TERMUX_APP__FILES_DIR/compat-v1" to PATH. Existing BROWSER, PATH and package files are not changed automatically.</string>
     <string name="compat_doctor_description">Shell diagnostics: %1$s. Run "$TERMUX_APP__FILES_DIR/compat-v1/termux-compat" doctor in the shell to test that process environment. It contacts example.com using curl; use --json for sanitized output.</string>
     <string name="compat_overview_title">Compatibility overview</string>

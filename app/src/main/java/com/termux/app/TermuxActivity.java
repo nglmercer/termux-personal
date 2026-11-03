@@ -1286,7 +1286,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                 }, "compat-loopback-probe");
                 worker.setDaemon(true);
                 worker.start();
-            }).setNeutralButton(R.string.compat_auth_browser_test, (dialog, which) -> startBrowserCallbackTest())
+            }).setNeutralButton(R.string.compat_auth_browser_test, (dialog, which) -> chooseBrowserCallbackFamily())
             .setNegativeButton(android.R.string.cancel, null).show();
     }
 
@@ -1297,7 +1297,16 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             .setMessage(result).setPositiveButton(android.R.string.ok, null).show();
     }
 
-    private void startBrowserCallbackTest() {
+    private void chooseBrowserCallbackFamily() {
+        CharSequence[] families = {"IPv4 (127.0.0.1)", "IPv6 (::1)"};
+        new AlertDialog.Builder(this).setTitle(R.string.compat_auth_browser_family)
+            .setItems(families, (dialog, which) -> startBrowserCallbackTest(which == 0 ?
+                com.termux.app.compat.auth.BrowserCallbackProbe.Family.IPV4 :
+                com.termux.app.compat.auth.BrowserCallbackProbe.Family.IPV6))
+            .setNegativeButton(android.R.string.cancel, null).show();
+    }
+
+    private void startBrowserCallbackTest(com.termux.app.compat.auth.BrowserCallbackProbe.Family family) {
         if (!COMPAT_BROWSER_TEST_BUSY.compareAndSet(false, true)) {
             Toast.makeText(this, R.string.compat_auth_busy, Toast.LENGTH_LONG).show();
             return;
@@ -1309,7 +1318,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             java.util.concurrent.atomic.AtomicBoolean active = new java.util.concurrent.atomic.AtomicBoolean(true);
             com.termux.app.compat.auth.BrowserCallbackProbe.Status result = com.termux.app.compat.auth.BrowserCallbackProbe.Status.FAILED;
             java.util.concurrent.atomic.AtomicReference<com.termux.app.compat.AndroidUrlLauncher.Status> launch = new java.util.concurrent.atomic.AtomicReference<>();
-            try (com.termux.app.compat.auth.BrowserCallbackProbe probe = new com.termux.app.compat.auth.BrowserCallbackProbe()) {
+            try (com.termux.app.compat.auth.BrowserCallbackProbe probe = new com.termux.app.compat.auth.BrowserCallbackProbe(family)) {
                 handler.post(() -> {
                     if (!active.get()) return;
                     android.app.Activity current = com.termux.app.compat.AndroidUrlLauncher.resumedActivity();
@@ -1326,7 +1335,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             handler.post(() -> {
                 com.termux.app.compat.AndroidUrlLauncher.Status launchStatus = launch.get();
                 String message = application.getString(R.string.compat_auth_browser_result,
-                    launchStatus == null ? "UNAVAILABLE" : launchStatus.name(), outcome.name());
+                    launchStatus == null ? "UNAVAILABLE" : launchStatus.name(), outcome.name(),
+                    family == com.termux.app.compat.auth.BrowserCallbackProbe.Family.IPV4 ? "IPv4" : "IPv6");
                 COMPAT_BROWSER_TEST_RESULT.set(message);
                 COMPAT_BROWSER_TEST_BUSY.set(false);
                 android.app.Activity current = com.termux.app.compat.AndroidUrlLauncher.resumedActivity();

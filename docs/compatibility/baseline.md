@@ -37,7 +37,7 @@ Deferred requests stay in the queue while their dialog is displayed, so a recrea
 
 Host-side receiver tests check that a readable file produces a `content://` view or send intent with a read grant and no write grant, including the inner intent of a chooser, and that a missing file is not dispatched. These tests inspect constructed intents only; they do not verify an external app's provider access, Android grant enforcement, or actual file sharing.
 
-An optional browser callback test now opens a temporary IPv4 loopback URL with a random one-time path and waits up to 30 seconds. It retains only the dispatch and test outcome, reads no OAuth session data, and bounds request count and header consumption. A received request establishes only that the temporary listener received the matching request; it does not establish browser visibility, a CLI callback, or an OAuth exchange. Browser and actual-device behavior remain untested. The separate loopback probe covers in-process IPv4 and IPv6 sockets; the browser probe currently uses IPv4 only.
+An optional browser callback test opens a temporary IPv4 or IPv6 loopback URL with a random one-time path and waits up to 30 seconds. The user chooses one family for each test; IPv6 binding can fail if the environment does not support it. The test retains only the dispatch and outcome, reads no OAuth session data, and bounds request count and header consumption. A received request establishes only that the temporary listener received the matching request; it does not establish browser visibility, a CLI callback, or an OAuth exchange. Browser and actual-device behavior remain untested. The separate loopback probe covers in-process IPv4 and IPv6 sockets.
 
 An instrumentation test can explicitly exercise an external `ACTION_VIEW` handler against the temporary listener. It is skipped unless opted in, because it opens another app and may require the browser's first-run setup. With the matching debug app and instrumentation APK installed on a selected test device, run:
 
@@ -47,7 +47,7 @@ adb -s DEVICE_SERIAL shell am instrument -w \
   -e compatExternalBrowser true com.termux.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
-The test defaults to an IPv4 listener. Add `-e compatBrowserAddress ipv6` before the runner name to test an IPv6 `::1` listener instead; run the two families independently. IPv6 binding can fail on environments without IPv6 loopback. The test reports whether dispatch was accepted and the temporary listener received its random path; it does not identify which app handled the intent, prove browser visibility, or verify a CLI's authentication exchange. Record the selected default handler and any first-run interactions separately. The test APK builds, but neither external-handler test has yet run on Android. The app's interactive browser test still uses IPv4 only.
+The test defaults to an IPv4 listener. Add `-e compatBrowserAddress ipv6` before the runner name to test an IPv6 `::1` listener instead; run the two families independently. IPv6 binding can fail on environments without IPv6 loopback. The test reports whether dispatch was accepted and the temporary listener received its random path; it does not identify which app handled the intent, prove browser visibility, or verify a CLI's authentication exchange. Record the selected default handler and any first-run interactions separately. The test APK builds, but neither external-handler test has yet run on Android.
 
 For a CLI that honors `BROWSER`, select the installed wrapper explicitly for that invocation:
 
