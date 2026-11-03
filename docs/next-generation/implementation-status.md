@@ -30,3 +30,5 @@ Kernel 4.19 lacks `clone3`, pidfd signalling and `close_range`, so managed jobs 
 ## Android compatibility work in progress
 
 See [`../compatibility/baseline.md`](../compatibility/baseline.md) and [`../compatibility/device-matrix.md`](../compatibility/device-matrix.md) for the separate compatibility audit. The new URL dispatcher, opt-in Android network probe and read-only executable inspector have host tests; they are not a cross-device compatibility release claim. In particular, the installed `termux-open-url` may bypass the dispatcher, CLI DNS/TLS and localhost callbacks are not verified, and the requested hardware matrix is not complete.
+
+The compatibility work also provides an opt-in, app-owned `termux-compat` CLI. Its DNS and HTTPS checks run only when requested and report sanitized outcomes for that shell's Termux tools; host tests include a local TLS server. This does not validate an Android device's CLI network, browser callbacks or the required hardware matrix.

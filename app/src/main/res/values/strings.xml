@@ -487,4 +487,5 @@
     <string name="compat_auth_browser_started">Opening a temporary localhost test in your browser. Return to Termux for the result.</string>
     <string name="compat_auth_browser_result">Browser launch: %1$s\nTemporary IPv4 localhost request: %2$s\n\nA received request tests only the temporary Termux listener. It does not verify a CLI listener, OAuth redirect, token exchange, or that the browser page was visible. No authentication session was used.</string>
     <string name="compat_url_shim_description">Optional URL wrapper: %1$s. For a single command, set BROWSER to "$TERMUX_APP__FILES_DIR/compat-v1/termux-open-url". To opt this shell into the wrapper for the termux-open-url command, prepend "$TERMUX_APP__FILES_DIR/compat-v1" to PATH. Existing BROWSER, PATH and package files are not changed automatically.</string>
+    <string name="compat_doctor_description">Shell diagnostics: %1$s. Run "$TERMUX_APP__FILES_DIR/compat-v1/termux-compat" doctor in the shell to test that process environment. It contacts example.com using curl; use --json for sanitized output.</string>
 </resources>

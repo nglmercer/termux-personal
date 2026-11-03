@@ -1,0 +1,87 @@
+#!/system/bin/sh
+# Explicit, read-only diagnostics. No daemon and no configuration changes.
+prefix=${PREFIX:-/data/data/com.termux/files/usr}
+curl_bin=$prefix/bin/curl
+timeout_bin=$prefix/bin/timeout
+getent_bin=$prefix/bin/getent
+ca_bundle=$prefix/etc/tls/cert.pem
+
+# Values are fixed labels or bounded HTTP status digits; no command output or environment values are printed.
+inspect_ca() {
+    if [ -f "$ca_bundle" ] && [ -r "$ca_bundle" ]; then ca=READABLE; else ca=ABSENT_OR_UNREADABLE; fi
+}
+probe_dns() {
+    dns=UNAVAILABLE
+    if [ -x "$getent_bin" ] && [ -x "$timeout_bin" ]; then
+        "$timeout_bin" -k 2 5 "$getent_bin" ahosts example.com >/dev/null 2>&1
+        case $? in
+            0) dns=RESOLVED ;;
+            2) dns=LOOKUP_FAILED ;;
+            124|137) dns=TIMEOUT_OR_KILLED ;;
+            *) dns=UNKNOWN ;;
+        esac
+    fi
+}
+probe_https() {
+    https=UNAVAILABLE
+    http=null
+    [ -x "$curl_bin" ] && [ -x "$timeout_bin" ] || return
+    # -q must be first: ~/.curlrc can enable insecure TLS, dump credentials, or change output.
+    # Inherited proxy/CA environment is retained. Never print curl stderr, headers, or content.
+    code=$(unset SSLKEYLOGFILE; "$timeout_bin" -k 2 12 "$curl_bin" -q --no-insecure --no-proxy-insecure \
+        --silent --head --output /dev/null --write-out '%{http_code}' \
+        --connect-timeout 3 --max-time 8 https://example.com/ 2>/dev/null)
+    exit_code=$?
+    case $code in [1-5][0-9][0-9]) http=$code ;; esac
+    case $exit_code in
+        0) if [ "$http" != null ]; then https=HTTP_RESPONSE; else https=UNKNOWN; fi ;;
+        5|97) https=PROXY_FAILURE ;;
+        6) https=DNS_FAILURE ;;
+        7) https=CONNECT_FAILURE ;;
+        28|124|137) https=TIMEOUT_OR_KILLED ;;
+        35) https=TLS_HANDSHAKE_FAILURE ;;
+        51|60) https=TLS_CERTIFICATE_FAILURE ;;
+        58) https=CLIENT_CERTIFICATE_FAILURE ;;
+        77) https=CA_BUNDLE_ERROR ;;
+        *) https=UNKNOWN ;;
+    esac
+}
+show_network() {
+    inspect_ca
+    probe_dns
+    probe_https
+    if [ "$1" = json ]; then
+        printf '{"dns":"%s","https":"%s","httpStatus":%s,"caBundle":"%s"}\n' "$dns" "$https" "$http" "$ca"
+    else
+        printf 'Termux getent DNS (example.com): %s\nTermux curl HTTPS: %s\nHTTP status: %s\nTermux CA bundle: %s\n' "$dns" "$https" "$http" "$ca"
+        printf '%s\n' 'Checks use this process environment; curl configuration files are intentionally ignored and TLS verification is enabled.'
+        printf '%s\n' 'Android DNS/TLS, other tools, IPv4/IPv6 reachability, localhost callbacks, and response contents: not tested.'
+        printf '%s\n' 'An HTTP response, including 401 or 403, does not indicate authorization success.'
+    fi
+}
+case "${1:-}" in
+    doctor)
+        case "${2:-}" in
+            '') [ "$#" -eq 1 ] || exit 2; show_network text ;;
+            --json) [ "$#" -eq 2 ] || exit 2; show_network json ;;
+            *) exit 2 ;;
+        esac ;;
+    network)
+        [ "$#" -eq 1 ] || exit 2
+        show_network text ;;
+    browser)
+        [ "$#" -eq 1 ] || exit 2
+        if [ "${BROWSER+x}" = x ]; then browser=SET; else browser=UNSET; fi
+        if [ -x "$prefix/bin/termux-open" ]; then opener=PRESENT; else opener=UNAVAILABLE; fi
+        printf 'BROWSER: %s (value redacted)\ntermux-open executable: %s\nBrowser launch and callback: not tested.\n' "$browser" "$opener" ;;
+    runtime)
+        [ "$#" -eq 1 ] || exit 2
+        machine=$(uname -m 2>/dev/null)
+        case "$machine" in aarch64|armv5l|armv6l|armv7l|armv8l|x86_64|i386|i486|i586|i686) ;; *) machine=UNKNOWN ;; esac
+        printf 'Kernel-reported machine: %s\n' "$machine"
+        printf '%s\n' 'Executable format, interpreter, libraries, and kernel support: not tested by this command.'
+        printf '%s\n' 'Use Compatibility diagnostics in the Termux app to inspect a specific executable.' ;;
+    *)
+        printf '%s\n' 'Usage: termux-compat doctor [--json] | network | browser | runtime' >&2
+        exit 2 ;;
+esac

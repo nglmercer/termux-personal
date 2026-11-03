@@ -23,13 +23,16 @@ public final class WebCommandShim {
     private static final int MAX_BYTES = 8192;
     private WebCommandShim() { }
 
-    public static synchronized Status ensure(Context context) {
-        try (InputStream source = context.getAssets().open(DIRECTORY + "/" + NAME)) {
-            return install(context.getFilesDir(), readBounded(source));
+    public static synchronized Status ensure(Context context) { return ensureAsset(context, NAME); }
+    public static synchronized Status ensureDoctor(Context context) { return ensureAsset(context, "termux-compat"); }
+    private static Status ensureAsset(Context context, String name) {
+        try (InputStream source = context.getAssets().open(DIRECTORY + "/" + name)) {
+            return install(context.getFilesDir(), name, readBounded(source));
         } catch (IOException | RuntimeException e) { return Status.UNAVAILABLE; }
     }
-    static Status install(File filesDir, byte[] expected) {
-        if (filesDir == null || expected == null || expected.length == 0 || expected.length > MAX_BYTES) return Status.UNAVAILABLE;
+    static Status install(File filesDir, byte[] expected) { return install(filesDir, NAME, expected); }
+    static Status install(File filesDir, String name, byte[] expected) {
+        if (filesDir == null || (!NAME.equals(name) && !"termux-compat".equals(name)) || expected == null || expected.length == 0 || expected.length > MAX_BYTES) return Status.UNAVAILABLE;
         File directory = new File(filesDir, DIRECTORY);
         try {
             try { Os.mkdir(directory.getPath(), 0700); }
@@ -44,7 +47,7 @@ public final class WebCommandShim {
             try (ParcelFileDescriptor handle = pinned) {
                 StructStat directoryInfo = Os.fstat(handle.getFileDescriptor());
                 if (!OsConstants.S_ISDIR(directoryInfo.st_mode) || directoryInfo.st_uid != android.os.Process.myUid()) return Status.CONFLICT;
-                File file = new File("/proc/self/fd/" + handle.getFd(), NAME);
+                File file = new File("/proc/self/fd/" + handle.getFd(), name);
                 // O_EXCL closes the race between checking the name and creating it.
                 try {
                     Os.lstat(file.getPath());

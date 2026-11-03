@@ -42,3 +42,15 @@ export PATH="$TERMUX_APP__FILES_DIR/compat-v1:$PATH"
 This alters command resolution for that shell and its children, and does not intercept absolute paths to the package-owned command. Undo by restoring the prior `PATH` or starting a fresh shell. The wrapper does not automatically override existing user settings. A conflicting existing app-owned path is left untouched and reported as `CONFLICT` in Compatibility diagnostics. If a failed or interrupted installation leaves an incomplete file, it must be inspected before removal or replacement. Local host script tests exercise argument routing, but Android shell execution, managed jobs, user-profile behavior, upgrade and rollback are not verified.
 
 The bootstrap audit also found that its `xdg-open` link targets `termux-open`. The wrapper's installer pins its app-owned directory and uses exclusive, no-follow creation; a conflict is not overwritten. Robolectric's `Os` shadow does not implement the exclusive/no-follow flags, so host mocks cannot validate those flags. Instrumented tests for existing files and symlinks are included but have not run on Android.
+
+The optional `termux-compat` shell diagnostic is installed beside the URL wrapper without changing `PATH` or package-owned files. Run it directly, or add its directory to `PATH` explicitly:
+
+```sh
+"$TERMUX_APP__FILES_DIR/compat-v1/termux-compat" doctor
+"$TERMUX_APP__FILES_DIR/compat-v1/termux-compat" doctor --json
+"$TERMUX_APP__FILES_DIR/compat-v1/termux-compat" network
+"$TERMUX_APP__FILES_DIR/compat-v1/termux-compat" browser
+"$TERMUX_APP__FILES_DIR/compat-v1/termux-compat" runtime
+```
+
+`doctor` and `network` explicitly contact example.com. They run the installed Termux `getent` when present and `curl` with bounded timeouts; absent tools are reported unavailable. The HTTPS check ignores curl config files and disables TLS key logging for its subprocess, but retains proxy and CA environment overrides. It leaves certificate verification enabled, suppresses response data and command errors, and emits only fixed classifications and a numeric HTTP status. `doctor --json` is sanitized. These checks describe that process environment and those specific tools, not arbitrary executables or Android networking. The runtime command reports only the kernel machine name and points to the app's executable inspector. Actual Termux/Android execution and device behavior remain untested.
