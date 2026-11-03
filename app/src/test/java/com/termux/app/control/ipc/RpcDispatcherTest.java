@@ -155,6 +155,26 @@ public class RpcDispatcherTest extends TestCase {
         assertEquals(-32602, invalid.getAsJsonObject("error").get("code").getAsInt());
     }
 
+    public void testOptionalCompatibilityDiscoveryDoesNotGrantMethodsOrClaimUntestedResults() throws Exception {
+        com.termux.app.compat.profile.CompatibilityProfile profile = new com.termux.app.compat.profile.CompatibilityProfile(
+            36, 28, 10, "Example", "Device", "16", "6.1", new String[]{"arm64-v8a"});
+        RpcDispatcher withProfile = new RpcDispatcher(new ControlCore(backend), null,
+            new DomainServices(null, null, null, null, null, profile));
+        RpcRequestParser.Request helloRequest = parser.parse("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"system.hello\",\"params\":{\"version\":1}}".getBytes(StandardCharsets.UTF_8));
+        withProfile.dispatch(helloRequest, Collections.emptySet());
+        RpcRequestParser.Request describeRequest = parser.parse("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"system.describe\",\"params\":{}}".getBytes(StandardCharsets.UTF_8));
+        JsonObject description = object(withProfile.dispatch(describeRequest, Collections.emptySet())).getAsJsonObject("result");
+        assertEquals(1, description.get("protocolVersion").getAsInt());
+        assertEquals("1.1", description.get("schemaRevision").getAsString());
+        JsonObject compatibility = description.getAsJsonObject("compatibility");
+        assertEquals(10, compatibility.get("androidUserId").getAsInt());
+        assertEquals("UNKNOWN", compatibility.getAsJsonObject("capabilities").get("nativeDns").getAsString());
+        assertEquals("USER_ACTION_REQUIRED", compatibility.getAsJsonObject("capabilities").get("backgroundReceiverRequests").getAsString());
+        for (com.google.gson.JsonElement entry : description.getAsJsonArray("methods"))
+            assertFalse(entry.getAsJsonObject().get("name").getAsString().startsWith("android."));
+        assertFalse(description.toString().contains("token"));
+    }
+
     public void testTransportTimeoutPreservesUnknownOutcomeAndSuppressesNotifications() throws Exception {
         RpcRequestParser.Request request = parser.parse(
             "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"session.close\"}".getBytes(StandardCharsets.UTF_8));

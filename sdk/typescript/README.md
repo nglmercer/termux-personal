@@ -21,3 +21,5 @@ For a debuggable device, use `await TermuxClient.fromTransport(AdbTransport.conn
 Install development dependencies with `npm ci` in this directory. From the repository root, after compiling debug Java classes, run `GSON_JAR=... bash scripts/test-control-typescript-sdk.sh`. Tests currently use Node's native TypeScript support and require a compatible Node runtime.
 
 The socket timeout also applies while the connection is idle; an expired connection must be replaced with a new client. The SDK does not reconnect or replay requests automatically.
+
+`describe()` may return an optional `compatibility` object with passive, bounded device metadata and capability states. Treat an absent field or `UNKNOWN` as unevaluated; discovery does not run network or browser tests and does not grant additional permissions.

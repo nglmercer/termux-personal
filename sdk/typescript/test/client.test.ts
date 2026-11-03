@@ -41,6 +41,17 @@ test("optional describe falls back to capabilities", async () => {
   client.close();
 });
 
+test("describe preserves optional compatibility data", async () => {
+  const compatibility = { androidApi: 36, capabilities: { nativeDns: "UNKNOWN" } };
+  const peer = new MockTransport((request, transport) => transport.reply(request, {
+    protocolVersion: 1, schemaRevision: "1.1", methods: [], limits: {}, compatibility,
+  }));
+  const client = await TermuxClient.fromTransport(peer);
+  const description = await client.describe();
+  assert.deepEqual(description.compatibility, compatibility);
+  client.close();
+});
+
 test("binary request and response use separate frames", async () => {
   const peer = new MockTransport((request, transport) => {
     if (request.method === "session.write") { transport.awaitingBinary = true; transport.reply(request, { ok: true }); }

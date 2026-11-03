@@ -61,7 +61,10 @@ public final class LocalControlServer implements AutoCloseable {
         if (mState.get() != NEW) throw new IllegalStateException("Domains must be configured before start");
         // A client-facing file service must not be redirectable by a concurrent same-UID directory swap.
         if (files != null && !files.raceSafe()) throw new IllegalArgumentException("File service is not race-safe");
-        mServices = new DomainServices(jobs, jobAuthority, processes, files, workspaces);
+        com.termux.app.compat.profile.CompatibilityProfile profile = null;
+        try { profile = com.termux.app.compat.profile.CompatibilityProbe.snapshot(mContext); }
+        catch (RuntimeException ignored) { /* Discovery is optional and must not prevent control startup. */ }
+        mServices = new DomainServices(jobs, jobAuthority, processes, files, workspaces, profile);
     }
 
     /** Scopes must come from an explicit trusted local configuration, not a client request. */

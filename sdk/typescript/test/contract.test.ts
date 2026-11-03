@@ -57,3 +57,17 @@ test("method schemas reject traversal of the contract boundary", () => {
   assert.equal(valid("file.list", { rootId: "home", path: "" }), true);
   assert.equal(valid("file.stat", { rootId: "home", path: "dir/notes.txt" }), true);
 });
+
+test("compatibility discovery is optional and validates reported capability states", () => {
+  const ajv = new Ajv2020({ strict: false });
+  const schema = load("schemas/method-results.json"); ajv.addSchema(schema);
+  const fixture = load("fixtures/methods.json").find((item: { method: string }) => item.method === "system.describe").result;
+  const validate = ajv.getSchema(`${schema.$id}#/$defs/system.describe`)!;
+  assert.equal(validate(fixture), true);
+  const legacy = structuredClone(fixture); delete legacy.compatibility;
+  assert.equal(validate(legacy), true);
+  const invalid = structuredClone(fixture); invalid.compatibility.capabilities.nativeDns = "CERTAINLY_WORKS";
+  assert.equal(validate(invalid), false);
+  const oversized = structuredClone(fixture); oversized.compatibility.model = "x".repeat(65);
+  assert.equal(validate(oversized), false);
+});

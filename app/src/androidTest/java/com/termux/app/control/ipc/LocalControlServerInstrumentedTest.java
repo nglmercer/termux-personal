@@ -42,6 +42,7 @@ public class LocalControlServerInstrumentedTest {
             EnumSet.of(ControlCore.Scope.SESSIONS_READ), null, null);
         LocalSocket client = new LocalSocket();
         try {
+            server.configureDomains(null, null, null, null, null);
             server.start();
             File socket = new File(root, "control-ipc/control.sock");
             assertEquals(0600, Os.lstat(socket.getAbsolutePath()).st_mode & 0777);
@@ -56,6 +57,13 @@ public class LocalControlServerInstrumentedTest {
             String capabilities = new String(codec.read(client.getInputStream()), StandardCharsets.UTF_8);
             assertTrue(capabilities.contains("session.list"));
             assertFalse(capabilities.contains("session.write"));
+            codec.write(client.getOutputStream(), "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"system.describe\"}".getBytes(StandardCharsets.UTF_8));
+            com.google.gson.JsonObject description = com.google.gson.JsonParser.parseString(
+                new String(codec.read(client.getInputStream()), StandardCharsets.UTF_8)).getAsJsonObject().getAsJsonObject("result");
+            com.google.gson.JsonObject profile = description.getAsJsonObject("compatibility");
+            assertEquals(android.os.Build.VERSION.SDK_INT, profile.get("androidApi").getAsInt());
+            assertEquals("UNKNOWN", profile.getAsJsonObject("capabilities").get("nativeDns").getAsString());
+            assertEquals("USER_ACTION_REQUIRED", profile.getAsJsonObject("capabilities").get("backgroundReceiverRequests").getAsString());
             codec.write(client.getOutputStream(), "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"session.rename\",\"params\":{\"id\":\"s1\",\"name\":\"x\"}}".getBytes(StandardCharsets.UTF_8));
             assertTrue(new String(codec.read(client.getInputStream()), StandardCharsets.UTF_8).contains("DENIED"));
             server.requestStop();

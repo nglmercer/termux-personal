@@ -11,9 +11,11 @@
       "type": "object", "properties": {
         "protocolVersion": {"const": 1}, "schemaRevision": {"type": "string"},
         "methods": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "scope": {"type": ["string", "null"]}, "scopes": {"type": "array", "items": {"type": "string"}}, "mutates": {"type": "boolean"}, "binary": {"type": "boolean"}, "binaryDirection": {"enum": ["none", "request", "response"]}, "available": {"const": true}}, "required": ["name", "scope", "scopes", "mutates", "binary", "binaryDirection", "available"], "additionalProperties": true}},
-        "limits": {"type": "object"}
+        "limits": {"type": "object"},
+        "compatibility": {"$ref": "#/$defs/compatibility"}
       }, "required": ["protocolVersion", "schemaRevision", "methods", "limits"], "additionalProperties": true
     },
+    "compatibility": {"type":"object","properties":{"androidApi":{"type":"integer","minimum":0},"targetSdk":{"type":"integer","minimum":0},"androidUserId":{"type":["integer","null"],"minimum":0},"manufacturer":{"type":"string","maxLength":64},"model":{"type":"string","maxLength":64},"androidRelease":{"type":"string","maxLength":64},"kernelRelease":{"type":"string","maxLength":64},"abis":{"type":"array","maxItems":8,"uniqueItems":true,"items":{"type":"string","maxLength":64}},"capabilities":{"type":"object","properties":{"webLaunch":{"enum":["UNKNOWN","UNTESTED","AVAILABLE","UNAVAILABLE"]},"backgroundReceiverRequests":{"enum":["USER_ACTION_REQUIRED","UNKNOWN"]},"nativeDns":{"enum":["UNKNOWN","UNTESTED","AVAILABLE","UNAVAILABLE"]},"tls":{"enum":["UNKNOWN","UNTESTED","AVAILABLE","UNAVAILABLE"]},"localhostCallback":{"enum":["UNKNOWN","UNTESTED","AVAILABLE","UNAVAILABLE"]},"nativeExecutable":{"enum":["UNKNOWN","UNTESTED","AVAILABLE","UNAVAILABLE"]},"notifications":{"enum":["UNKNOWN","UNTESTED","AVAILABLE","UNAVAILABLE"]}},"required":["webLaunch","backgroundReceiverRequests","nativeDns","tls","localhostCallback","nativeExecutable","notifications"],"additionalProperties":true}},"required":["androidApi","targetSdk","androidUserId","manufacturer","model","androidRelease","kernelRelease","abis","capabilities"],"additionalProperties":true},
     "session.list": {"type": "object", "properties": {"sessions": {"type": "array", "maxItems": 128, "items": {"$ref": "#/$defs/session"}}}, "required": ["sessions"], "additionalProperties": false},
     "session.create": {"$ref": "#/$defs/session"},
     "session.write": {"$ref": "#/$defs/ok"},

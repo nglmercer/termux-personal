@@ -1233,12 +1233,22 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     }
 
     private void showCompatibilityMenu() {
-        CharSequence[] actions = {getString(R.string.compat_network_title), getString(R.string.compat_runtime_title), getString(R.string.compat_auth_title)};
+        CharSequence[] actions = {getString(R.string.compat_overview_title), getString(R.string.compat_network_title), getString(R.string.compat_runtime_title), getString(R.string.compat_auth_title)};
         new AlertDialog.Builder(this).setTitle(R.string.compat_title).setItems(actions, (dialog, which) -> {
-            if (which == 0) showCompatibilityNetwork();
-            else if (which == 1) showExecutableInspector();
+            if (which == 0) showCompatibilityOverview();
+            else if (which == 1) showCompatibilityNetwork();
+            else if (which == 2) showExecutableInspector();
             else showCompatibilityAuthentication();
         }).setNegativeButton(android.R.string.cancel, null).show();
+    }
+
+    private void showCompatibilityOverview() {
+        String report = com.termux.app.compat.profile.CompatibilityProbe.snapshot(this).describe();
+        new AlertDialog.Builder(this).setTitle(R.string.compat_overview_title).setMessage(report)
+            .setPositiveButton(android.R.string.ok, null)
+            .setNeutralButton(R.string.compat_pending_copy, (dialog, which) ->
+                com.termux.shared.interact.ShareUtils.copyTextToClipboard(this, report, getString(R.string.msg_select_url_copied_to_clipboard)))
+            .show();
     }
 
     private void showCompatibilityAuthentication() {

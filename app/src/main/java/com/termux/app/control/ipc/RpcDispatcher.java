@@ -132,6 +132,7 @@ public final class RpcDispatcher {
                 Map<String, Object> result = new LinkedHashMap<>();
                 result.put("protocolVersion", ControlCore.PROTOCOL_VERSION); result.put("schemaRevision", "1.1");
                 result.put("methods", descriptions); result.put("limits", limits);
+                if (mServices.compatibility != null) result.put("compatibility", mServices.compatibility.toMap());
                 return result;
             }
             case "session.list":

@@ -19,11 +19,18 @@ final class DomainServices {
     final ProcessService processes;
     final FileService files;
     final WorkspaceRepository workspaces;
+    final com.termux.app.compat.profile.CompatibilityProfile compatibility;
 
     DomainServices(JobCoordinator jobs, JobAuthority jobAuthority, ProcessService processes, FileService files,
                    WorkspaceRepository workspaces) {
+        this(jobs, jobAuthority, processes, files, workspaces, null);
+    }
+
+    DomainServices(JobCoordinator jobs, JobAuthority jobAuthority, ProcessService processes, FileService files,
+                   WorkspaceRepository workspaces, com.termux.app.compat.profile.CompatibilityProfile compatibility) {
         if ((jobs == null) != (jobAuthority == null)) throw new IllegalArgumentException("job coordinator and authority required together");
         this.jobs = jobs; this.jobAuthority = jobAuthority; this.processes = processes; this.files = files; this.workspaces = workspaces;
+        this.compatibility = compatibility;
     }
 
     /** Feature names that gate method families: "jobs", "processes", "files" and "workspaces". */

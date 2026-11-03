@@ -17,3 +17,5 @@ Session helpers check advertised capabilities on each operation and raise `Unava
 `TermuxClient.connect_adb(serial="...")` uses the native bridge through `adb shell -T` and `run-as`; it requires an authorized device, a debuggable Termux install, enabled local control and a compatible bridge already installed in app-private storage. It does not enable any permission.
 
 From the repository root, run `GSON_JAR=... bash scripts/test-control-python-sdk.sh` after compiling debug Java classes. This runs socket-pair tests and a host Java protocol interoperability test; Android socket permissions are tested separately.
+
+`describe()` may include a `compatibility` dictionary with passive, bounded device metadata and capability states. An absent field or `UNKNOWN` means unevaluated; discovery does not run network or browser tests or grant additional permissions.
