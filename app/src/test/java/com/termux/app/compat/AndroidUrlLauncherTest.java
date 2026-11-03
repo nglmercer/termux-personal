@@ -1,0 +1,55 @@
+package com.termux.app.compat;
+
+import android.app.Activity;
+import android.content.ActivityNotFoundException;
+import android.content.Intent;
+import org.junit.After;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.Robolectric;
+import org.robolectric.RobolectricTestRunner;
+import static org.junit.Assert.*;
+
+@RunWith(RobolectricTestRunner.class)
+public class AndroidUrlLauncherTest {
+    public static class TestActivity extends Activity {
+        Intent dispatched;
+        RuntimeException failure;
+        @Override public void startActivity(Intent intent) {
+            if (failure != null) throw failure;
+            dispatched = intent;
+        }
+    }
+    private TestActivity activity;
+    private TestActivity activity() {
+        if (activity == null) activity = Robolectric.buildActivity(TestActivity.class).setup().get();
+        return activity;
+    }
+    @After public void cleanUp() {
+        if (activity != null) AndroidUrlLauncher.paused(activity);
+        while (AndroidUrlLauncher.takePending() != null) { }
+    }
+    @Test public void dispatchesWebIntentAndReportsExceptionsWithoutUri() {
+        TestActivity a = activity();
+        assertEquals(AndroidUrlLauncher.Status.DISPATCHED_UNCONFIRMED, AndroidUrlLauncher.open(a, "https://example.com/auth?code=secret"));
+        assertEquals(Intent.ACTION_VIEW, a.dispatched.getAction());
+        assertEquals("https://example.com/auth?code=secret", a.dispatched.getDataString());
+        assertEquals(AndroidUrlLauncher.Status.INVALID_URI, AndroidUrlLauncher.open(a, "file:///private"));
+        a.failure = new ActivityNotFoundException();
+        assertEquals(AndroidUrlLauncher.Status.NO_HANDLER, AndroidUrlLauncher.open(a, "https://example.com/"));
+        a.failure = new SecurityException();
+        assertEquals(AndroidUrlLauncher.Status.SECURITY_RESTRICTED, AndroidUrlLauncher.open(a, "https://example.com/"));
+        a.failure = new IllegalStateException();
+        assertEquals(AndroidUrlLauncher.Status.FAILED, AndroidUrlLauncher.open(a, "https://example.com/"));
+    }
+    @Test public void receiverQueuesWhenBackgroundAndDispatchesWhenResumed() {
+        assertEquals(AndroidUrlLauncher.Status.QUEUED_FOR_USER, AndroidUrlLauncher.openFromReceiver("https://example.com/a"));
+        assertEquals("https://example.com/a", AndroidUrlLauncher.takePending());
+        TestActivity a = activity();
+        AndroidUrlLauncher.resumed(a);
+        assertEquals(AndroidUrlLauncher.Status.DISPATCHED_UNCONFIRMED, AndroidUrlLauncher.openFromReceiver("https://example.com/b"));
+        assertNull(AndroidUrlLauncher.takePending());
+        AndroidUrlLauncher.paused(a);
+        assertEquals(AndroidUrlLauncher.Status.QUEUED_FOR_USER, AndroidUrlLauncher.openFromReceiver("https://example.com/c"));
+    }
+}
