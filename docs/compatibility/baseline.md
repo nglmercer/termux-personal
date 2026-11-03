@@ -26,3 +26,19 @@ The authentication diagnostics offer an explicit temporary loopback listener tes
 Foreground web dispatch failures now retain the URL for explicit open or copy, with no URL displayed in the fallback dialog. The queue remains in memory, bounded and expiring; process death discards it. The Android loopback instrumentation test is included and its APK builds, but it has not been run on a device.
 
 An optional browser callback test now opens a temporary IPv4 loopback URL with a random one-time path and waits up to 30 seconds. It retains only the dispatch and test outcome, reads no OAuth session data, and bounds request count and header consumption. A received request establishes only that the temporary listener received the matching request; it does not establish browser visibility, a CLI callback, or an OAuth exchange. Browser and actual-device behavior remain untested. The separate loopback probe covers in-process IPv4 and IPv6 sockets; the browser probe currently uses IPv4 only.
+
+For a CLI that honors `BROWSER`, select the installed wrapper explicitly for that invocation:
+
+```sh
+BROWSER="$TERMUX_APP__FILES_DIR/compat-v1/termux-open-url" your-command
+```
+
+To select it for calls resolved by name in the current shell only:
+
+```sh
+export PATH="$TERMUX_APP__FILES_DIR/compat-v1:$PATH"
+```
+
+This alters command resolution for that shell and its children, and does not intercept absolute paths to the package-owned command. Undo by restoring the prior `PATH` or starting a fresh shell. The wrapper does not automatically override existing user settings. A conflicting existing app-owned path is left untouched and reported as `CONFLICT` in Compatibility diagnostics. If a failed or interrupted installation leaves an incomplete file, it must be inspected before removal or replacement. Local host script tests exercise argument routing, but Android shell execution, managed jobs, user-profile behavior, upgrade and rollback are not verified.
+
+The bootstrap audit also found that its `xdg-open` link targets `termux-open`. The wrapper's installer pins its app-owned directory and uses exclusive, no-follow creation; a conflict is not overwritten. Robolectric's `Os` shadow does not implement the exclusive/no-follow flags, so host mocks cannot validate those flags. Instrumented tests for existing files and symlinks are included but have not run on Android.

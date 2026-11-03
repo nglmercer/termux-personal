@@ -159,7 +159,11 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         SystemEventReceiver.registerPackageUpdateEvents(this);
 
         // Keeps the app-owned shell profile current after app updates; sessions started later pick it up.
-        new Thread(ShellCompatibility::ensure, "TermuxShellCompat").start();
+        new Thread(() -> {
+            // The URL shim is inert until explicitly selected through PATH or BROWSER.
+            com.termux.app.compat.cli.WebCommandShim.ensure(getApplicationContext());
+            ShellCompatibility.ensure();
+        }, "TermuxShellCompat").start();
 
         // Only a consent the user explicitly chose to remember and auto-start is applied here.
         new android.os.Handler(android.os.Looper.getMainLooper()).post(this::autoStartLocalControl);

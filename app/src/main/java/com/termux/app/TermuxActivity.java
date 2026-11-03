@@ -1242,8 +1242,11 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     }
 
     private void showCompatibilityAuthentication() {
+        com.termux.app.compat.cli.WebCommandShim.Status shim = com.termux.app.compat.cli.WebCommandShim.ensure(this);
+        String description = getString(R.string.compat_auth_description) + "\n\n" +
+            getString(R.string.compat_url_shim_description, shim.name());
         new AlertDialog.Builder(this).setTitle(R.string.compat_auth_title)
-            .setMessage(R.string.compat_auth_description)
+            .setMessage(description)
             .setPositiveButton(R.string.compat_auth_test, (dialog, which) -> {
                 if (!COMPAT_LOOPBACK_BUSY.compareAndSet(false, true)) {
                     Toast.makeText(this, R.string.compat_auth_busy, Toast.LENGTH_LONG).show();

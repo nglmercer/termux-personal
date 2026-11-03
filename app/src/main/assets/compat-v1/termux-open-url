@@ -1,0 +1,14 @@
+#!/system/bin/sh
+# Optional Termux app compatibility wrapper, version 1. Package files remain untouched.
+prefix=${PREFIX:-/data/data/com.termux/files/usr}
+if [ "$#" -eq 1 ]; then
+    case "$1" in
+        [hH][tT][tT][pP]://*|[hH][tT][tT][pP][sS]://*)
+            if [ -x "$prefix/bin/termux-open" ]; then
+                exec "$prefix/bin/termux-open" --view -- "$1"
+            fi
+            ;;
+    esac
+fi
+# Preserve the upstream command for explicit components and non-web schemes.
+exec "$prefix/bin/termux-open-url" "$@"
