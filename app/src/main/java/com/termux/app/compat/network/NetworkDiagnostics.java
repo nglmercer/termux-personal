@@ -54,10 +54,7 @@ public final class NetworkDiagnostics {
                 out.append("Active network: unavailable\n");
             }
         }
-        File bundle = new File(TermuxConstants.TERMUX_PREFIX_DIR_PATH, "etc/tls/cert.pem");
-        out.append("Termux CA bundle (etc/tls/cert.pem): ")
-            .append(bundle.isFile() && bundle.canRead() ? "readable" : "not readable or absent")
-            .append("\nTrust stores, certificate contents and CLI environment overrides: not tested.");
+        out.append(CertificateBundleDiagnostics.describe(new File(TermuxConstants.TERMUX_PREFIX_DIR_PATH)));
         return out.toString();
     }
 
@@ -104,6 +101,7 @@ public final class NetworkDiagnostics {
             NetworkObservationStore.Ticket ticket = bound == null ? AndroidNetworkObservations.begin(context, network) : null;
             NetworkCompatibilityReport report = NetworkProbeRunner.run(new NetworkProbeRunner.Backend() {
                 @Override public java.net.InetAddress[] resolve() throws java.io.IOException { return java.net.InetAddress.getAllByName("example.com"); }
+                @Override public boolean supportsCertificateReason() { return Build.VERSION.SDK_INT >= 24; }
                 @Override public java.net.HttpURLConnection open() throws java.io.IOException {
                     return (java.net.HttpURLConnection) new URL("https://example.com/").openConnection();
                 }

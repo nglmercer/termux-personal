@@ -12,6 +12,7 @@ final class NetworkProbeRunner {
     interface Backend {
         InetAddress[] resolve() throws IOException;
         HttpURLConnection open() throws IOException;
+        default boolean supportsCertificateReason() { return false; }
         default NetworkCompatibilityReport.FamilyStatus tcpSample(InetAddress address) {
             return NetworkCompatibilityReport.FamilyStatus.NOT_TESTED;
         }
@@ -19,6 +20,11 @@ final class NetworkProbeRunner {
     private NetworkProbeRunner() { }
 
     static NetworkCompatibilityReport run(Backend backend, AtomicBoolean delivered) {
+        return run(backend, delivered, 3000);
+    }
+    /** Injectable timeout keeps local TLS integration tests reliable on slower hosts. */
+    static NetworkCompatibilityReport run(Backend backend, AtomicBoolean delivered, int socketTimeoutMs) {
+        if (socketTimeoutMs < 1 || socketTimeoutMs > 30000) throw new IllegalArgumentException("Invalid socket timeout");
         String dns;
         InetAddress ipv4 = null, ipv6 = null;
         NetworkCompatibilityReport.DnsStatus dnsStatus;
@@ -41,17 +47,20 @@ final class NetworkProbeRunner {
         if (delivered.get()) return new NetworkCompatibilityReport(dns, dnsStatus, NetworkCompatibilityReport.Status.TIMEOUT, 0);
         HttpURLConnection connection = null;
         NetworkCompatibilityReport.Status https;
+        TlsDiagnostics.Detail tlsDetail = TlsDiagnostics.Detail.NOT_IDENTIFIED;
         int httpStatus = 0;
         try {
             connection = backend.open();
-            connection.setConnectTimeout(3000);
-            connection.setReadTimeout(3000);
+            connection.setConnectTimeout(socketTimeoutMs);
+            connection.setReadTimeout(socketTimeoutMs);
             connection.setInstanceFollowRedirects(false);
             connection.setRequestMethod("HEAD");
             httpStatus = connection.getResponseCode();
             https = httpStatus < 100 ? NetworkCompatibilityReport.Status.UNKNOWN : NetworkCompatibilityReport.Status.HTTP_RESPONSE;
         } catch (Exception e) {
             https = NetworkErrorClassifier.classify(e);
+            if (https == NetworkCompatibilityReport.Status.TLS_CERTIFICATE_FAILURE)
+                tlsDetail = TlsDiagnostics.classify(e, backend.supportsCertificateReason());
         } finally {
             if (connection != null) connection.disconnect();
         }
@@ -61,7 +70,7 @@ final class NetworkProbeRunner {
             v4 = ipv4 == null ? NetworkCompatibilityReport.FamilyStatus.NO_DNS_RECORD : sample(backend, ipv4);
             if (!delivered.get()) v6 = ipv6 == null ? NetworkCompatibilityReport.FamilyStatus.NO_DNS_RECORD : sample(backend, ipv6);
         }
-        return new NetworkCompatibilityReport(dns, dnsStatus, https, httpStatus, v4, v6);
+        return new NetworkCompatibilityReport(dns, dnsStatus, https, httpStatus, v4, v6, tlsDetail);
     }
     private static NetworkCompatibilityReport.FamilyStatus sample(Backend backend, InetAddress address) {
         try {

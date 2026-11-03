@@ -15,6 +15,7 @@ public final class NetworkCompatibilityReport {
     public final Status status;
     public final int httpStatus;
     public final FamilyStatus ipv4Tcp, ipv6Tcp;
+    public final TlsDiagnostics.Detail tlsDetail;
 
     public NetworkCompatibilityReport(String dns, Status status, int httpStatus) {
         this(dns, DnsStatus.NOT_TESTED, status, httpStatus);
@@ -24,7 +25,11 @@ public final class NetworkCompatibilityReport {
     }
     public NetworkCompatibilityReport(String dns, DnsStatus dnsStatus, Status status, int httpStatus,
                                       FamilyStatus ipv4Tcp, FamilyStatus ipv6Tcp) {
-        if (dns == null || dnsStatus == null || status == null || ipv4Tcp == null || ipv6Tcp == null)
+        this(dns, dnsStatus, status, httpStatus, ipv4Tcp, ipv6Tcp, TlsDiagnostics.Detail.NOT_IDENTIFIED);
+    }
+    public NetworkCompatibilityReport(String dns, DnsStatus dnsStatus, Status status, int httpStatus,
+                                      FamilyStatus ipv4Tcp, FamilyStatus ipv6Tcp, TlsDiagnostics.Detail tlsDetail) {
+        if (dns == null || dnsStatus == null || status == null || ipv4Tcp == null || ipv6Tcp == null || tlsDetail == null)
             throw new IllegalArgumentException("Missing report field");
         this.dns = dns;
         this.dnsStatus = dnsStatus;
@@ -32,6 +37,7 @@ public final class NetworkCompatibilityReport {
         this.httpStatus = httpStatus;
         this.ipv4Tcp = ipv4Tcp;
         this.ipv6Tcp = ipv6Tcp;
+        this.tlsDetail = tlsDetail;
     }
 
     public String describe() {
@@ -41,7 +47,14 @@ public final class NetworkCompatibilityReport {
         switch (status) {
             case NO_NETWORK: result.append("\nNo default network was visible; it may be disconnected or blocked."); break;
             case DNS_FAILURE: result.append("\nCheck the active network, VPN, Private DNS and proxy; a proxy hostname can also fail DNS."); break;
-            case TLS_CERTIFICATE_FAILURE: result.append("\nCheck the device clock, server certificate validity and applicable trusted CAs; do not disable verification."); break;
+            case TLS_CERTIFICATE_FAILURE:
+                result.append("\nCertificate evidence: ").append(tlsDetail);
+                if (tlsDetail == TlsDiagnostics.Detail.EXPIRED || tlsDetail == TlsDiagnostics.Detail.NOT_YET_VALID ||
+                    tlsDetail == TlsDiagnostics.Detail.CONFLICTING_VALIDITY)
+                    result.append("\nThe certificate validity period and the device clock disagree. Check both; the clock has not been independently verified.");
+                else result.append("\nCheck the server certificate chain, hostname and applicable trusted CAs; the precise cause is not established.");
+                result.append(" Do not disable verification.");
+                break;
             case TLS_HANDSHAKE_FAILURE: result.append("\nCheck TLS configuration and network intermediaries; certificate trust may require separate diagnosis."); break;
             case TIMEOUT: result.append("\nThe probe timed out; this alone does not identify DNS, connection, TLS or response as the cause."); break;
             case UNAVAILABLE: result.append("\nThe probe is unavailable or a previous resolver call is still running."); break;

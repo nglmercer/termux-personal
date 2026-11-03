@@ -82,6 +82,23 @@ public class NetworkProbeRunnerTest {
         assertEquals(1, calls.get());
         assertEquals(NetworkCompatibilityReport.FamilyStatus.NOT_TESTED, report.ipv6Tcp);
     }
+    @Test public void returnsTypedCertificateDetailsWithoutExceptionMessages() throws Exception {
+        NetworkProbeRunner.Backend backend = new NetworkProbeRunner.Backend() {
+            @Override public InetAddress[] resolve() throws IOException { return new InetAddress[0]; }
+            @Override public boolean supportsCertificateReason() { return true; }
+            @Override public HttpURLConnection open() throws IOException {
+                javax.net.ssl.SSLHandshakeException error = new javax.net.ssl.SSLHandshakeException("secret");
+                error.initCause(new java.security.cert.CertPathValidatorException("secret", null, null, -1,
+                    java.security.cert.CertPathValidatorException.BasicReason.NOT_YET_VALID));
+                throw error;
+            }
+        };
+        NetworkCompatibilityReport result = NetworkProbeRunner.run(backend, new AtomicBoolean());
+        assertEquals(NetworkCompatibilityReport.Status.TLS_CERTIFICATE_FAILURE, result.status);
+        assertEquals(TlsDiagnostics.Detail.NOT_YET_VALID, result.tlsDetail);
+        assertTrue(result.describe().contains("clock has not been independently verified"));
+        assertFalse(result.describe().contains("secret"));
+    }
     @Test public void deadlinePreventsStartingHttpsAfterResolverReturns() {
         NetworkProbeRunner.Backend backend = new NetworkProbeRunner.Backend() {
             @Override public InetAddress[] resolve() { return new InetAddress[0]; }
