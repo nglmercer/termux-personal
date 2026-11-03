@@ -10,3 +10,5 @@ Audit of checkout a3d964973230964640e6bc7abff5e91ab0324e6b. This is an inventory
 * ControlCore and JSON-RPC v1 are existing interfaces. No compatibility RPC is implemented by this audit.
 
 The manifest requests internet and network-state permissions, declares the open receiver non-exported, and exposes a file provider with its existing access policy. The project builds with min SDK 21, target SDK 28 and compile SDK 36. Package visibility and activity launch behavior require tests at the relevant target/API combinations; a successful `startActivity` cannot establish visibility.
+
+The opt-in network test uses the active Android `Network` for native DNS and HTTPS; it does not change resolver settings, trust settings, network binding, or CLI environment. The app reports its own Android trust result only. A response from the fixed endpoint does not establish the health of another host, and IPv4/IPv6 DNS records do not establish family-specific reachability. Network metadata is a snapshot and can change during the test.

@@ -1198,7 +1198,33 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         } catch (RuntimeException ignored) { /* Clipboard metadata may be unavailable. */ }
         info.append("\n\n").append(getString(R.string.diagnostics_clipboard, formats.length() == 0 ? unknown : formats.toString()));
         new AlertDialog.Builder(this).setTitle(R.string.action_diagnostics).setMessage(info.toString())
+            .setNeutralButton(R.string.compat_network_title, (d, w) -> showCompatibilityNetwork())
             .setPositiveButton(android.R.string.ok, null).show();
+    }
+
+    private void showCompatibilityNetwork() {
+        final String snapshot = com.termux.app.compat.network.NetworkDiagnostics.snapshot(this);
+        showCompatibilityNetworkReport(snapshot + "\n\n" + getString(R.string.compat_network_description), true);
+    }
+
+    private void showCompatibilityNetworkReport(String report, boolean allowTest) {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this).setTitle(R.string.compat_network_title)
+            .setMessage(report)
+            .setPositiveButton(android.R.string.ok, null)
+            .setNegativeButton(R.string.compat_pending_copy, (d, w) ->
+                com.termux.shared.interact.ShareUtils.copyTextToClipboard(this, report,
+                    getString(R.string.msg_select_url_copied_to_clipboard)));
+        if (allowTest) builder.setNeutralButton(R.string.compat_network_test, (d, w) -> {
+            Toast.makeText(this, R.string.compat_network_running, Toast.LENGTH_LONG).show();
+            WeakReference<TermuxActivity> activity = new WeakReference<>(this);
+            com.termux.app.compat.network.NetworkDiagnostics.probe(getApplicationContext(), result -> {
+                TermuxActivity current = activity.get();
+                if (current == null || !com.termux.app.compat.AndroidUrlLauncher.isResumed(current) || current.isFinishing()) return;
+                current.showCompatibilityNetworkReport(
+                    com.termux.app.compat.network.NetworkDiagnostics.snapshot(current) + "\n\n" + result.describe(), false);
+            });
+        });
+        builder.show();
     }
 
     /**
