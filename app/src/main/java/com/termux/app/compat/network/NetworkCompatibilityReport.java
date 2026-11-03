@@ -16,9 +16,18 @@ public final class NetworkCompatibilityReport {
     public final int httpStatus;
     public final FamilyStatus ipv4Tcp, ipv6Tcp;
     public final TlsDiagnostics.Detail tlsDetail;
+    private ResolverFileDiagnostics.Status[] resolverFiles;
 
     public NetworkCompatibilityReport(String dns, Status status, int httpStatus) {
         this(dns, DnsStatus.NOT_TESTED, status, httpStatus);
+    }
+
+    NetworkCompatibilityReport withResolverFiles(ResolverFileDiagnostics.Status system,
+                                                  ResolverFileDiagnostics.Status termux,
+                                                  ResolverFileDiagnostics.Status glibc) {
+        NetworkCompatibilityReport copy = new NetworkCompatibilityReport(dns, dnsStatus, status, httpStatus, ipv4Tcp, ipv6Tcp, tlsDetail);
+        copy.resolverFiles = new ResolverFileDiagnostics.Status[]{system, termux, glibc};
+        return copy;
     }
     public NetworkCompatibilityReport(String dns, DnsStatus dnsStatus, Status status, int httpStatus) {
         this(dns, dnsStatus, status, httpStatus, FamilyStatus.NOT_TESTED, FamilyStatus.NOT_TESTED);
@@ -63,6 +72,11 @@ public final class NetworkCompatibilityReport {
                 break;
             default: break;
         }
+        if (resolverFiles != null) result.append("\nResolver files (literal paths; relevance to a particular CLI is not established):")
+            .append("\n/etc/resolv.conf: ").append(resolverFiles[0])
+            .append("\n$PREFIX/etc/resolv.conf: ").append(resolverFiles[1])
+            .append("\n$PREFIX/glibc/etc/resolv.conf: ").append(resolverFiles[2])
+            .append("\nComparison uses address sets, not order or actual resolver behavior. A difference may be intentional; VPN, Private DNS, process routing and resolver implementations can differ. Addresses and file contents are omitted.");
         return result.append("\nIPv4 TCP sample: ").append(ipv4Tcp)
             .append("\nIPv6 TCP sample: ").append(ipv6Tcp)
             .append("\nEach sample uses at most one resolved address and TCP port 443; it does not test TLS or other addresses.")

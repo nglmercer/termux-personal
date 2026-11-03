@@ -110,6 +110,17 @@ public final class NetworkDiagnostics {
                 }
             }, delivered);
             if (!delivered.get()) {
+                try {
+                    LinkProperties link = manager.getLinkProperties(network);
+                    java.util.List<java.net.InetAddress> dnsServers = link == null ? null : link.getDnsServers();
+                    File prefix = new File(TermuxConstants.TERMUX_PREFIX_DIR_PATH);
+                    report = report.withResolverFiles(
+                        ResolverFileDiagnostics.inspect(new File("/etc/resolv.conf"), dnsServers),
+                        ResolverFileDiagnostics.inspect(new File(prefix, "etc/resolv.conf"), dnsServers),
+                        ResolverFileDiagnostics.inspect(new File(prefix, "glibc/etc/resolv.conf"), dnsServers));
+                } catch (RuntimeException ignored) { /* Do not discard completed network observations. */ }
+            }
+            if (!delivered.get()) {
                 try { AndroidNetworkObservations.finish(ticket, report); }
                 catch (RuntimeException ignored) { /* Tracking is optional; retain the probe result. */ }
             }
