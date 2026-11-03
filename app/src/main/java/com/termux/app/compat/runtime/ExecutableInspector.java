@@ -124,11 +124,13 @@ public final class ExecutableInspector {
                     interpreter = safeAscii(raw, 0, raw.length - 1);
                     if (interpreter == null || !interpreter.startsWith("/")) return result(Status.INVALID_FORMAT, detail + "\nInvalid interpreter path.");
                 }
+                if (interpreter != null) detail += "\nInterpreter: " + interpreter + "\nRuntime: " + runtime(interpreter);
                 if (!executable) return result(Status.EXECUTION_DENIED, detail + "\nFile lacks execute access for this process.");
+                if (order == ByteOrder.BIG_ENDIAN)
+                    return result(Status.ABI_MISMATCH, detail + "\nAndroid's native ABIs are little-endian; translation layers were not tested.");
                 if (supportedAbis.length > 0 && knownMachine(machine) && !matchesAbi(machine, supportedAbis))
                     return result(Status.ABI_MISMATCH, detail + "\nArchitecture is not in Android's reported ABI list; translation layers were not tested.");
                 if (interpreter == null) return result(Status.UNTESTED, detail + "\nNo ELF interpreter: possibly static or a shared object. Runtime cannot be determined from this alone.");
-                detail += "\nInterpreter: " + interpreter + "\nRuntime: " + runtime(interpreter);
                 if (!new File(interpreter).canExecute()) {
                     File adapter = glibcLoaderDirectory == null ? null : new File(glibcLoaderDirectory, new File(interpreter).getName());
                     if ("Linux glibc".equals(runtime(interpreter)) && adapter != null && adapter.isFile() && adapter.canExecute())

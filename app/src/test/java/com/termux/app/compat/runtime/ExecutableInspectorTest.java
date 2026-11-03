@@ -70,8 +70,10 @@ public class ExecutableInspectorTest {
         byte[] interpreter = "/system/bin/linker".getBytes(StandardCharsets.US_ASCII);
         b.putInt(68, interpreter.length + 1); System.arraycopy(interpreter, 0, elf, 120, interpreter.length);
         ExecutableInspector.Report report = ExecutableInspector.inspect(file(elf), new String[]{"armeabi-v7a"}, null);
+        assertEquals(ExecutableInspector.Status.ABI_MISMATCH, report.status);
         assertTrue(report.detail.contains("Android Bionic"));
         assertTrue(report.detail.contains("32-bit, big endian"));
+        assertTrue(report.detail.contains("translation layers were not tested"));
         b.putShort(18, (short) 183);
         assertEquals(ExecutableInspector.Status.INVALID_FORMAT, ExecutableInspector.inspect(file(elf), new String[]{"arm64-v8a"}, null).status);
     }
