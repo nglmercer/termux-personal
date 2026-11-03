@@ -15,7 +15,7 @@ import android.webkit.MimeTypeMap;
 
 import com.termux.shared.termux.plugins.TermuxPluginUtils;
 import com.termux.shared.data.DataUtils;
-import com.termux.shared.data.IntentUtils;
+import com.termux.app.compat.AndroidUrlLauncher;
 import com.termux.shared.net.uri.UriUtils;
 import com.termux.shared.logger.Logger;
 import com.termux.shared.net.uri.UriScheme;
@@ -39,8 +39,6 @@ public class TermuxOpenReceiver extends BroadcastReceiver {
             return;
         }
 
-        Logger.logVerbose(LOG_TAG, "Intent Received:\n" + IntentUtils.getIntentString(intent));
-        Logger.logVerbose(LOG_TAG, "uri: \"" + data + "\", path: \"" + data.getPath() + "\", fragment: \"" + data.getFragment() + "\"");
 
         final String contentTypeExtra = intent.getStringExtra("content-type");
         final boolean useChooser = intent.getBooleanExtra("chooser", false);
@@ -57,6 +55,15 @@ public class TermuxOpenReceiver extends BroadcastReceiver {
 
         String scheme = data.getScheme();
         if (scheme != null && !UriScheme.SCHEME_FILE.equals(scheme)) {
+            if (Intent.ACTION_VIEW.equals(intentAction) && contentTypeExtra == null &&
+                ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))) {
+                AndroidUrlLauncher.Status status = AndroidUrlLauncher.openFromReceiver(data.toString());
+                Logger.logDebug(LOG_TAG, "Web launch status: " + status);
+                if (status != AndroidUrlLauncher.Status.DISPATCHED_UNCONFIRMED &&
+                    status != AndroidUrlLauncher.Status.QUEUED_FOR_USER)
+                    android.widget.Toast.makeText(context, context.getString(com.termux.R.string.compat_url_failed, status.name()), android.widget.Toast.LENGTH_LONG).show();
+                return;
+            }
             Intent urlIntent = new Intent(intentAction, data);
             if (intentAction.equals(Intent.ACTION_SEND)) {
                 urlIntent.putExtra(Intent.EXTRA_TEXT, data.toString());
@@ -68,7 +75,7 @@ public class TermuxOpenReceiver extends BroadcastReceiver {
             try {
                 context.startActivity(urlIntent);
             } catch (ActivityNotFoundException e) {
-                Logger.logError(LOG_TAG, "No app handles the url " + data);
+                Logger.logError(LOG_TAG, "No app handles the requested URI");
             }
             return;
         }
@@ -120,7 +127,7 @@ public class TermuxOpenReceiver extends BroadcastReceiver {
         try {
             context.startActivity(sendIntent);
         } catch (ActivityNotFoundException e) {
-            Logger.logError(LOG_TAG, "No app handles the url " + data);
+            Logger.logError(LOG_TAG, "No app handles the requested URI");
         }
     }
 

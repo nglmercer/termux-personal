@@ -463,4 +463,9 @@
     <string-array name="extra_keys_editor_presets">
         <item>Classic</item><item>Coding</item><item>Vim</item><item>Tmux</item><item>Compact</item>
     </string-array>
+    <string name="compat_pending_title">Open a requested web link?</string>
+    <string name="compat_pending_message">A terminal process requested a browser while Termux was in the background. Open or copy the link only if you trust the process.</string>
+    <string name="compat_pending_open">Open</string>
+    <string name="compat_pending_copy">Copy</string>
+    <string name="compat_url_failed">Could not open web link: %1$s</string>
 </resources>

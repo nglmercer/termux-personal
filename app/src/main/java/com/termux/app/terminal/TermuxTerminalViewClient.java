@@ -17,6 +17,7 @@ import android.widget.Toast;
 
 import com.termux.R;
 import com.termux.app.TermuxActivity;
+import com.termux.app.compat.AndroidUrlLauncher;
 import com.termux.shared.file.FileUtils;
 import com.termux.shared.interact.MessageDialogUtils;
 import com.termux.shared.interact.ShareUtils;
@@ -197,7 +198,7 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
 
             if (!urlSet.isEmpty()) {
                 String url = (String) urlSet.iterator().next();
-                ShareUtils.openUrl(mActivity, url);
+                openWebUrl(url);
                 return;
             }
         }
@@ -722,12 +723,24 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
             lv.setOnItemLongClickListener((parent, view, position, id) -> {
                 dialog.dismiss();
                 String url = (String) urls[position];
-                ShareUtils.openUrl(mActivity, url);
+                openWebUrl(url);
                 return true;
             });
         });
 
         dialog.show();
+    }
+
+    private void openWebUrl(String url) {
+        // Keep existing support for non-web links selected from the terminal.
+        String scheme = Uri.parse(url).getScheme();
+        if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
+            ShareUtils.openUrl(mActivity, url);
+            return;
+        }
+        AndroidUrlLauncher.Status status = AndroidUrlLauncher.open(mActivity, url);
+        if (status != AndroidUrlLauncher.Status.DISPATCHED_UNCONFIRMED)
+            Toast.makeText(mActivity, mActivity.getString(R.string.compat_url_failed, status.name()), Toast.LENGTH_LONG).show();
     }
 
     public void reportIssueFromTranscript() {

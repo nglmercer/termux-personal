@@ -387,6 +387,32 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         consumeImageShareWhenReady();
         consumePendingImagePickerWhenReady();
         showPendingLocalControl();
+        com.termux.app.compat.AndroidUrlLauncher.resumed(this);
+        showPendingWebUrl();
+    }
+
+    @Override
+    protected void onPause() {
+        com.termux.app.compat.AndroidUrlLauncher.paused(this);
+        super.onPause();
+    }
+
+    private void showPendingWebUrl() {
+        if (!com.termux.app.compat.AndroidUrlLauncher.isResumed(this) || isFinishing()) return;
+        final String url = com.termux.app.compat.AndroidUrlLauncher.takePending();
+        if (url == null) return;
+        new AlertDialog.Builder(this).setTitle(R.string.compat_pending_title)
+            .setMessage(R.string.compat_pending_message)
+            .setPositiveButton(R.string.compat_pending_open, (dialog, which) -> {
+                com.termux.app.compat.AndroidUrlLauncher.Status status = com.termux.app.compat.AndroidUrlLauncher.open(this, url);
+                if (status != com.termux.app.compat.AndroidUrlLauncher.Status.DISPATCHED_UNCONFIRMED)
+                    android.widget.Toast.makeText(this, getString(R.string.compat_url_failed, status.name()), android.widget.Toast.LENGTH_LONG).show();
+            })
+            .setNeutralButton(R.string.compat_pending_copy, (dialog, which) ->
+                com.termux.shared.interact.ShareUtils.copyTextToClipboard(this, url, getString(R.string.msg_select_url_copied_to_clipboard)))
+            .setNegativeButton(android.R.string.cancel, null)
+            .setOnDismissListener(dialog -> showPendingWebUrl())
+            .show();
     }
 
     @Override
