@@ -31,8 +31,9 @@ public final class ShellCompatibility {
         "# Automatic glibc compatibility: put the app's execve shim before termux-exec, so glibc programs run\n" +
         "# through glibc-runner's loader when it is installed. Skipped if the shim is missing or fails to load.\n" +
         "if [ -n \"${TERMUX_GLIBC_EXEC:-}\" ] && [ -r \"$TERMUX_GLIBC_EXEC\" ] && [ -n \"${LD_PRELOAD:-}\" ]; then\n" +
-        "    case \":$LD_PRELOAD:\" in\n" +
-        "        *\":$TERMUX_GLIBC_EXEC:\"*) ;;\n" +
+        "    # Android's linker accepts both spaces and colons between preload entries.\n" +
+        "    case \" $LD_PRELOAD \" in\n" +
+        "        *\" $TERMUX_GLIBC_EXEC \"*|*\" $TERMUX_GLIBC_EXEC:\"*|*\":$TERMUX_GLIBC_EXEC \"*|*\":$TERMUX_GLIBC_EXEC:\"*) ;;\n" +
         "        *)\n" +
         "            if LD_PRELOAD=\"$TERMUX_GLIBC_EXEC:$LD_PRELOAD\" \"$PREFIX/bin/true\" 2>/dev/null; then\n" +
         "                export LD_PRELOAD=\"$TERMUX_GLIBC_EXEC:$LD_PRELOAD\"\n" +
