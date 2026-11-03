@@ -58,6 +58,7 @@ public class ExecutableInspectorTest {
         assertTrue(report.detail.contains("Linux musl"));
         assertTrue(report.detail.contains("preload libraries"));
         assertTrue(report.detail.contains("not tested"));
+        assertTrue(report.detail.contains("termux-run-clean"));
         assertTrue(report.detail.contains("removes all preloads"));
     }
     @Test public void rejectsMalformedOffsetsAndInterpreter() throws Exception {

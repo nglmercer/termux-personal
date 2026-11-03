@@ -475,6 +475,7 @@
     <string name="compat_title">Compatibility diagnostics</string>
     <string name="compat_runtime_title">Inspect executable</string>
     <string name="compat_runtime_description">Enter an absolute path to an executable or script. The file is inspected without running or changing it.</string>
+    <string name="compat_runtime_adapter_description">Optional per-command preload adapter: %1$s. Use $TERMUX_APP__FILES_DIR/compat-v1/termux-run-clean with an absolute executable path. It omits recognized Termux execution preloads for that command and its children, so path and script handling may change. Other preloads are retained. Android behavior is not yet verified.</string>
     <string name="compat_runtime_path_hint">Absolute file path</string>
     <string name="compat_runtime_inspect">Inspect</string>
     <string name="compat_runtime_absolute">Enter an absolute file path.</string>

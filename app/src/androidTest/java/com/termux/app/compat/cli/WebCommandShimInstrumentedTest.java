@@ -25,6 +25,7 @@ public class WebCommandShimInstrumentedTest {
         File directory = new File(base, "compat-v1");
         new File(directory, "termux-open-url").delete();
         new File(directory, "termux-compat").delete();
+        new File(directory, "termux-run-clean").delete();
         directory.delete();
         new File(base, "sentinel").delete();
         base.delete();
@@ -48,6 +49,12 @@ public class WebCommandShimInstrumentedTest {
         assertEquals(WebCommandShim.Status.READY, WebCommandShim.install(base, open));
         assertEquals(WebCommandShim.Status.CONFLICT, WebCommandShim.install(base, "termux-compat", open));
         assertEquals(WebCommandShim.Status.UNAVAILABLE, WebCommandShim.install(base, "../sentinel", open));
+    }
+    @Test public void runtimeAdapterIsInstalledWithoutReplacingExistingFiles() {
+        byte[] adapter = "adapter".getBytes(StandardCharsets.UTF_8);
+        assertEquals(WebCommandShim.Status.READY, WebCommandShim.install(base, "termux-run-clean", adapter));
+        assertEquals(WebCommandShim.Status.READY, WebCommandShim.install(base, "termux-run-clean", adapter));
+        assertEquals(WebCommandShim.Status.CONFLICT, WebCommandShim.install(base, "termux-run-clean", new byte[]{42}));
     }
     @Test public void refusesSymlinkForShimFile() throws Exception {
         File directory = new File(base, "compat-v1"); assertTrue(directory.mkdir());

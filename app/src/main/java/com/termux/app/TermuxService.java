@@ -163,6 +163,7 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
             // The URL shim is inert until explicitly selected through PATH or BROWSER.
             com.termux.app.compat.cli.WebCommandShim.ensure(getApplicationContext());
             com.termux.app.compat.cli.WebCommandShim.ensureDoctor(getApplicationContext());
+            com.termux.app.compat.cli.WebCommandShim.ensureRuntimeAdapter(getApplicationContext());
             ShellCompatibility.ensure();
         }, "TermuxShellCompat").start();
 
