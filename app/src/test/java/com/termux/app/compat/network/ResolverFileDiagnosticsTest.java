@@ -33,7 +33,7 @@ public class ResolverFileDiagnosticsTest {
 
     @Test public void reportsUnsupportedOrMissingInputConservatively() throws Exception {
         assertEquals(ResolverFileDiagnostics.Status.NO_NAMESERVERS, ResolverFileDiagnostics.parse(data("search private.example\n"), null));
-        for (String line : new String[]{"nameserver private.example", "nameserver 999.1.1.1", "nameserver 01.2.3.4", "nameserver fe80::1%wlan0", "nameserver ::1 extra", "nameserver"})
+        for (String line : new String[]{"nameserver private.example", "nameserver 999.1.1.1", "nameserver 01.2.3.4", "nameserver dead:beef", "nameserver fe80::1%wlan0", "nameserver ::1 extra", "nameserver"})
             assertEquals(line, ResolverFileDiagnostics.Status.UNRECOGNIZED, ResolverFileDiagnostics.parse(data(line), null));
         assertEquals(ResolverFileDiagnostics.Status.TOO_LARGE, ResolverFileDiagnostics.parse(new byte[8193], null));
         assertEquals(ResolverFileDiagnostics.Status.ABSENT_OR_UNREADABLE, ResolverFileDiagnostics.inspect(new File(temp.getRoot(), "missing"), null));

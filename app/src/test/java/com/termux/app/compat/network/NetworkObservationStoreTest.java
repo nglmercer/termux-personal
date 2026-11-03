@@ -42,4 +42,17 @@ public class NetworkObservationStoreTest {
         assertNull(store.current("A", 9));
         assertNull(store.begin(null));
     }
+    @Test public void resolverFileDetailsAreNotIncludedInControlDiscovery() {
+        NetworkObservationStore store = new NetworkObservationStore();
+        NetworkCompatibilityReport observed = response().withResolverFiles(
+            ResolverFileDiagnostics.Status.MATCHES_NETWORK,
+            ResolverFileDiagnostics.Status.DIFFERS_FROM_NETWORK,
+            ResolverFileDiagnostics.Status.UNRECOGNIZED);
+        assertTrue(store.finish(store.begin("A"), "A", 10, observed));
+        Map<String, Object> discovery = store.current("A", 11);
+        assertEquals(5, discovery.size());
+        assertFalse(discovery.toString().contains("MATCHES_NETWORK"));
+        assertFalse(discovery.toString().contains("DIFFERS_FROM_NETWORK"));
+        assertFalse(discovery.toString().contains("UNRECOGNIZED"));
+    }
 }

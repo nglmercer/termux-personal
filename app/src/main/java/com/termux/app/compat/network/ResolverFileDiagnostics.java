@@ -69,7 +69,13 @@ final class ResolverFileDiagnostics {
     private static byte[] numericAddress(String value) {
         if (value.indexOf(':') >= 0) {
             if (!value.matches("[0-9A-Fa-f:.]+")) return null;
-            try { return InetAddress.getByName(value).getAddress(); } catch (IOException e) { return null; }
+            try {
+                // Validate IPv6 syntax before getByName: malformed colon-containing input must not
+                // fall through to a hostname lookup on an implementation with a permissive parser.
+                java.net.URI uri = new java.net.URI("http://[" + value + "]/");
+                if (uri.getHost() == null) return null;
+                return InetAddress.getByName(value).getAddress();
+            } catch (IOException | java.net.URISyntaxException e) { return null; }
         }
         String[] parts = value.split("\\.", -1);
         if (parts.length != 4) return null;
