@@ -77,7 +77,8 @@ class ClientTest(unittest.TestCase):
         self.assertEqual({"protocolVersion": 1, "methods": [{"name": "session.list"}], "legacy": True}, client.describe())
 
     def test_describe_preserves_optional_compatibility(self):
-        compatibility = {"androidApi": 36, "capabilities": {"nativeDns": "UNKNOWN"}}
+        compatibility = {"androidApi": 36, "capabilities": {"nativeDns": "UNKNOWN"},
+                         "networkObservation": {"scope": "ANDROID_PROBE_NETWORK_EXAMPLE_COM", "dns": "RESOLVED"}}
         def server(sock):
             request = json.loads(read_frame(sock))
             self.assertEqual("system.describe", request["method"])

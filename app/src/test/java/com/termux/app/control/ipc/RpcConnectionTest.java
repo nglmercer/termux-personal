@@ -72,6 +72,42 @@ public class RpcConnectionTest extends TestCase {
         assertEquals(1, backend.calls);
     }
 
+    public void testObservationIsRefreshedOnConnectionWorkerAndCanDisappear() throws Exception {
+        com.termux.app.compat.profile.CompatibilityProfile profile = new com.termux.app.compat.profile.CompatibilityProfile(
+            36, 28, 10, "Example", "Device", "16", "6.1", new String[]{"arm64-v8a"});
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicReference<Thread> observedThread = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.Map<String, Object> observation = new java.util.LinkedHashMap<>();
+        observation.put("scope", "ANDROID_PROBE_NETWORK_EXAMPLE_COM");
+        observation.put("ageSeconds", 3);
+        observation.put("dns", "RESOLVED");
+        observation.put("https", "HTTP_RESPONSE");
+        observation.put("httpStatus", 403);
+        DomainServices services = new DomainServices(null, null, null, null, null, profile, () -> {
+            observedThread.set(Thread.currentThread());
+            return calls.getAndIncrement() == 0 ? observation : null;
+        });
+        java.util.concurrent.ExecutorService serviceThread = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            ServiceThreadDispatch onService = new ServiceThreadDispatch(serviceThread, () -> false, 20);
+            RpcConnection connection = new RpcConnection(new ControlCore(backend), onService, Collections.emptySet(), () -> true,
+                null, () -> { }, services);
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            connection.serve(1000, 1000, new ByteArrayInputStream(requests(
+                "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"system.hello\",\"params\":{\"version\":1}}",
+                "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"system.describe\"}",
+                "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"system.describe\"}")), out);
+            ByteArrayInputStream replies = new ByteArrayInputStream(out.toByteArray());
+            read(replies);
+            JsonObject first = read(replies).getAsJsonObject("result").getAsJsonObject("compatibility");
+            assertEquals("RESOLVED", first.getAsJsonObject("networkObservation").get("dns").getAsString());
+            assertEquals("UNKNOWN", first.getAsJsonObject("capabilities").get("nativeDns").getAsString());
+            assertFalse(read(replies).getAsJsonObject("result").getAsJsonObject("compatibility").has("networkObservation"));
+            assertEquals(Thread.currentThread(), observedThread.get());
+            assertEquals(2, calls.get());
+        } finally { serviceThread.shutdownNow(); }
+    }
+
     public void testWriteClientCannotCloseWithoutSeparateScope() throws Exception {
         backend.closeEnabled = true;
         String hello = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"system.hello\",\"params\":{\"version\":1}}";

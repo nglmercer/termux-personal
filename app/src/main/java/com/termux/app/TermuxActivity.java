@@ -1370,7 +1370,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private void showCompatibilityNetwork() {
         final String snapshot = com.termux.app.compat.network.NetworkDiagnostics.snapshot(this);
         com.termux.app.compat.cli.WebCommandShim.Status doctor = com.termux.app.compat.cli.WebCommandShim.ensureDoctor(this);
-        showCompatibilityNetworkReport(snapshot + "\n\n" + getString(R.string.compat_network_description) + "\n\n" +
+        java.util.Map<String, Object> recent = com.termux.app.compat.network.AndroidNetworkObservations.current();
+        String previous = recent == null ? getString(R.string.compat_network_no_recent) :
+            getString(R.string.compat_network_recent, recent.get("ageSeconds"), recent.get("dns"), recent.get("https"));
+        showCompatibilityNetworkReport(snapshot + "\n\n" + previous + "\n\n" + getString(R.string.compat_network_description) + "\n\n" +
             getString(R.string.compat_doctor_description, doctor.name()), true);
     }
 

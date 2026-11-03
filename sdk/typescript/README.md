@@ -22,4 +22,4 @@ Install development dependencies with `npm ci` in this directory. From the repos
 
 The socket timeout also applies while the connection is idle; an expired connection must be replaced with a new client. The SDK does not reconnect or replay requests automatically.
 
-`describe()` may return an optional `compatibility` object with passive, bounded device metadata and capability states. Treat an absent field or `UNKNOWN` as unevaluated; discovery does not run network or browser tests and does not grant additional permissions.
+`describe()` may return an optional `compatibility` object with passive, bounded device metadata and capability states. Treat an absent field or `UNKNOWN` as unevaluated; discovery does not run network or browser tests and does not grant additional permissions. A short-lived `networkObservation`, when present, reports a prior user-initiated Android test of example.com only.

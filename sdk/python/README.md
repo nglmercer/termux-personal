@@ -18,4 +18,4 @@ Session helpers check advertised capabilities on each operation and raise `Unava
 
 From the repository root, run `GSON_JAR=... bash scripts/test-control-python-sdk.sh` after compiling debug Java classes. This runs socket-pair tests and a host Java protocol interoperability test; Android socket permissions are tested separately.
 
-`describe()` may include a `compatibility` dictionary with passive, bounded device metadata and capability states. An absent field or `UNKNOWN` means unevaluated; discovery does not run network or browser tests or grant additional permissions.
+`describe()` may include a `compatibility` dictionary with passive, bounded device metadata and capability states. An absent field or `UNKNOWN` means unevaluated; discovery does not run network or browser tests or grant additional permissions. A short-lived `networkObservation`, when present, reports a prior user-initiated Android test of example.com only.

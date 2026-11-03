@@ -20,17 +20,26 @@ final class DomainServices {
     final FileService files;
     final WorkspaceRepository workspaces;
     final com.termux.app.compat.profile.CompatibilityProfile compatibility;
+    final ObservationSource networkObservations;
+    interface ObservationSource { java.util.Map<String, Object> current(); }
 
     DomainServices(JobCoordinator jobs, JobAuthority jobAuthority, ProcessService processes, FileService files,
                    WorkspaceRepository workspaces) {
-        this(jobs, jobAuthority, processes, files, workspaces, null);
+        this(jobs, jobAuthority, processes, files, workspaces, null, null);
     }
 
     DomainServices(JobCoordinator jobs, JobAuthority jobAuthority, ProcessService processes, FileService files,
                    WorkspaceRepository workspaces, com.termux.app.compat.profile.CompatibilityProfile compatibility) {
+        this(jobs, jobAuthority, processes, files, workspaces, compatibility, null);
+    }
+
+    DomainServices(JobCoordinator jobs, JobAuthority jobAuthority, ProcessService processes, FileService files,
+                   WorkspaceRepository workspaces, com.termux.app.compat.profile.CompatibilityProfile compatibility,
+                   ObservationSource networkObservations) {
         if ((jobs == null) != (jobAuthority == null)) throw new IllegalArgumentException("job coordinator and authority required together");
         this.jobs = jobs; this.jobAuthority = jobAuthority; this.processes = processes; this.files = files; this.workspaces = workspaces;
         this.compatibility = compatibility;
+        this.networkObservations = networkObservations;
     }
 
     /** Feature names that gate method families: "jobs", "processes", "files" and "workspaces". */

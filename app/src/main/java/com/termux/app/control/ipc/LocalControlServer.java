@@ -64,7 +64,8 @@ public final class LocalControlServer implements AutoCloseable {
         com.termux.app.compat.profile.CompatibilityProfile profile = null;
         try { profile = com.termux.app.compat.profile.CompatibilityProbe.snapshot(mContext); }
         catch (RuntimeException ignored) { /* Discovery is optional and must not prevent control startup. */ }
-        mServices = new DomainServices(jobs, jobAuthority, processes, files, workspaces, profile);
+        mServices = new DomainServices(jobs, jobAuthority, processes, files, workspaces, profile,
+            com.termux.app.compat.network.AndroidNetworkObservations::current);
     }
 
     /** Scopes must come from an explicit trusted local configuration, not a client request. */

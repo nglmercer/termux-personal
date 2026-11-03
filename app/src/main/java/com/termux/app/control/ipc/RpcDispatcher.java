@@ -34,6 +34,7 @@ public final class RpcDispatcher {
     private final RpcNegotiation mNegotiation = new RpcNegotiation();
     private final OutputClientLease mOutput;
     private final DomainServices mServices;
+    private Map<String, Object> mNetworkObservation;
 
     public RpcDispatcher(ControlCore core) { this(core, null, DomainServices.NONE); }
 
@@ -106,6 +107,14 @@ public final class RpcDispatcher {
 
     public boolean isNegotiated() { return mNegotiation.isReady(); }
 
+    /** Call on the connection worker: Android network-state IPC must not block the service thread. */
+    void prepareCompatibilityObservation() {
+        mNetworkObservation = null;
+        if (mServices.compatibility == null || mServices.networkObservations == null) return;
+        try { mNetworkObservation = mServices.networkObservations.current(); }
+        catch (RuntimeException ignored) { /* Optional observations never break discovery. */ }
+    }
+
     private Object invoke(RpcRequestParser.Request request, Set<ControlCore.Scope> scopes, byte[] binary, String newToken)
         throws ControlCore.ControlException, BadParameters, UnknownMethod, DomainError {
         switch (request.method) {
@@ -132,7 +141,11 @@ public final class RpcDispatcher {
                 Map<String, Object> result = new LinkedHashMap<>();
                 result.put("protocolVersion", ControlCore.PROTOCOL_VERSION); result.put("schemaRevision", "1.1");
                 result.put("methods", descriptions); result.put("limits", limits);
-                if (mServices.compatibility != null) result.put("compatibility", mServices.compatibility.toMap());
+                if (mServices.compatibility != null) {
+                    Map<String, Object> compatibility = mServices.compatibility.toMap();
+                    if (mNetworkObservation != null) compatibility.put("networkObservation", mNetworkObservation);
+                    result.put("compatibility", compatibility);
+                }
                 return result;
             }
             case "session.list":

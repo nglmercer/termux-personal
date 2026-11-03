@@ -469,7 +469,7 @@
     <string name="compat_pending_copy">Copy</string>
     <string name="compat_url_failed">Could not open web link: %1$s</string>
     <string name="compat_network_title">Compatibility network diagnostics</string>
-    <string name="compat_network_description">No connectivity test has run. The test sends a DNS query and an HTTPS HEAD request to example.com using Android networking. It does not test CLI networking.</string>
+    <string name="compat_network_description">The test sends a DNS query and an HTTPS HEAD request to example.com using Android networking. It does not test CLI networking.</string>
     <string name="compat_network_test">Test example.com</string>
     <string name="compat_network_running">Testing DNS and HTTPS to example.com. This may take up to 10 seconds.</string>
     <string name="compat_title">Compatibility diagnostics</string>
@@ -489,4 +489,6 @@
     <string name="compat_url_shim_description">Optional URL wrapper: %1$s. For a single command, set BROWSER to "$TERMUX_APP__FILES_DIR/compat-v1/termux-open-url". To opt this shell into the wrapper for the termux-open-url command, prepend "$TERMUX_APP__FILES_DIR/compat-v1" to PATH. Existing BROWSER, PATH and package files are not changed automatically.</string>
     <string name="compat_doctor_description">Shell diagnostics: %1$s. Run "$TERMUX_APP__FILES_DIR/compat-v1/termux-compat" doctor in the shell to test that process environment. It contacts example.com using curl; use --json for sanitized output.</string>
     <string name="compat_overview_title">Compatibility overview</string>
+    <string name="compat_network_no_recent">No recent Android network observation is available.</string>
+    <string name="compat_network_recent">When this dialog opened, the last example.com test was %1$s seconds old: DNS %2$s; HTTPS %3$s. This snapshot can expire or the network can change.</string>
 </resources>

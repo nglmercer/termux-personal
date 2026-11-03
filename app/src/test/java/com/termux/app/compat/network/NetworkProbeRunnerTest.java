@@ -26,6 +26,7 @@ public class NetworkProbeRunnerTest {
         };
         NetworkCompatibilityReport result = NetworkProbeRunner.run(backend, new AtomicBoolean());
         assertEquals("failed (DNS_FAILURE)", result.dns);
+        assertEquals(NetworkCompatibilityReport.DnsStatus.DNS_FAILURE, result.dnsStatus);
         assertEquals(NetworkCompatibilityReport.Status.HTTP_RESPONSE, result.status);
         assertEquals(403, result.httpStatus);
         assertFalse(result.describe().contains("secret"));
@@ -34,6 +35,19 @@ public class NetworkProbeRunnerTest {
         assertEquals(3000, connection.getReadTimeout());
         assertFalse(connection.getInstanceFollowRedirects());
         assertTrue(connection.disconnected);
+    }
+    @Test public void reportsResolverSuccessSeparatelyFromTheHttpsResult() throws Exception {
+        FakeConnection connection = new FakeConnection();
+        NetworkProbeRunner.Backend backend = new NetworkProbeRunner.Backend() {
+            @Override public InetAddress[] resolve() throws IOException {
+                return new InetAddress[]{InetAddress.getByAddress(new byte[]{127, 0, 0, 1})};
+            }
+            @Override public HttpURLConnection open() { return connection; }
+        };
+        NetworkCompatibilityReport result = NetworkProbeRunner.run(backend, new AtomicBoolean());
+        assertEquals(NetworkCompatibilityReport.DnsStatus.RESOLVED, result.dnsStatus);
+        assertEquals(NetworkCompatibilityReport.Status.HTTP_RESPONSE, result.status);
+        assertEquals(403, result.httpStatus);
     }
     @Test public void deadlinePreventsStartingHttpsAfterResolverReturns() {
         NetworkProbeRunner.Backend backend = new NetworkProbeRunner.Backend() {

@@ -62,6 +62,7 @@ public final class NetworkDiagnostics {
 
     /** Completion or deadline is delivered once on the main thread. DNS may outlive the deadline. */
     public static void probe(Context context, Callback callback) {
+        AndroidNetworkObservations.clear();
         Context app = context.getApplicationContext();
         Handler handler = new Handler(Looper.getMainLooper());
         AtomicBoolean delivered = new AtomicBoolean();
@@ -98,12 +99,18 @@ public final class NetworkDiagnostics {
             if (manager == null) return new NetworkCompatibilityReport("not tested", NetworkCompatibilityReport.Status.UNAVAILABLE, 0);
             Network network = manager.getActiveNetwork();
             if (network == null) return new NetworkCompatibilityReport("not tested", NetworkCompatibilityReport.Status.NO_NETWORK, 0);
-            return NetworkProbeRunner.run(new NetworkProbeRunner.Backend() {
+            NetworkObservationStore.Ticket ticket = AndroidNetworkObservations.begin(context, network);
+            NetworkCompatibilityReport report = NetworkProbeRunner.run(new NetworkProbeRunner.Backend() {
                 @Override public java.net.InetAddress[] resolve() throws java.io.IOException { return network.getAllByName("example.com"); }
                 @Override public java.net.HttpURLConnection open() throws java.io.IOException {
                     return (java.net.HttpURLConnection) network.openConnection(new URL("https://example.com/"));
                 }
             }, delivered);
+            if (!delivered.get()) {
+                try { AndroidNetworkObservations.finish(ticket, report); }
+                catch (RuntimeException ignored) { /* Tracking is optional; retain the probe result. */ }
+            }
+            return report;
         } catch (RuntimeException e) {
             return new NetworkCompatibilityReport("not tested", NetworkErrorClassifier.classify(e), 0);
         }

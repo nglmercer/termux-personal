@@ -100,6 +100,7 @@ final class RpcConnection {
             final String token = mTokenRandom != null && "session.output.subscribe".equals(request.method) && request.hasId ? freshToken() : null;
             RpcDispatcher.Result response;
             try {
+                if ("system.describe".equals(request.method)) dispatcher.prepareCompatibilityObservation();
                 if (ControlMethodRegistry.runsOffServiceThread(request.method)) {
                     response = !mRunning.get() ? null : dispatcher.dispatchResult(request, mScopes, payload, token);
                 } else {

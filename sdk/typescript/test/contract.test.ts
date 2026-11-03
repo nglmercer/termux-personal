@@ -66,6 +66,10 @@ test("compatibility discovery is optional and validates reported capability stat
   assert.equal(validate(fixture), true);
   const legacy = structuredClone(fixture); delete legacy.compatibility;
   assert.equal(validate(legacy), true);
+  const withoutObservation = structuredClone(fixture); delete withoutObservation.compatibility.networkObservation;
+  assert.equal(validate(withoutObservation), true);
+  const expired = structuredClone(fixture); expired.compatibility.networkObservation.ageSeconds = 60;
+  assert.equal(validate(expired), false);
   const invalid = structuredClone(fixture); invalid.compatibility.capabilities.nativeDns = "CERTAINLY_WORKS";
   assert.equal(validate(invalid), false);
   const oversized = structuredClone(fixture); oversized.compatibility.model = "x".repeat(65);

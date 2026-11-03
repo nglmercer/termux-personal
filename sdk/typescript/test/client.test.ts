@@ -42,7 +42,8 @@ test("optional describe falls back to capabilities", async () => {
 });
 
 test("describe preserves optional compatibility data", async () => {
-  const compatibility = { androidApi: 36, capabilities: { nativeDns: "UNKNOWN" } };
+  const compatibility = { androidApi: 36, capabilities: { nativeDns: "UNKNOWN" },
+    networkObservation: { scope: "ANDROID_PROBE_NETWORK_EXAMPLE_COM", dns: "RESOLVED" } };
   const peer = new MockTransport((request, transport) => transport.reply(request, {
     protocolVersion: 1, schemaRevision: "1.1", methods: [], limits: {}, compatibility,
   }));

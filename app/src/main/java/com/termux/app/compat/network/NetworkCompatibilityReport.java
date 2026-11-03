@@ -7,12 +7,19 @@ public final class NetworkCompatibilityReport {
         TLS_CERTIFICATE_FAILURE, TLS_HANDSHAKE_FAILURE, PROXY_FAILURE,
         HTTP_RESPONSE, NETWORK_OK, UNKNOWN, TIMEOUT, UNAVAILABLE
     }
+    public enum DnsStatus { NOT_TESTED, RESOLVED, NO_RECORDS, DNS_FAILURE, UNKNOWN }
     public final String dns;
+    public final DnsStatus dnsStatus;
     public final Status status;
     public final int httpStatus;
 
     public NetworkCompatibilityReport(String dns, Status status, int httpStatus) {
+        this(dns, DnsStatus.NOT_TESTED, status, httpStatus);
+    }
+    public NetworkCompatibilityReport(String dns, DnsStatus dnsStatus, Status status, int httpStatus) {
+        if (dns == null || dnsStatus == null || status == null) throw new IllegalArgumentException("Missing report field");
         this.dns = dns;
+        this.dnsStatus = dnsStatus;
         this.status = status;
         this.httpStatus = httpStatus;
     }
@@ -35,6 +42,7 @@ public final class NetworkCompatibilityReport {
         }
         return result.append("\nIPv4/IPv6 reachability, CLI DNS, CLI TLS and localhost callback: not tested.")
             .append("\nAn HTTP response, including 401 or 403, confirms a response, not service authorization.")
+            .append("\nThe active network can change during or after this test.")
             .toString();
     }
 }
