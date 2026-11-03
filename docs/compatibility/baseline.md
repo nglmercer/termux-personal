@@ -2,6 +2,8 @@
 
 Checkout: a3d964973230964640e6bc7abff5e91ab0324e6b, local `main`. The local tracking branch matched at audit time; remote freshness was not verified. No compatibility implementation is claimed here.
 
+Follow-up on 2026-11-03 at 21:17 UTC: `git ls-remote origin refs/heads/main` returned `34717be087a140b6e21fdd848df9a33640fdbd9d`. That commit was an ancestor of local `HEAD` (`26b8ba17`) at the time of the check, so the current local work already included the then-current remote `main`. This is a point-in-time observation, not a guarantee that the remote has not changed since.
+
 ## Source observations
 
 * The open receiver logs the entire incoming intent and URI at verbose level and includes the URI in a no-handler error. Authentication query parameters can therefore enter logs when those messages are enabled.
