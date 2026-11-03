@@ -23,6 +23,9 @@ public final class AndroidUrlLauncher {
     public static Activity resumedActivity() { return foreground.get(); }
     public static boolean isResumed(Activity activity) { return foreground.get() == activity; }
     public static String takePending() { return PENDING.poll(SystemClock.elapsedRealtime()); }
+    public static PendingUrlQueue.Request peekPending() { return PENDING.peek(SystemClock.elapsedRealtime()); }
+    public static boolean isPending(PendingUrlQueue.Request request) { return PENDING.isPending(request, SystemClock.elapsedRealtime()); }
+    public static String consumePending(PendingUrlQueue.Request request) { return PENDING.consume(request, SystemClock.elapsedRealtime()); }
 
     public static Status openFromReceiver(String url) {
         if (!UrlPolicy.isWebUrl(url)) return Status.INVALID_URI;

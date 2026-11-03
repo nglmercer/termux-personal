@@ -20,4 +20,20 @@ public class UrlPolicyTest {
         assertTrue(queue.offer("https://example.com/new", 300001));
         assertNull(queue.poll(0));
     }
+
+    @Test public void requestSurvivesAViewRecreationButExpiresAndCannotConsumeAnotherRequest() {
+        PendingUrlQueue queue = new PendingUrlQueue();
+        String url = "https://example.com/auth?code=private";
+        assertTrue(queue.offer(url, 10));
+        PendingUrlQueue.Request oldView = queue.peek(11);
+        assertSame(oldView, queue.peek(12)); // Showing or recreating a view does not consume it.
+        assertTrue(queue.isPending(oldView, 13));
+        assertNull(queue.peek(300010));
+        assertTrue(queue.offer(url, 300010)); // A later identical URL is a distinct request.
+        PendingUrlQueue.Request newView = queue.peek(300010);
+        assertNotSame(oldView, newView);
+        assertNull(queue.consume(oldView, 300011));
+        assertEquals(url, queue.consume(newView, 300011));
+        assertNull(queue.peek(300011));
+    }
 }

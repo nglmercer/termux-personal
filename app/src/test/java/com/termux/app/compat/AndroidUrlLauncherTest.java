@@ -53,7 +53,18 @@ public class AndroidUrlLauncherTest {
         assertNull(AndroidUrlLauncher.takePending());
         AndroidUrlLauncher.paused(a);
         assertEquals(AndroidUrlLauncher.Status.QUEUED_FOR_USER, AndroidUrlLauncher.openFromReceiver("https://example.com/c"));
-    }    @Test public void failedForegroundDispatchOffersDeferredUserAction() {
+    }
+    @Test public void pendingRequestRemainsAvailableUntilTheUserActs() {
+        assertEquals(AndroidUrlLauncher.Status.QUEUED_FOR_USER, AndroidUrlLauncher.openFromReceiver("https://example.com/auth?state=private"));
+        PendingUrlQueue.Request request = AndroidUrlLauncher.peekPending();
+        assertNotNull(request);
+        assertSame(request, AndroidUrlLauncher.peekPending());
+        assertTrue(AndroidUrlLauncher.isPending(request));
+        assertEquals("https://example.com/auth?state=private", AndroidUrlLauncher.consumePending(request));
+        assertFalse(AndroidUrlLauncher.isPending(request));
+        assertNull(AndroidUrlLauncher.consumePending(request));
+    }
+    @Test public void failedForegroundDispatchOffersDeferredUserAction() {
         TestActivity a = activity();
         a.failure = new ActivityNotFoundException();
         AndroidUrlLauncher.resumed(a);

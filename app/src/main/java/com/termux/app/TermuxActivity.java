@@ -418,31 +418,40 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
     private void showPendingWebUrl() {
         if (mPendingWebDialogShowing || !com.termux.app.compat.AndroidUrlLauncher.isResumed(this) || isFinishing()) return;
-        final String url = com.termux.app.compat.AndroidUrlLauncher.takePending();
-        if (url == null) return;
+        final com.termux.app.compat.PendingUrlQueue.Request request = com.termux.app.compat.AndroidUrlLauncher.peekPending();
+        if (request == null) return;
         mPendingWebDialogShowing = true;
         final boolean[] showingFailure = {false};
         new AlertDialog.Builder(this).setTitle(R.string.compat_pending_title)
             .setMessage(R.string.compat_pending_message)
             .setPositiveButton(R.string.compat_pending_open, (dialog, which) -> {
-                com.termux.app.compat.AndroidUrlLauncher.Status status = com.termux.app.compat.AndroidUrlLauncher.open(this, url);
+                if (!com.termux.app.compat.AndroidUrlLauncher.isPending(request)) return;
+                com.termux.app.compat.AndroidUrlLauncher.Status status = com.termux.app.compat.AndroidUrlLauncher.open(this, request.url());
+                if (status == com.termux.app.compat.AndroidUrlLauncher.Status.DISPATCHED_UNCONFIRMED)
+                    com.termux.app.compat.AndroidUrlLauncher.consumePending(request);
                 if (status != com.termux.app.compat.AndroidUrlLauncher.Status.DISPATCHED_UNCONFIRMED) {
                     showingFailure[0] = true;
                     new AlertDialog.Builder(this).setTitle(R.string.compat_pending_title)
                         .setMessage(getString(R.string.compat_url_failed, status.name()))
-                        .setPositiveButton(R.string.compat_pending_copy, (failure, button) ->
-                            com.termux.shared.interact.ShareUtils.copyTextToClipboard(this, url, getString(R.string.msg_select_url_copied_to_clipboard)))
-                        .setNegativeButton(android.R.string.cancel, null)
+                        .setPositiveButton(R.string.compat_pending_copy, (failure, button) -> copyPendingWebUrl(request))
+                        .setNegativeButton(android.R.string.cancel, (failure, button) -> com.termux.app.compat.AndroidUrlLauncher.consumePending(request))
+                        .setOnCancelListener(failure -> com.termux.app.compat.AndroidUrlLauncher.consumePending(request))
                         .setOnDismissListener(failure -> { mPendingWebDialogShowing = false; showPendingWebUrl(); showPendingBrowserTest(); })
                         .show();
                 }
             })
-            .setNeutralButton(R.string.compat_pending_copy, (dialog, which) ->
-                com.termux.shared.interact.ShareUtils.copyTextToClipboard(this, url, getString(R.string.msg_select_url_copied_to_clipboard)))
-            .setNegativeButton(android.R.string.cancel, null)
+            .setNeutralButton(R.string.compat_pending_copy, (dialog, which) -> copyPendingWebUrl(request))
+            .setNegativeButton(android.R.string.cancel, (dialog, which) -> com.termux.app.compat.AndroidUrlLauncher.consumePending(request))
+            .setOnCancelListener(dialog -> com.termux.app.compat.AndroidUrlLauncher.consumePending(request))
             .setOnDismissListener(dialog -> {
                 if (!showingFailure[0]) { mPendingWebDialogShowing = false; showPendingWebUrl(); showPendingBrowserTest(); }
             }).show();
+    }
+
+    private void copyPendingWebUrl(com.termux.app.compat.PendingUrlQueue.Request request) {
+        String url = com.termux.app.compat.AndroidUrlLauncher.consumePending(request);
+        if (url != null)
+            com.termux.shared.interact.ShareUtils.copyTextToClipboard(this, url, getString(R.string.msg_select_url_copied_to_clipboard));
     }
 
     @Override

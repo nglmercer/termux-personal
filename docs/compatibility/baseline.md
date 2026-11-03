@@ -27,6 +27,8 @@ The authentication diagnostics offer an explicit temporary loopback listener tes
 
 Foreground web dispatch failures now retain the URL for explicit open or copy, with no URL displayed in the fallback dialog. The queue remains in memory, bounded and expiring; process death discards it. The Android loopback instrumentation test is included and its APK builds, but it has not been run on a device.
 
+Deferred requests stay in the queue while their dialog is displayed, so a recreated activity can offer the same request again. An explicit open, copy or cancellation consumes it; a failed open keeps it available for copy or cancellation. Requests still expire after five minutes, including while a dialog is visible, and a stale dialog cannot consume a later request. Host tests cover queue identity and expiry; Android lifecycle behavior remains unverified.
+
 An optional browser callback test now opens a temporary IPv4 loopback URL with a random one-time path and waits up to 30 seconds. It retains only the dispatch and test outcome, reads no OAuth session data, and bounds request count and header consumption. A received request establishes only that the temporary listener received the matching request; it does not establish browser visibility, a CLI callback, or an OAuth exchange. Browser and actual-device behavior remain untested. The separate loopback probe covers in-process IPv4 and IPv6 sockets; the browser probe currently uses IPv4 only.
 
 For a CLI that honors `BROWSER`, select the installed wrapper explicitly for that invocation:
