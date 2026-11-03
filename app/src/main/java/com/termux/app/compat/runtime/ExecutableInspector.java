@@ -83,8 +83,13 @@ public final class ExecutableInspector {
                     while (separator < line.length() && line.charAt(separator) != ' ' && line.charAt(separator) != '\t') separator++;
                     String interpreter = line.substring(0, separator);
                     if (!interpreter.startsWith("/")) return result(Status.INVALID_FORMAT, "Script does not name an absolute interpreter.");
-                    return result(executable ? Status.UNTESTED : Status.EXECUTION_DENIED,
-                        "Format: script\nInterpreter: " + interpreter + "\nInterpreter arguments and PATH: not inspected. Termux execution shims may rewrite shebangs.");
+                    String detail = "Format: script\nInterpreter: " + interpreter +
+                        "\nInterpreter arguments and PATH: not inspected. Termux execution shims may rewrite shebangs.";
+                    if (!executable) return result(Status.EXECUTION_DENIED, detail + "\nFile lacks execute access for this process.");
+                    File executableInterpreter = new File(interpreter);
+                    if (!executableInterpreter.isFile() || !executableInterpreter.canExecute())
+                        return result(Status.MISSING_INTERPRETER, detail + "\nThe literal interpreter is absent or not executable in the app process; execution shims were not tested.");
+                    return result(Status.UNTESTED, detail + "\nThe literal interpreter is present; compatibility is not established.");
                 }
                 if (first.length < 16 || first[0] != 0x7f || first[1] != 'E' || first[2] != 'L' || first[3] != 'F')
                     return result(Status.INVALID_FORMAT, "Neither a recognized ELF file nor a shebang script.");

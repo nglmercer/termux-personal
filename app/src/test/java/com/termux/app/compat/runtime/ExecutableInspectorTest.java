@@ -84,6 +84,17 @@ public class ExecutableInspectorTest {
         assertTrue(report.detail.contains("/usr/bin/env"));
         assertFalse(report.describe().contains("secret"));
     }
+    @Test public void identifiesMissingLiteralScriptInterpreterWithoutTestingShims() throws Exception {
+        File absent = new File(temp.getRoot(), "absent-interpreter");
+        File script = file(("#!" + absent.getAbsolutePath() + " --private-argument\n").getBytes(StandardCharsets.US_ASCII));
+        ExecutableInspector.Report report = ExecutableInspector.inspect(script, new String[0], null);
+        assertEquals(ExecutableInspector.Status.MISSING_INTERPRETER, report.status);
+        assertTrue(report.detail.contains("execution shims were not tested"));
+        assertFalse(report.describe().contains("private-argument"));
+        assertTrue(absent.createNewFile());
+        assertTrue(absent.setExecutable(true));
+        assertEquals(ExecutableInspector.Status.UNTESTED, ExecutableInspector.inspect(script, new String[0], null).status);
+    }
     @Test public void detectsMalformedAndNonExecutableFiles() throws Exception {
         File binary = file(elf64(183, null));
         assertTrue(binary.setExecutable(false, false));
