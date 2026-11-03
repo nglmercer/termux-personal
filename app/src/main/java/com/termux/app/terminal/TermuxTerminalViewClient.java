@@ -740,7 +740,7 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
         }
         AndroidUrlLauncher.Status status = AndroidUrlLauncher.open(mActivity, url);
         if (status != AndroidUrlLauncher.Status.DISPATCHED_UNCONFIRMED)
-            Toast.makeText(mActivity, mActivity.getString(R.string.compat_url_failed, status.name()), Toast.LENGTH_LONG).show();
+            mActivity.showWebOpenFailure(url, status);
     }
 
     public void reportIssueFromTranscript() {

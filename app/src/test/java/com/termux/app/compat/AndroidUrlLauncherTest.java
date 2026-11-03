@@ -12,9 +12,11 @@ import static org.junit.Assert.*;
 
 @RunWith(RobolectricTestRunner.class)
 public class AndroidUrlLauncherTest {
-    public static class TestActivity extends Activity {
+    public static class TestActivity extends Activity implements AndroidUrlLauncher.PendingListener {
         Intent dispatched;
         RuntimeException failure;
+        int pendingNotifications;
+        @Override public void onPendingWebUrl() { pendingNotifications++; }
         @Override public void startActivity(Intent intent) {
             if (failure != null) throw failure;
             dispatched = intent;
@@ -51,5 +53,13 @@ public class AndroidUrlLauncherTest {
         assertNull(AndroidUrlLauncher.takePending());
         AndroidUrlLauncher.paused(a);
         assertEquals(AndroidUrlLauncher.Status.QUEUED_FOR_USER, AndroidUrlLauncher.openFromReceiver("https://example.com/c"));
+    }    @Test public void failedForegroundDispatchOffersDeferredUserAction() {
+        TestActivity a = activity();
+        a.failure = new ActivityNotFoundException();
+        AndroidUrlLauncher.resumed(a);
+        assertEquals(AndroidUrlLauncher.Status.QUEUED_FOR_USER, AndroidUrlLauncher.openFromReceiver("https://example.com/auth?code=secret"));
+        assertEquals(1, a.pendingNotifications);
+        assertEquals("https://example.com/auth?code=secret", AndroidUrlLauncher.takePending());
     }
+
 }

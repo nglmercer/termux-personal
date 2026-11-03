@@ -10,6 +10,7 @@ import java.lang.ref.WeakReference;
 
 /** Web dispatch and foreground-only deferred requests. Call on the main thread. */
 public final class AndroidUrlLauncher {
+    public interface PendingListener { void onPendingWebUrl(); }
     public enum Status { DISPATCHED_UNCONFIRMED, QUEUED_FOR_USER, NO_HANDLER, INVALID_URI, SECURITY_RESTRICTED, UNAVAILABLE, FAILED }
     private static final PendingUrlQueue PENDING = new PendingUrlQueue();
     private static WeakReference<Activity> foreground = new WeakReference<>(null);
@@ -25,8 +26,14 @@ public final class AndroidUrlLauncher {
     public static Status openFromReceiver(String url) {
         if (!UrlPolicy.isWebUrl(url)) return Status.INVALID_URI;
         Activity activity = foreground.get();
-        if (activity != null && !activity.isFinishing()) return open(activity, url);
-        return PENDING.offer(url, SystemClock.elapsedRealtime()) ? Status.QUEUED_FOR_USER : Status.UNAVAILABLE;
+        if (activity != null && !activity.isFinishing()) {
+            Status status = open(activity, url);
+            if (status == Status.DISPATCHED_UNCONFIRMED) return status;
+        }
+        if (!PENDING.offer(url, SystemClock.elapsedRealtime())) return Status.UNAVAILABLE;
+        if (activity instanceof PendingListener && !activity.isFinishing())
+            ((PendingListener) activity).onPendingWebUrl();
+        return Status.QUEUED_FOR_USER;
     }
 
     public static Status open(Activity activity, String url) {

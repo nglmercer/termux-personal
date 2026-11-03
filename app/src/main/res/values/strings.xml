@@ -464,7 +464,7 @@
         <item>Classic</item><item>Coding</item><item>Vim</item><item>Tmux</item><item>Compact</item>
     </string-array>
     <string name="compat_pending_title">Open a requested web link?</string>
-    <string name="compat_pending_message">A terminal process requested a browser while Termux was in the background. Open or copy the link only if you trust the process.</string>
+    <string name="compat_pending_message">A terminal process requested a web link. Open or copy the link only if you trust the process.</string>
     <string name="compat_pending_open">Open</string>
     <string name="compat_pending_copy">Copy</string>
     <string name="compat_url_failed">Could not open web link: %1$s</string>
@@ -479,4 +479,8 @@
     <string name="compat_runtime_inspect">Inspect</string>
     <string name="compat_runtime_absolute">Enter an absolute file path.</string>
     <string name="compat_runtime_busy">An executable inspection is already running.</string>
+    <string name="compat_auth_title">Browser authentication diagnostics</string>
+    <string name="compat_auth_description">Test temporary IPv4 and IPv6 localhost listeners without opening a browser or accessing an authentication session. If a CLI supports BROWSER, you can explicitly run it with BROWSER=termux-open. Existing BROWSER settings are not changed. External browser callbacks and the CLI’s own listener require separate testing.</string>
+    <string name="compat_auth_test">Test localhost</string>
+    <string name="compat_auth_busy">A localhost test is already running.</string>
 </resources>

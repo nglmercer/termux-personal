@@ -98,7 +98,7 @@ import java.util.List;
  * </ul>
  * about memory leaks.
  */
-public final class TermuxActivity extends AppCompatActivity implements ServiceConnection {
+public final class TermuxActivity extends AppCompatActivity implements ServiceConnection, com.termux.app.compat.AndroidUrlLauncher.PendingListener {
 
     /**
      * The connection to the {@link TermuxService}. Requested in {@link #onCreate(Bundle)} with a call to
@@ -220,6 +220,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private static final int CONTEXT_MENU_JOBS = 16;
     private static final int CONTEXT_MENU_FILES = 17;
     private static final int CONTEXT_MENU_WORKSPACES = 18;
+    private static final java.util.concurrent.atomic.AtomicBoolean COMPAT_LOOPBACK_BUSY = new java.util.concurrent.atomic.AtomicBoolean();
     private static final java.util.concurrent.atomic.AtomicBoolean COMPAT_EXECUTABLE_BUSY = new java.util.concurrent.atomic.AtomicBoolean();
     private final java.util.concurrent.atomic.AtomicBoolean mProcessSnapshotBusy = new java.util.concurrent.atomic.AtomicBoolean();
     private AlertDialog mProcessDialog;
@@ -398,22 +399,47 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         super.onPause();
     }
 
+    /** Offers a manual fallback without displaying the potentially sensitive link. */
+    public void showWebOpenFailure(String url, com.termux.app.compat.AndroidUrlLauncher.Status status) {
+        new AlertDialog.Builder(this).setTitle(R.string.compat_pending_title)
+            .setMessage(getString(R.string.compat_url_failed, status.name()))
+            .setPositiveButton(R.string.compat_pending_copy, (dialog, which) ->
+                com.termux.shared.interact.ShareUtils.copyTextToClipboard(this, url, getString(R.string.msg_select_url_copied_to_clipboard)))
+            .setNegativeButton(android.R.string.cancel, null).show();
+    }
+
+    private boolean mPendingWebDialogShowing;
+
+    @Override
+    public void onPendingWebUrl() { showPendingWebUrl(); }
+
     private void showPendingWebUrl() {
-        if (!com.termux.app.compat.AndroidUrlLauncher.isResumed(this) || isFinishing()) return;
+        if (mPendingWebDialogShowing || !com.termux.app.compat.AndroidUrlLauncher.isResumed(this) || isFinishing()) return;
         final String url = com.termux.app.compat.AndroidUrlLauncher.takePending();
         if (url == null) return;
+        mPendingWebDialogShowing = true;
+        final boolean[] showingFailure = {false};
         new AlertDialog.Builder(this).setTitle(R.string.compat_pending_title)
             .setMessage(R.string.compat_pending_message)
             .setPositiveButton(R.string.compat_pending_open, (dialog, which) -> {
                 com.termux.app.compat.AndroidUrlLauncher.Status status = com.termux.app.compat.AndroidUrlLauncher.open(this, url);
-                if (status != com.termux.app.compat.AndroidUrlLauncher.Status.DISPATCHED_UNCONFIRMED)
-                    android.widget.Toast.makeText(this, getString(R.string.compat_url_failed, status.name()), android.widget.Toast.LENGTH_LONG).show();
+                if (status != com.termux.app.compat.AndroidUrlLauncher.Status.DISPATCHED_UNCONFIRMED) {
+                    showingFailure[0] = true;
+                    new AlertDialog.Builder(this).setTitle(R.string.compat_pending_title)
+                        .setMessage(getString(R.string.compat_url_failed, status.name()))
+                        .setPositiveButton(R.string.compat_pending_copy, (failure, button) ->
+                            com.termux.shared.interact.ShareUtils.copyTextToClipboard(this, url, getString(R.string.msg_select_url_copied_to_clipboard)))
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .setOnDismissListener(failure -> { mPendingWebDialogShowing = false; showPendingWebUrl(); })
+                        .show();
+                }
             })
             .setNeutralButton(R.string.compat_pending_copy, (dialog, which) ->
                 com.termux.shared.interact.ShareUtils.copyTextToClipboard(this, url, getString(R.string.msg_select_url_copied_to_clipboard)))
             .setNegativeButton(android.R.string.cancel, null)
-            .setOnDismissListener(dialog -> showPendingWebUrl())
-            .show();
+            .setOnDismissListener(dialog -> {
+                if (!showingFailure[0]) { mPendingWebDialogShowing = false; showPendingWebUrl(); }
+            }).show();
     }
 
     @Override
@@ -1204,11 +1230,38 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     }
 
     private void showCompatibilityMenu() {
-        CharSequence[] actions = {getString(R.string.compat_network_title), getString(R.string.compat_runtime_title)};
+        CharSequence[] actions = {getString(R.string.compat_network_title), getString(R.string.compat_runtime_title), getString(R.string.compat_auth_title)};
         new AlertDialog.Builder(this).setTitle(R.string.compat_title).setItems(actions, (dialog, which) -> {
             if (which == 0) showCompatibilityNetwork();
-            else showExecutableInspector();
+            else if (which == 1) showExecutableInspector();
+            else showCompatibilityAuthentication();
         }).setNegativeButton(android.R.string.cancel, null).show();
+    }
+
+    private void showCompatibilityAuthentication() {
+        new AlertDialog.Builder(this).setTitle(R.string.compat_auth_title)
+            .setMessage(R.string.compat_auth_description)
+            .setPositiveButton(R.string.compat_auth_test, (dialog, which) -> {
+                if (!COMPAT_LOOPBACK_BUSY.compareAndSet(false, true)) {
+                    Toast.makeText(this, R.string.compat_auth_busy, Toast.LENGTH_LONG).show();
+                    return;
+                }
+                WeakReference<TermuxActivity> activity = new WeakReference<>(this);
+                android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
+                Thread worker = new Thread(() -> {
+                    com.termux.app.compat.network.LoopbackDiagnostics.Result result;
+                    try { result = com.termux.app.compat.network.LoopbackDiagnostics.probe(); }
+                    finally { COMPAT_LOOPBACK_BUSY.set(false); }
+                    handler.post(() -> {
+                        TermuxActivity current = activity.get();
+                        if (current == null || !com.termux.app.compat.AndroidUrlLauncher.isResumed(current) || current.isFinishing()) return;
+                        new AlertDialog.Builder(current).setTitle(R.string.compat_auth_title)
+                            .setMessage(result.describe()).setPositiveButton(android.R.string.ok, null).show();
+                    });
+                }, "compat-loopback-probe");
+                worker.setDaemon(true);
+                worker.start();
+            }).setNegativeButton(android.R.string.cancel, null).show();
     }
 
     private void showExecutableInspector() {
