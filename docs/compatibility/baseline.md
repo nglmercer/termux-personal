@@ -29,6 +29,8 @@ The Compatibility diagnostics menu also offers a read-only executable inspector 
 
 For scripts, the inspector also checks whether the literal shebang interpreter is a regular executable file visible to the app process. A missing literal path is reported as `MISSING_INTERPRETER`; Termux execution shims can rewrite shebangs, so this result alone does not prove the script cannot run in a shell.
 
+The existing glibc exec shim recognizes `ld-linux` interpreters, not musl. Its glibc-side fallback restores the saved Bionic preload environment to other children without proving their C runtime; a musl child may therefore inherit preload libraries built for Bionic. Whether a particular musl loader accepts those libraries has not been tested. The executable inspector calls out this uncertainty; it does not modify the user's preload settings or establish musl compatibility.
+
 The authentication diagnostics offer an explicit temporary loopback listener test for IPv4 and IPv6. It binds only loopback addresses on ephemeral ports, sends no authentication data, and does not access a CLI's listener. A pass does not establish that an external browser can reach a CLI callback, that a port is available to another process, or that an OAuth exchange completed. Users can opt individual compatible commands into the existing receiver with `BROWSER=termux-open`; the app does not set or overwrite `BROWSER`. The upstream `termux-open-url` integration gap remains.
 
 Foreground web dispatch failures now retain the URL for explicit open or copy, with no URL displayed in the fallback dialog. The queue remains in memory, bounded and expiring; process death discards it. The Android loopback instrumentation test is included and its APK builds, but it has not been run on a device.

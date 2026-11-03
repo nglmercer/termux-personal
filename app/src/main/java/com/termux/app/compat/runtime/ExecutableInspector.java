@@ -130,6 +130,8 @@ public final class ExecutableInspector {
                     if (interpreter == null || !interpreter.startsWith("/")) return result(Status.INVALID_FORMAT, detail + "\nInvalid interpreter path.");
                 }
                 if (interpreter != null) detail += "\nInterpreter: " + interpreter + "\nRuntime: " + runtime(interpreter);
+                if (interpreter != null && "Linux musl".equals(runtime(interpreter)))
+                    detail += "\nShell-inherited preload libraries may target a different C runtime; their compatibility with this program is not tested.";
                 if (!executable) return result(Status.EXECUTION_DENIED, detail + "\nFile lacks execute access for this process.");
                 if (order == ByteOrder.BIG_ENDIAN)
                     return result(Status.ABI_MISMATCH, detail + "\nAndroid's native ABIs are little-endian; translation layers were not tested.");

@@ -51,6 +51,14 @@ public class ExecutableInspectorTest {
         assertEquals(ExecutableInspector.Status.UNTESTED, nativeAbi.status);
         assertTrue(nativeAbi.detail.contains("possibly static"));
     }
+    @Test public void muslReportDoesNotAssumeInheritedPreloadsAreCompatible() throws Exception {
+        File binary = file(elf64(183, "/missing/ld-musl-aarch64.so.1"));
+        ExecutableInspector.Report report = ExecutableInspector.inspect(binary, new String[]{"arm64-v8a"}, null);
+        assertEquals(ExecutableInspector.Status.MISSING_INTERPRETER, report.status);
+        assertTrue(report.detail.contains("Linux musl"));
+        assertTrue(report.detail.contains("preload libraries"));
+        assertTrue(report.detail.contains("not tested"));
+    }
     @Test public void rejectsMalformedOffsetsAndInterpreter() throws Exception {
         byte[] bad = elf64(183, "/system/bin/linker64");
         ByteBuffer.wrap(bad).order(ByteOrder.LITTLE_ENDIAN).putLong(32, Long.MAX_VALUE);
