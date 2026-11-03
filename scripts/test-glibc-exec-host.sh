@@ -12,6 +12,9 @@ cc -std=c11 -Wall -Wextra -Werror -Os -fPIC -shared -fno-builtin -fno-stack-prot
 cc -std=c11 -Wall -Wextra -Werror -Os -fPIC -shared -nostdlib -ffreestanding -fno-builtin -fno-stack-protector \
     -DTERMUX_GLIBC_SIDE=1 -DTERMUX_PREFIX="\"$out/prefix\"" "$repo_dir/app/src/main/cpp/glibc-exec.c" -o "$out/side1.so"
 cc -std=c11 -Wall -Wextra -Werror "$repo_dir/app/src/test/native/glibc-exec-test.c" -o "$out/probe"
+cc -std=c11 -Wall -Wextra -Werror -fno-builtin -DTERMUX_GLIBC_SIDE=0 \
+    -DTERMUX_PREFIX="\"$out/prefix\"" "$repo_dir/app/src/test/native/glibc-elf-bounds-test.c" -o "$out/elf-bounds" -ldl
+"$out/elf-bounds" "$out/probe" "$out/elf-fixture"
 fake="$out/prefix/glibc/lib/$(basename "$loader")"
 
 # A glibc program executed from a "bionic" process runs through the Termux loader, without LD_PRELOAD.

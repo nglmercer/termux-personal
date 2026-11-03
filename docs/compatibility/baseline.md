@@ -13,6 +13,8 @@ Checkout: a3d964973230964640e6bc7abff5e91ab0324e6b, local `main`. The local trac
 
 `bash scripts/test-glibc-exec-host.sh` passed on the host. This tests the shim with host fixtures, not Android hardware. `adb devices` showed no attached devices. Existing prior testing is recorded in `docs/next-generation/implementation-status.md`; it does not verify the requested compatibility matrix. Other compatibility phases, termux-tools versions, browser and network behavior remain unverified.
 
+The host shim checks also exercise malformed ELF64 program-header and interpreter offsets and sizes. They verify conservative pass-through of these fixtures, not execution on Android or support for ELF headers beyond the shim's first-page inspection limit.
+
 ## Implementation in progress
 
 The app now routes HTTP(S) receiver and terminal-link requests through a common web launcher. Background receiver requests are held only in a bounded, five-minute in-memory queue and presented for explicit open or copy when the activity resumes; process death drops them. Full incoming URI logging in the receiver was removed. Existing non-web and file paths remain separate. This does not intercept `termux-open-url` implementations that call `am start` directly. It does not prove Android displayed a dispatched URL. Instrumented lifecycle, shell-command, browser and ROM tests remain outstanding; later sections describe the partial diagnostics and SDK integration now implemented.

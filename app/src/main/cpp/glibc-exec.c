@@ -186,13 +186,17 @@ static int glibc_loader_for(const char *path, char *loader) {
 #define U32(o) ((unsigned long) head[o] | ((unsigned long) head[(o) + 1] << 8) | ((unsigned long) head[(o) + 2] << 16) | ((unsigned long) head[(o) + 3] << 24))
     unsigned long phoff = is64 ? U32(32) : U32(28);
     unsigned phentsize = is64 ? U16(54) : U16(42), phnum = is64 ? U16(56) : U16(44);
+    /* Only the first page is inspected. Reject high halves instead of silently truncating
+     * ELF64 offsets and sizes to an unrelated location within that page. */
+    if (is64 && U32(36) != 0) return 0;
     if (phentsize < (is64 ? 56u : 32u) || phnum > 64) return 0;
     for (unsigned i = 0; i < phnum; i++) {
         unsigned long ph = phoff + (unsigned long) i * phentsize;
-        if (ph + phentsize > (unsigned long) got) return 0;
+        if (ph < phoff || ph > (unsigned long) got || phentsize > (unsigned long) got - ph) return 0;
         if (U32(ph) != 3 /* PT_INTERP */) continue;
+        if (is64 && (U32(ph + 12) != 0 || U32(ph + 36) != 0)) return 0;
         unsigned long off = is64 ? U32(ph + 8) : U32(ph + 4), size = is64 ? U32(ph + 32) : U32(ph + 16);
-        if (size < 2 || size > 256 || off + size > (unsigned long) got) return 0;
+        if (size < 2 || size > 256 || off > (unsigned long) got || size > (unsigned long) got - off) return 0;
         const char *interp = (const char *) head + off;
         if (interp[size - 1] != 0) return 0;
         const char *base = interp;
