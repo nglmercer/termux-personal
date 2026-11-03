@@ -27,4 +27,22 @@ line=$(env -u LD_PRELOAD TERMUX_GLIBC_EXE="$host/probe" TERMUX_BIONIC_LD_PRELOAD
     "$host_loader" --library-path "$host/prefix/glibc/lib" --preload "$host/side1.so" \
     "$host/probe" run "$probe")
 [[ $line == "exe=$probe argv0=$probe glibc_exe=- preload=$ANDROID_EXEC_SHIM" ]] || { echo 'FAIL: glibc-to-musl handoff'; exit 1; }
+if [[ -n "${TERMUX_EXEC_SHIM:-}" ]]; then
+    [[ "$TERMUX_EXEC_SHIM" == /* && -r "$TERMUX_EXEC_SHIM" ]] || { echo 'TERMUX_EXEC_SHIM must be an absolute readable path.' >&2; exit 2; }
+    chain="$ANDROID_EXEC_SHIM:$TERMUX_EXEC_SHIM"
+    # This particular Bionic preload is expected to fail with this host's musl, not on all systems.
+    if failure=$(env -u TERMUX_GLIBC_EXE LD_PRELOAD="$chain" "$probe" report 2>&1); then
+        echo 'FAIL: bundled Bionic preload unexpectedly loaded on this musl host' >&2; exit 1
+    fi
+    [[ $failure == *'Error relocating'* ]] || { echo 'FAIL: expected a dynamic loader relocation failure' >&2; exit 1; }
+    if failure=$(env -u LD_PRELOAD TERMUX_GLIBC_EXE="$host/probe" TERMUX_BIONIC_LD_PRELOAD="$chain" \
+        "$host_loader" --library-path "$host/prefix/glibc/lib" --preload "$host/side1.so" \
+        "$host/probe" run "$probe" 2>&1); then
+        echo 'FAIL: glibc-to-musl handoff unexpectedly accepted the Bionic preload' >&2; exit 1
+    fi
+    [[ $failure == *'Error relocating'* ]] || { echo 'FAIL: expected a handoff relocation failure' >&2; exit 1; }
+    line=$(env -u LD_PRELOAD -u TERMUX_GLIBC_EXE "$probe" report)
+    [[ $line == "exe=$probe argv0=$probe glibc_exe=- preload=-" ]] || { echo 'FAIL: explicit preload removal'; exit 1; }
+    echo 'bundled Bionic preload relocation failure and explicit per-process removal reproduced'
+fi
 echo 'musl preload host checks passed; Android behavior remains untested'

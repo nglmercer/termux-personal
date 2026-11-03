@@ -131,7 +131,8 @@ public final class ExecutableInspector {
                 }
                 if (interpreter != null) detail += "\nInterpreter: " + interpreter + "\nRuntime: " + runtime(interpreter);
                 if (interpreter != null && "Linux musl".equals(runtime(interpreter)))
-                    detail += "\nShell-inherited preload libraries may target a different C runtime; their compatibility with this program is not tested.";
+                    detail += "\nShell-inherited preload libraries may target a different C runtime; their compatibility with this program is not tested." +
+                        " If preload relocation fails, an explicit per-command test is: env -u LD_PRELOAD /absolute/path/to/program. This removes all preloads for the command and its children, including Termux execution helpers and user-defined preloads; Android behavior is not verified.";
                 if (!executable) return result(Status.EXECUTION_DENIED, detail + "\nFile lacks execute access for this process.");
                 if (order == ByteOrder.BIG_ENDIAN)
                     return result(Status.ABI_MISMATCH, detail + "\nAndroid's native ABIs are little-endian; translation layers were not tested.");
