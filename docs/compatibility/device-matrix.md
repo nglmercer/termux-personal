@@ -10,4 +10,4 @@ Results below concern this compatibility audit, not prior ControlCore testing. N
 | a3d964973230964640e6bc7abff5e91ab0324e6b | unknown | 28 | Samsung / One UI | unknown | Compatibility suite | Pass | No device available | NOT_TESTED |
 | a3d964973230964640e6bc7abff5e91ab0324e6b | unknown | 28 | Other customized ROM | unknown | Compatibility suite | Pass | No device available | NOT_TESTED |
 | a3d964973230964640e6bc7abff5e91ab0324e6b | unknown | 28 | Emulator | unknown | API regression | Pass | Not run | NOT_TESTED |
-| c96885ab | 35 | 28 | Android 15 Google APIs emulator, software emulation | x86_64 | Compatibility instrumentation | Install app and execute tests | Android system server restarted while booting; installation failed with broken pipe; tests did not run | NOT_TESTED |
+| c96885ab | 35 | 28 | Android 15 Google APIs emulator, software emulation | x86_64 | Compatibility instrumentation | Install app and execute tests | Android system server repeatedly restarted during boot; watchdog reported a blocked main thread. Installation failed with broken pipe; tests did not run | NOT_TESTED |
