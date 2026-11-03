@@ -37,6 +37,16 @@ Host-side receiver tests check that a readable file produces a `content://` view
 
 An optional browser callback test now opens a temporary IPv4 loopback URL with a random one-time path and waits up to 30 seconds. It retains only the dispatch and test outcome, reads no OAuth session data, and bounds request count and header consumption. A received request establishes only that the temporary listener received the matching request; it does not establish browser visibility, a CLI callback, or an OAuth exchange. Browser and actual-device behavior remain untested. The separate loopback probe covers in-process IPv4 and IPv6 sockets; the browser probe currently uses IPv4 only.
 
+An instrumentation test can explicitly exercise an external `ACTION_VIEW` handler against the temporary listener. It is skipped unless opted in, because it opens another app and may require the browser's first-run setup. With the matching debug app and instrumentation APK installed on a selected test device, run:
+
+```sh
+adb -s DEVICE_SERIAL shell am instrument -w \
+  -e class com.termux.app.compat.ExternalBrowserCallbackInstrumentedTest \
+  -e compatExternalBrowser true com.termux.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+The test reports whether dispatch was accepted and the temporary listener received its random path; it does not identify which app handled the intent, prove browser visibility, or verify a CLI's authentication exchange. Record the selected default handler and any first-run interactions separately. The test APK builds, but this opt-in test has not yet run on Android.
+
 For a CLI that honors `BROWSER`, select the installed wrapper explicitly for that invocation:
 
 ```sh
