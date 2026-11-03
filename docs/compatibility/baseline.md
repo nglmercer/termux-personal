@@ -33,6 +33,8 @@ Foreground web dispatch failures now retain the URL for explicit open or copy, w
 
 Deferred requests stay in the queue while their dialog is displayed, so a recreated activity can offer the same request again. An explicit open, copy or cancellation consumes it; a failed open keeps it available for copy or cancellation. Requests still expire after five minutes, including while a dialog is visible, and a stale dialog cannot consume a later request. Host tests cover queue identity and expiry; Android lifecycle behavior remains unverified.
 
+Host-side receiver tests check that a readable file produces a `content://` view or send intent with a read grant and no write grant, including the inner intent of a chooser, and that a missing file is not dispatched. These tests inspect constructed intents only; they do not verify an external app's provider access, Android grant enforcement, or actual file sharing.
+
 An optional browser callback test now opens a temporary IPv4 loopback URL with a random one-time path and waits up to 30 seconds. It retains only the dispatch and test outcome, reads no OAuth session data, and bounds request count and header consumption. A received request establishes only that the temporary listener received the matching request; it does not establish browser visibility, a CLI callback, or an OAuth exchange. Browser and actual-device behavior remain untested. The separate loopback probe covers in-process IPv4 and IPv6 sockets; the browser probe currently uses IPv4 only.
 
 For a CLI that honors `BROWSER`, select the installed wrapper explicitly for that invocation:
