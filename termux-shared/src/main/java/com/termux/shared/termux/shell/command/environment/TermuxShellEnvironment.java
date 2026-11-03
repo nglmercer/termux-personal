@@ -79,6 +79,10 @@ public class TermuxShellEnvironment extends AndroidShellEnvironment {
         environment.put(ENV_HOME, TermuxConstants.TERMUX_HOME_DIR_PATH);
         environment.put(ENV_PREFIX, TermuxConstants.TERMUX_PREFIX_DIR_PATH);
 
+        // termux-tools expects an Android user ID, not UserManager's distinct serial number.
+        // Its fallback is user 0, which is wrong in secondary users and work profiles.
+        putAndroidUserId(environment, android.os.Process.myUid(), System.getenv("TERMUX__USER_ID"));
+
         // If failsafe is not enabled, then we keep default PATH and TMPDIR so that system binaries can be used
         if (!isFailSafe) {
             environment.put(ENV_TMPDIR, TermuxConstants.TERMUX_TMP_PREFIX_DIR_PATH);
@@ -97,6 +101,13 @@ public class TermuxShellEnvironment extends AndroidShellEnvironment {
         return environment;
     }
 
+
+    /** AOSP encodes uid as userId * 100000 + appId; no hidden API or serial-number assumption. */
+    static void putAndroidUserId(java.util.Map<String, String> environment, int uid, String inherited) {
+        if (environment.containsKey("TERMUX__USER_ID")) return;
+        if (inherited != null) environment.put("TERMUX__USER_ID", inherited);
+        else if (uid >= 0) environment.put("TERMUX__USER_ID", Integer.toString(uid / 100000));
+    }
 
     /** The fixed part: the conventional per-user directories on Linux. Everything else comes from path-append. */
     static final String[] USER_BIN_DIRS = {".local/bin", "bin"};
