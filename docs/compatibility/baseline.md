@@ -47,7 +47,7 @@ adb -s DEVICE_SERIAL shell am instrument -w \
   -e compatExternalBrowser true com.termux.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
-The test reports whether dispatch was accepted and the temporary listener received its random path; it does not identify which app handled the intent, prove browser visibility, or verify a CLI's authentication exchange. Record the selected default handler and any first-run interactions separately. The test APK builds, but this opt-in test has not yet run on Android.
+The test defaults to an IPv4 listener. Add `-e compatBrowserAddress ipv6` before the runner name to test an IPv6 `::1` listener instead; run the two families independently. IPv6 binding can fail on environments without IPv6 loopback. The test reports whether dispatch was accepted and the temporary listener received its random path; it does not identify which app handled the intent, prove browser visibility, or verify a CLI's authentication exchange. Record the selected default handler and any first-run interactions separately. The test APK builds, but neither external-handler test has yet run on Android. The app's interactive browser test still uses IPv4 only.
 
 For a CLI that honors `BROWSER`, select the installed wrapper explicitly for that invocation:
 

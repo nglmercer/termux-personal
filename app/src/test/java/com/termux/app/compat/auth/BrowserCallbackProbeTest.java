@@ -3,7 +3,9 @@ package com.termux.app.compat.auth;
 import org.junit.Test;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.InetAddress;
 import java.net.Socket;
+import java.net.SocketException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
@@ -58,5 +60,31 @@ public class BrowserCallbackProbeTest {
         BrowserCallbackProbe probe = new BrowserCallbackProbe(1000);
         probe.close();
         assertEquals(BrowserCallbackProbe.Status.CANCELLED, probe.await());
+    }
+    @Test public void ipv6ProbeUsesLoopbackAndAcceptsOnlyTheExactPath() throws Exception {
+        BrowserCallbackProbe created;
+        try { created = new BrowserCallbackProbe(3000, BrowserCallbackProbe.Family.IPV6); }
+        catch (SocketException unavailable) { org.junit.Assume.assumeNoException("IPv6 loopback unavailable", unavailable); return; }
+        try (BrowserCallbackProbe probe = created) {
+            URL url = new URL(probe.url());
+            assertTrue(probe.url().startsWith("http://[::1]:"));
+            assertTrue(com.termux.app.compat.UrlPolicy.isWebUrl(probe.url()));
+            byte[] loopback = new byte[16]; loopback[15] = 1;
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            try {
+                Future<BrowserCallbackProbe.Status> result = executor.submit(probe::await);
+                try (Socket wrong = new Socket(InetAddress.getByAddress(loopback), url.getPort())) {
+                    wrong.setSoTimeout(1000);
+                    wrong.getOutputStream().write(("GET " + url.getPath() + "?code=secret HTTP/1.1\r\nHost: [::1]\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+                    assertTrue(new String(wrong.getInputStream().readNBytes(24), StandardCharsets.US_ASCII).contains("404"));
+                }
+                try (Socket client = new Socket(InetAddress.getByAddress(loopback), url.getPort())) {
+                    client.setSoTimeout(1000);
+                    client.getOutputStream().write(("GET " + url.getPath() + " HTTP/1.1\r\nHost: [::1]\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+                    assertTrue(new String(client.getInputStream().readNBytes(24), StandardCharsets.US_ASCII).contains("200"));
+                }
+                assertEquals(BrowserCallbackProbe.Status.REQUEST_RECEIVED, result.get(4, TimeUnit.SECONDS));
+            } finally { executor.shutdownNow(); }
+        }
     }
 }

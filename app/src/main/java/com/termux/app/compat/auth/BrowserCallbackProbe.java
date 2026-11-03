@@ -17,16 +17,21 @@ import java.util.concurrent.TimeUnit;
 /** A one-time test request, not an OAuth endpoint. Never records request data. */
 public final class BrowserCallbackProbe implements Closeable {
     public enum Status { REQUEST_RECEIVED, TIMED_OUT, LIMIT_REACHED, CANCELLED, FAILED }
+    public enum Family { IPV4, IPV6 }
     private static final int MAX_HEADERS = 8192;
     private static final int MAX_CONNECTIONS = 8;
     private final ServerSocket listener;
     private final String path;
+    private final String urlHost;
     private final long durationNanos;
     private volatile boolean closed;
 
-    public BrowserCallbackProbe() throws IOException { this(30_000); }
-    BrowserCallbackProbe(long timeoutMs) throws IOException {
+    public BrowserCallbackProbe() throws IOException { this(30_000, Family.IPV4); }
+    public BrowserCallbackProbe(Family family) throws IOException { this(30_000, family); }
+    BrowserCallbackProbe(long timeoutMs) throws IOException { this(timeoutMs, Family.IPV4); }
+    BrowserCallbackProbe(long timeoutMs, Family family) throws IOException {
         if (timeoutMs <= 0 || timeoutMs > 30_000) throw new IllegalArgumentException("Invalid timeout");
+        if (family == null) throw new IllegalArgumentException("Missing address family");
         durationNanos = TimeUnit.MILLISECONDS.toNanos(timeoutMs);
         byte[] random = new byte[16];
         new SecureRandom().nextBytes(random);
@@ -34,11 +39,14 @@ public final class BrowserCallbackProbe implements Closeable {
         char[] hex = "0123456789abcdef".toCharArray();
         for (byte b : random) value.append(hex[(b & 255) >>> 4]).append(hex[b & 15]);
         path = value.toString();
+        urlHost = family == Family.IPV4 ? "127.0.0.1" : "[::1]";
+        byte[] loopback = family == Family.IPV4 ? new byte[]{127, 0, 0, 1} : new byte[16];
+        if (family == Family.IPV6) loopback[15] = 1;
         listener = new ServerSocket();
-        try { listener.bind(new InetSocketAddress(InetAddress.getByAddress(new byte[]{127, 0, 0, 1}), 0), 4); }
+        try { listener.bind(new InetSocketAddress(InetAddress.getByAddress(loopback), 0), 4); }
         catch (IOException | RuntimeException e) { try { listener.close(); } catch (IOException ignored) { } throw e; }
     }
-    public String url() { return "http://127.0.0.1:" + listener.getLocalPort() + path; }
+    public String url() { return "http://" + urlHost + ":" + listener.getLocalPort() + path; }
 
     /** Runs on a worker. No request headers, body, parameters or errors are retained. */
     public Status await() {

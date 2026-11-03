@@ -22,10 +22,13 @@ import static org.junit.Assert.assertEquals;
 /** Opt-in external-handler test. It does not perform OAuth or inspect authentication data. */
 @RunWith(AndroidJUnit4.class)
 public class ExternalBrowserCallbackInstrumentedTest {
-    @Test public void externalHandlerCanReachTemporaryIpv4Callback() throws Exception {
+    @Test public void externalHandlerCanReachTemporaryLoopbackCallback() throws Exception {
         Assume.assumeTrue("Requires explicit browser test opt-in",
             "true".equals(InstrumentationRegistry.getArguments().getString("compatExternalBrowser")));
-        try (BrowserCallbackProbe probe = new BrowserCallbackProbe();
+        String address = InstrumentationRegistry.getArguments().getString("compatBrowserAddress", "ipv4");
+        if (!"ipv4".equals(address) && !"ipv6".equals(address)) throw new IllegalArgumentException("Invalid test address family");
+        BrowserCallbackProbe.Family family = "ipv6".equals(address) ? BrowserCallbackProbe.Family.IPV6 : BrowserCallbackProbe.Family.IPV4;
+        try (BrowserCallbackProbe probe = new BrowserCallbackProbe(family);
              ActivityScenario<TermuxActivity> scenario = ActivityScenario.launch(TermuxActivity.class)) {
             ExecutorService worker = Executors.newSingleThreadExecutor();
             try {
