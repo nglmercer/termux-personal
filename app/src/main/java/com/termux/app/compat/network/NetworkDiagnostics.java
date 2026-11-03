@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /** Explicit network probes. A stuck resolver can occupy at most one daemon worker. */
 public final class NetworkDiagnostics {
-    private static final long TOTAL_TIMEOUT_MS = 10000;
+    private static final long TOTAL_TIMEOUT_MS = 12000;
     private static final ThreadPoolExecutor WORKER = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
         new SynchronousQueue<>(), task -> { Thread t = new Thread(task, "compat-network-probe"); t.setDaemon(true); return t; });
     private NetworkDiagnostics() {}
@@ -49,6 +49,7 @@ public final class NetworkDiagnostics {
                         out.append("\nPrivate DNS active: ").append(link == null ? "unknown" : link.isPrivateDnsActive());
                     out.append("\nHTTP proxy configured: ").append(manager.getDefaultProxy() != null).append('\n');
                 }
+                out.append("Process network binding: ").append(manager.getBoundNetworkForProcess() != null ? "explicit" : "default").append('\n');
             } catch (SecurityException | IllegalStateException e) {
                 out.append("Active network: unavailable\n");
             }
@@ -97,13 +98,17 @@ public final class NetworkDiagnostics {
             if (Build.VERSION.SDK_INT < 23) return new NetworkCompatibilityReport("not tested", NetworkCompatibilityReport.Status.UNAVAILABLE, 0);
             ConnectivityManager manager = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
             if (manager == null) return new NetworkCompatibilityReport("not tested", NetworkCompatibilityReport.Status.UNAVAILABLE, 0);
-            Network network = manager.getActiveNetwork();
+            Network bound = manager.getBoundNetworkForProcess();
+            Network network = bound != null ? bound : manager.getActiveNetwork();
             if (network == null) return new NetworkCompatibilityReport("not tested", NetworkCompatibilityReport.Status.NO_NETWORK, 0);
-            NetworkObservationStore.Ticket ticket = AndroidNetworkObservations.begin(context, network);
+            NetworkObservationStore.Ticket ticket = bound == null ? AndroidNetworkObservations.begin(context, network) : null;
             NetworkCompatibilityReport report = NetworkProbeRunner.run(new NetworkProbeRunner.Backend() {
-                @Override public java.net.InetAddress[] resolve() throws java.io.IOException { return network.getAllByName("example.com"); }
+                @Override public java.net.InetAddress[] resolve() throws java.io.IOException { return java.net.InetAddress.getAllByName("example.com"); }
                 @Override public java.net.HttpURLConnection open() throws java.io.IOException {
-                    return (java.net.HttpURLConnection) network.openConnection(new URL("https://example.com/"));
+                    return (java.net.HttpURLConnection) new URL("https://example.com/").openConnection();
+                }
+                @Override public NetworkCompatibilityReport.FamilyStatus tcpSample(java.net.InetAddress address) {
+                    return AndroidTcpSample.sample(manager, network, address, delivered);
                 }
             }, delivered);
             if (!delivered.get()) {

@@ -469,9 +469,9 @@
     <string name="compat_pending_copy">Copy</string>
     <string name="compat_url_failed">Could not open web link: %1$s</string>
     <string name="compat_network_title">Compatibility network diagnostics</string>
-    <string name="compat_network_description">The test sends a DNS query and an HTTPS HEAD request to example.com using Android networking. It does not test CLI networking.</string>
+    <string name="compat_network_description">The test sends a DNS query and an HTTPS HEAD request to example.com. It also samples one IPv4 and one IPv6 TCP address when available, skipping direct connections if a proxy, VPN, explicit process binding, or uncertain policy is detected. It does not test CLI networking.</string>
     <string name="compat_network_test">Test example.com</string>
-    <string name="compat_network_running">Testing DNS and HTTPS to example.com. This may take up to 10 seconds.</string>
+    <string name="compat_network_running">Testing DNS, HTTPS and TCP to example.com. This may take up to 12 seconds.</string>
     <string name="compat_title">Compatibility diagnostics</string>
     <string name="compat_runtime_title">Inspect executable</string>
     <string name="compat_runtime_description">Enter an absolute path to an executable or script. The file is inspected without running or changing it.</string>

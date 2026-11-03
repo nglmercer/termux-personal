@@ -49,6 +49,39 @@ public class NetworkProbeRunnerTest {
         assertEquals(NetworkCompatibilityReport.Status.HTTP_RESPONSE, result.status);
         assertEquals(403, result.httpStatus);
     }
+    @Test public void samplesIpv4AndIpv6SeparatelyAndStopsAfterDeadline() throws Exception {
+        FakeConnection connection = new FakeConnection();
+        AtomicBoolean delivered = new AtomicBoolean();
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        byte[] v6 = new byte[16]; v6[15] = 1;
+        NetworkProbeRunner.Backend backend = new NetworkProbeRunner.Backend() {
+            @Override public InetAddress[] resolve() throws IOException {
+                return new InetAddress[]{InetAddress.getByAddress(new byte[]{127, 0, 0, 1}), InetAddress.getByAddress(v6)};
+            }
+            @Override public HttpURLConnection open() { return connection; }
+            @Override public NetworkCompatibilityReport.FamilyStatus tcpSample(InetAddress address) {
+                if (calls.getAndIncrement() == 0) return NetworkCompatibilityReport.FamilyStatus.TCP_CONNECTED;
+                return NetworkCompatibilityReport.FamilyStatus.CONNECT_TIMEOUT;
+            }
+        };
+        NetworkCompatibilityReport report = NetworkProbeRunner.run(backend, delivered);
+        assertEquals(NetworkCompatibilityReport.FamilyStatus.TCP_CONNECTED, report.ipv4Tcp);
+        assertEquals(NetworkCompatibilityReport.FamilyStatus.CONNECT_TIMEOUT, report.ipv6Tcp);
+        assertEquals(2, calls.get());
+        assertFalse(report.describe().contains("127.0.0.1"));
+        assertTrue(report.describe().contains("does not test TLS or other addresses"));
+        calls.set(0);
+        NetworkProbeRunner.Backend cancelAfterFirst = new NetworkProbeRunner.Backend() {
+            @Override public InetAddress[] resolve() throws IOException { return backend.resolve(); }
+            @Override public HttpURLConnection open() { return connection; }
+            @Override public NetworkCompatibilityReport.FamilyStatus tcpSample(InetAddress address) {
+                calls.incrementAndGet(); delivered.set(true); return NetworkCompatibilityReport.FamilyStatus.TCP_CONNECTED;
+            }
+        };
+        report = NetworkProbeRunner.run(cancelAfterFirst, delivered);
+        assertEquals(1, calls.get());
+        assertEquals(NetworkCompatibilityReport.FamilyStatus.NOT_TESTED, report.ipv6Tcp);
+    }
     @Test public void deadlinePreventsStartingHttpsAfterResolverReturns() {
         NetworkProbeRunner.Backend backend = new NetworkProbeRunner.Backend() {
             @Override public InetAddress[] resolve() { return new InetAddress[0]; }

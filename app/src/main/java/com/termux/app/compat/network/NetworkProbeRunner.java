@@ -12,18 +12,22 @@ final class NetworkProbeRunner {
     interface Backend {
         InetAddress[] resolve() throws IOException;
         HttpURLConnection open() throws IOException;
+        default NetworkCompatibilityReport.FamilyStatus tcpSample(InetAddress address) {
+            return NetworkCompatibilityReport.FamilyStatus.NOT_TESTED;
+        }
     }
     private NetworkProbeRunner() { }
 
     static NetworkCompatibilityReport run(Backend backend, AtomicBoolean delivered) {
         String dns;
+        InetAddress ipv4 = null, ipv6 = null;
         NetworkCompatibilityReport.DnsStatus dnsStatus;
         try {
             InetAddress[] addresses = backend.resolve();
             int v4 = 0, v6 = 0;
             for (InetAddress address : addresses) {
-                if (address instanceof Inet4Address) v4++;
-                if (address instanceof Inet6Address) v6++;
+                if (address instanceof Inet4Address) { v4++; if (ipv4 == null) ipv4 = address; }
+                if (address instanceof Inet6Address) { v6++; if (ipv6 == null) ipv6 = address; }
             }
             dns = addresses.length == 0 ? "no records" :
                 "resolved (IPv4 records: " + v4 + ", IPv6 records: " + v6 + ")";
@@ -36,18 +40,33 @@ final class NetworkProbeRunner {
         // A proxy may resolve the destination remotely even when local DNS fails.
         if (delivered.get()) return new NetworkCompatibilityReport(dns, dnsStatus, NetworkCompatibilityReport.Status.TIMEOUT, 0);
         HttpURLConnection connection = null;
+        NetworkCompatibilityReport.Status https;
+        int httpStatus = 0;
         try {
             connection = backend.open();
             connection.setConnectTimeout(3000);
             connection.setReadTimeout(3000);
             connection.setInstanceFollowRedirects(false);
             connection.setRequestMethod("HEAD");
-            int status = connection.getResponseCode();
-            return new NetworkCompatibilityReport(dns, dnsStatus, status < 100 ? NetworkCompatibilityReport.Status.UNKNOWN : NetworkCompatibilityReport.Status.HTTP_RESPONSE, status);
+            httpStatus = connection.getResponseCode();
+            https = httpStatus < 100 ? NetworkCompatibilityReport.Status.UNKNOWN : NetworkCompatibilityReport.Status.HTTP_RESPONSE;
         } catch (Exception e) {
-            return new NetworkCompatibilityReport(dns, dnsStatus, NetworkErrorClassifier.classify(e), 0);
+            https = NetworkErrorClassifier.classify(e);
         } finally {
             if (connection != null) connection.disconnect();
         }
+        NetworkCompatibilityReport.FamilyStatus v4 = NetworkCompatibilityReport.FamilyStatus.NOT_TESTED;
+        NetworkCompatibilityReport.FamilyStatus v6 = NetworkCompatibilityReport.FamilyStatus.NOT_TESTED;
+        if (!delivered.get() && dnsStatus == NetworkCompatibilityReport.DnsStatus.RESOLVED) {
+            v4 = ipv4 == null ? NetworkCompatibilityReport.FamilyStatus.NO_DNS_RECORD : sample(backend, ipv4);
+            if (!delivered.get()) v6 = ipv6 == null ? NetworkCompatibilityReport.FamilyStatus.NO_DNS_RECORD : sample(backend, ipv6);
+        }
+        return new NetworkCompatibilityReport(dns, dnsStatus, https, httpStatus, v4, v6);
+    }
+    private static NetworkCompatibilityReport.FamilyStatus sample(Backend backend, InetAddress address) {
+        try {
+            NetworkCompatibilityReport.FamilyStatus result = backend.tcpSample(address);
+            return result == null ? NetworkCompatibilityReport.FamilyStatus.POLICY_UNKNOWN : result;
+        } catch (RuntimeException e) { return NetworkCompatibilityReport.FamilyStatus.POLICY_UNKNOWN; }
     }
 }

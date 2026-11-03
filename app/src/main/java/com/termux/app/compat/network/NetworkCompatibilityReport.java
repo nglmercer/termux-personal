@@ -8,20 +8,30 @@ public final class NetworkCompatibilityReport {
         HTTP_RESPONSE, NETWORK_OK, UNKNOWN, TIMEOUT, UNAVAILABLE
     }
     public enum DnsStatus { NOT_TESTED, RESOLVED, NO_RECORDS, DNS_FAILURE, UNKNOWN }
+    public enum FamilyStatus { NOT_TESTED, NO_DNS_RECORD, TCP_CONNECTED, CONNECT_TIMEOUT, CONNECT_FAILED,
+        SECURITY_RESTRICTED, SKIPPED_PROXY, SKIPPED_VPN, NETWORK_CHANGED, POLICY_UNKNOWN }
     public final String dns;
     public final DnsStatus dnsStatus;
     public final Status status;
     public final int httpStatus;
+    public final FamilyStatus ipv4Tcp, ipv6Tcp;
 
     public NetworkCompatibilityReport(String dns, Status status, int httpStatus) {
         this(dns, DnsStatus.NOT_TESTED, status, httpStatus);
     }
     public NetworkCompatibilityReport(String dns, DnsStatus dnsStatus, Status status, int httpStatus) {
-        if (dns == null || dnsStatus == null || status == null) throw new IllegalArgumentException("Missing report field");
+        this(dns, dnsStatus, status, httpStatus, FamilyStatus.NOT_TESTED, FamilyStatus.NOT_TESTED);
+    }
+    public NetworkCompatibilityReport(String dns, DnsStatus dnsStatus, Status status, int httpStatus,
+                                      FamilyStatus ipv4Tcp, FamilyStatus ipv6Tcp) {
+        if (dns == null || dnsStatus == null || status == null || ipv4Tcp == null || ipv6Tcp == null)
+            throw new IllegalArgumentException("Missing report field");
         this.dns = dns;
         this.dnsStatus = dnsStatus;
         this.status = status;
         this.httpStatus = httpStatus;
+        this.ipv4Tcp = ipv4Tcp;
+        this.ipv6Tcp = ipv6Tcp;
     }
 
     public String describe() {
@@ -40,7 +50,10 @@ public final class NetworkCompatibilityReport {
                 break;
             default: break;
         }
-        return result.append("\nIPv4/IPv6 reachability, CLI DNS, CLI TLS and localhost callback: not tested.")
+        return result.append("\nIPv4 TCP sample: ").append(ipv4Tcp)
+            .append("\nIPv6 TCP sample: ").append(ipv6Tcp)
+            .append("\nEach sample uses at most one resolved address and TCP port 443; it does not test TLS or other addresses.")
+            .append("\nCLI DNS, CLI TLS and localhost callback: not tested.")
             .append("\nAn HTTP response, including 401 or 403, confirms a response, not service authorization.")
             .append("\nThe active network can change during or after this test.")
             .toString();

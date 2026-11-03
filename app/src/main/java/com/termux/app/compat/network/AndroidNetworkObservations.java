@@ -56,6 +56,7 @@ public final class AndroidNetworkObservations {
     private static Key currentKey(ConnectivityManager cm) {
         if (cm == null || Build.VERSION.SDK_INT < 24) return null;
         try {
+            if (cm.getBoundNetworkForProcess() != null) return null;
             Network network = cm.getActiveNetwork();
             if (network == null) return null;
             LinkProperties links = cm.getLinkProperties(network);
