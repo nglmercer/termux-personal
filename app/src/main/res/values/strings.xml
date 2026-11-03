@@ -472,4 +472,11 @@
     <string name="compat_network_description">No connectivity test has run. The test sends a DNS query and an HTTPS HEAD request to example.com using Android networking. It does not test CLI networking.</string>
     <string name="compat_network_test">Test example.com</string>
     <string name="compat_network_running">Testing DNS and HTTPS to example.com. This may take up to 10 seconds.</string>
+    <string name="compat_title">Compatibility diagnostics</string>
+    <string name="compat_runtime_title">Inspect executable</string>
+    <string name="compat_runtime_description">Enter an absolute path to an executable or script. The file is inspected without running or changing it.</string>
+    <string name="compat_runtime_path_hint">Absolute file path</string>
+    <string name="compat_runtime_inspect">Inspect</string>
+    <string name="compat_runtime_absolute">Enter an absolute file path.</string>
+    <string name="compat_runtime_busy">An executable inspection is already running.</string>
 </resources>

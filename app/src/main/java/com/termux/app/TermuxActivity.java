@@ -220,6 +220,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private static final int CONTEXT_MENU_JOBS = 16;
     private static final int CONTEXT_MENU_FILES = 17;
     private static final int CONTEXT_MENU_WORKSPACES = 18;
+    private static final java.util.concurrent.atomic.AtomicBoolean COMPAT_EXECUTABLE_BUSY = new java.util.concurrent.atomic.AtomicBoolean();
     private final java.util.concurrent.atomic.AtomicBoolean mProcessSnapshotBusy = new java.util.concurrent.atomic.AtomicBoolean();
     private AlertDialog mProcessDialog;
     private final android.os.Handler mProcessRefreshHandler = new android.os.Handler(android.os.Looper.getMainLooper());
@@ -1198,8 +1199,55 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         } catch (RuntimeException ignored) { /* Clipboard metadata may be unavailable. */ }
         info.append("\n\n").append(getString(R.string.diagnostics_clipboard, formats.length() == 0 ? unknown : formats.toString()));
         new AlertDialog.Builder(this).setTitle(R.string.action_diagnostics).setMessage(info.toString())
-            .setNeutralButton(R.string.compat_network_title, (d, w) -> showCompatibilityNetwork())
+            .setNeutralButton(R.string.compat_title, (d, w) -> showCompatibilityMenu())
             .setPositiveButton(android.R.string.ok, null).show();
+    }
+
+    private void showCompatibilityMenu() {
+        CharSequence[] actions = {getString(R.string.compat_network_title), getString(R.string.compat_runtime_title)};
+        new AlertDialog.Builder(this).setTitle(R.string.compat_title).setItems(actions, (dialog, which) -> {
+            if (which == 0) showCompatibilityNetwork();
+            else showExecutableInspector();
+        }).setNegativeButton(android.R.string.cancel, null).show();
+    }
+
+    private void showExecutableInspector() {
+        EditText path = new EditText(this);
+        path.setSingleLine(true);
+        path.setHint(R.string.compat_runtime_path_hint);
+        new AlertDialog.Builder(this).setTitle(R.string.compat_runtime_title)
+            .setMessage(R.string.compat_runtime_description).setView(path)
+            .setPositiveButton(R.string.compat_runtime_inspect, (dialog, which) -> {
+                String name = path.getText().toString();
+                if (!new java.io.File(name).isAbsolute()) {
+                    Toast.makeText(this, R.string.compat_runtime_absolute, Toast.LENGTH_LONG).show();
+                    return;
+                }
+                if (!COMPAT_EXECUTABLE_BUSY.compareAndSet(false, true)) {
+                    Toast.makeText(this, R.string.compat_runtime_busy, Toast.LENGTH_LONG).show();
+                    return;
+                }
+                WeakReference<TermuxActivity> activity = new WeakReference<>(this);
+                String[] abis = Build.SUPPORTED_ABIS.clone();
+                android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
+                Thread worker = new Thread(() -> {
+                    com.termux.app.compat.runtime.ExecutableInspector.Report report;
+                    try {
+                        report = com.termux.app.compat.runtime.ExecutableInspector.inspect(new java.io.File(name), abis,
+                            new java.io.File(TermuxConstants.TERMUX_PREFIX_DIR_PATH, "glibc/lib"));
+                    } finally {
+                        COMPAT_EXECUTABLE_BUSY.set(false);
+                    }
+                    handler.post(() -> {
+                        TermuxActivity current = activity.get();
+                        if (current == null || !com.termux.app.compat.AndroidUrlLauncher.isResumed(current) || current.isFinishing()) return;
+                        new AlertDialog.Builder(current).setTitle(R.string.compat_runtime_title)
+                            .setMessage(report.describe()).setPositiveButton(android.R.string.ok, null).show();
+                    });
+                }, "compat-executable-inspection");
+                worker.setDaemon(true);
+                worker.start();
+            }).setNegativeButton(android.R.string.cancel, null).show();
     }
 
     private void showCompatibilityNetwork() {
