@@ -22,6 +22,11 @@ line=$(env LD_PRELOAD="$out/side0.so" TERMUX_GLIBC_PRELOAD="$out/side1.so" "$out
 echo "$line"
 [[ $line == "exe=$fake argv0=$out/probe glibc_exe=$out/probe preload=-" ]] || { echo "FAIL: loader redirect"; exit 1; }
 
+# Regular executable symlinks must still reach the glibc loader after descriptor type checks.
+ln -s "$out/probe" "$out/probe-link"
+line=$(env LD_PRELOAD="$out/side0.so" TERMUX_GLIBC_PRELOAD="$out/side1.so" "$out/probe" run "$out/probe-link")
+[[ $line == "exe=$fake argv0=$out/probe-link glibc_exe=$out/probe-link preload=-" ]] || { echo "FAIL: symlink loader redirect"; exit 1; }
+
 # Re-executing /proc/self/exe (the loader) with ordinary arguments reaches the real program again.
 # Without the shim the loader would take "report" as the program to load and fail.
 relaunch=$(env TERMUX_GLIBC_EXE="$out/probe" TERMUX_GLIBC_PRELOAD="$out/side1.so" "$fake" --library-path "$out/prefix/glibc/lib" \
