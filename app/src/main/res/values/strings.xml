@@ -468,6 +468,7 @@
     <string name="compat_pending_expired">The pending web link has expired.</string>
     <string name="compat_pending_open">Open</string>
     <string name="compat_pending_copy">Copy</string>
+    <string name="compat_pending_copy_failed">Could not copy the web link.</string>
     <string name="compat_url_failed">Could not open web link: %1$s</string>
     <string name="compat_url_queued_notice">Open Termux to review a pending web link.</string>
     <string name="compat_launch_restricted">Android blocked this open request. Check the receiving app and its permissions.</string>

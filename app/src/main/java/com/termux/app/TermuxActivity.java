@@ -406,8 +406,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     public void showWebOpenFailure(String url, com.termux.app.compat.AndroidUrlLauncher.Status status) {
         new AlertDialog.Builder(this).setTitle(R.string.compat_pending_title)
             .setMessage(getString(R.string.compat_url_failed, status.name()))
-            .setPositiveButton(R.string.compat_pending_copy, (dialog, which) ->
-                com.termux.shared.interact.ShareUtils.copyTextToClipboard(this, url, getString(R.string.msg_select_url_copied_to_clipboard)))
+            .setPositiveButton(R.string.compat_pending_copy, (dialog, which) -> copySensitiveWebUrl(url))
             .setNegativeButton(android.R.string.cancel, null).show();
     }
 
@@ -452,10 +451,19 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     }
 
     private void copyPendingWebUrl(com.termux.app.compat.PendingUrlQueue.Request request) {
-        String url = com.termux.app.compat.AndroidUrlLauncher.consumePending(request);
-        if (url != null)
-            com.termux.shared.interact.ShareUtils.copyTextToClipboard(this, url, getString(R.string.msg_select_url_copied_to_clipboard));
-        else Toast.makeText(this, R.string.compat_pending_expired, Toast.LENGTH_LONG).show();
+        if (!com.termux.app.compat.AndroidUrlLauncher.isPending(request)) {
+            Toast.makeText(this, R.string.compat_pending_expired, Toast.LENGTH_LONG).show();
+        } else if (copySensitiveWebUrl(request.url())) {
+            com.termux.app.compat.AndroidUrlLauncher.consumePending(request);
+        }
+    }
+
+    private boolean copySensitiveWebUrl(String url) {
+        boolean copied = com.termux.app.compat.SensitiveUrlClipboard.copy(this, url);
+        if (!copied) Toast.makeText(this, R.string.compat_pending_copy_failed, Toast.LENGTH_LONG).show();
+        else if (android.os.Build.VERSION.SDK_INT < 33)
+            Toast.makeText(this, R.string.msg_select_url_copied_to_clipboard, Toast.LENGTH_LONG).show();
+        return copied;
     }
 
     @Override
