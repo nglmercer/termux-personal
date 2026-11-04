@@ -92,7 +92,7 @@ public final class ExecutableInspector {
                     return result(Status.UNTESTED, detail + "\nThe literal interpreter is present; compatibility is not established.");
                 }
                 if (first.length < 16 || first[0] != 0x7f || first[1] != 'E' || first[2] != 'L' || first[3] != 'F')
-                    return result(Status.INVALID_FORMAT, "Neither a recognized ELF file nor a shebang script.");
+                    return result(Status.INVALID_FORMAT, "Neither a recognized ELF file nor a shebang script. Some execvp-style callers may run a text file through a shell; direct execve normally rejects it.");
                 boolean is64 = first[4] == 2;
                 if ((!is64 && first[4] != 1) || (first[5] != 1 && first[5] != 2) || first[6] != 1)
                     return result(Status.INVALID_FORMAT, "Unsupported ELF class, byte order or version.");

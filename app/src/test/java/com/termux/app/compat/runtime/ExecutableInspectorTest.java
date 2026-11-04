@@ -134,4 +134,10 @@ public class ExecutableInspectorTest {
             ExecutableInspector.inspect(binary, new String[]{"arm64-v8a"}, null).status);
         assertEquals(ExecutableInspector.Status.UNAVAILABLE, ExecutableInspector.inspect(new File(temp.getRoot(), "missing"), new String[0], null).status);
     }
+    @Test public void unrecognizedTextNotesExecvpShellFallbackWithoutClaimingExecution() throws Exception {
+        ExecutableInspector.Report report = ExecutableInspector.inspect(file("printf 'hello'\n".getBytes(StandardCharsets.US_ASCII)), new String[0], null);
+        assertEquals(ExecutableInspector.Status.INVALID_FORMAT, report.status);
+        assertTrue(report.detail.contains("execvp"));
+        assertTrue(report.describe().contains("not tested"));
+    }
 }

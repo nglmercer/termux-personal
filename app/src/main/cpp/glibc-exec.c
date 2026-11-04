@@ -341,10 +341,33 @@ __attribute__((visibility("default"))) int execv(const char *path, char *const a
     return execve(path, argv, environ);
 }
 
+/* execvp/execvpe must interpret an executable without a recognized format as a shell script.
+ * Use Termux's shell because Android normally has no /bin/sh. Do not alter execve/execv. */
+static long exec_shell_script(const char *path, char *const argv[], char *const envp[]) {
+    char *args[MAX_ARGS];
+    int a = 0;
+    args[a++] = (char *) TERMUX_PREFIX "/bin/sh";
+    args[a++] = (char *) path;
+    if (argv && argv[0]) for (int i = 1; argv[i]; i++) {
+        if (a >= MAX_ARGS - 1) return -7; /* E2BIG */
+        args[a++] = argv[i];
+    }
+    args[a] = 0;
+    return exec_bionic(TERMUX_PREFIX "/bin/sh", args, envp);
+}
+
+static long exec_path_candidate(const char *path, char *const argv[], char *const envp[]) {
+    char loader[MAX_PATH];
+    long result = glibc_loader_for(path, loader) ? exec_glibc(loader, path, argv, envp) :
+        exec_bionic(path, argv, envp);
+    return result == -8 /* ENOEXEC */ ? exec_shell_script(path, argv, envp) : result;
+}
+
 __attribute__((visibility("default"))) int execvpe(const char *file, char *const argv[], char *const envp[]) {
     if (!file || !*file) return (int) fail(-2 /* ENOENT */);
-    for (const char *c = file; *c; c++) if (*c == '/') return execve(file, argv, envp);
-    const char *path = env_get(envp, "PATH");
+    for (const char *c = file; *c; c++) if (*c == '/') return (int) fail(exec_path_candidate(file, argv, envp));
+    /* glibc uses the caller's PATH for search even when envp supplies a different PATH. */
+    const char *path = env_get(environ, "PATH");
     if (!path) path = "/bin:/usr/bin";
     char candidate[MAX_PATH];
     long denied = 0;
@@ -358,9 +381,7 @@ __attribute__((visibility("default"))) int execvpe(const char *file, char *const
         at = put(candidate, at, MAX_PATH, "/");
         at = put(candidate, at, MAX_PATH, file);
         if (at > 0) {
-            char loader[MAX_PATH];
-            long result = glibc_loader_for(candidate, loader) ? exec_glibc(loader, candidate, argv, envp) :
-                exec_bionic(candidate, argv, envp);
+            long result = exec_path_candidate(candidate, argv, envp);
             if (result == -13 /* EACCES */) denied = result;
             else if (result != -2 /* ENOENT */ && result != -20 /* ENOTDIR */) return (int) fail(result);
         }

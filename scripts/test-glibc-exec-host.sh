@@ -3,7 +3,8 @@
 set -euo pipefail
 repo_dir=$(cd "$(dirname "$0")/.." && pwd)
 out="$repo_dir/build/glibc-exec-test"
-rm -rf "$out"; mkdir -p "$out/prefix/glibc/lib"
+rm -rf "$out"; mkdir -p "$out/prefix/glibc/lib" "$out/prefix/bin" "$out/scripts"
+ln -s /bin/sh "$out/prefix/bin/sh"
 loader=$(readelf -l /bin/true | sed -n 's/.*interpreter: \(.*\)]/\1/p')
 cp "$loader" "$out/prefix/glibc/lib/$(basename "$loader")"
 # Side 0 stands in for the bionic build: it resolves the next execve with dlsym, as on Android.
@@ -41,6 +42,22 @@ child=$(env TERMUX_GLIBC_EXE="$out/probe" TERMUX_BIONIC_LD_PRELOAD=/fake/termux-
     --preload "$out/side1.so" "$out/probe" run "$script" 2>/dev/null || true)
 echo "$child"
 [[ $child == "child preload=/fake/termux-exec.so" ]] || { echo "FAIL: bionic preload restore"; exit 1; }
+
+# execvp and execvpe execute an ENOEXEC file through a shell; execve itself must not.
+script="$out/scripts/no-shebang"
+printf 'printf "arg=%%s marker=%%s path=%%s\\n" "$1" "${COMPAT_TEST_MARKER-unset}" "$PATH"\n' > "$script"
+chmod 755 "$script"
+search_path="$out/scripts:/usr/bin:/bin"
+for name in no-shebang "$script"; do
+    result=$(env -i PATH="$search_path" "$fake" --library-path "$out/prefix/glibc/lib" --preload "$out/side1.so" "$out/probe" run-path "$name")
+    [[ $result == "arg=argument with spaces marker=unset path=$search_path" ]] || { echo 'FAIL: execvp script fallback'; exit 1; }
+    result=$(env -i PATH="$search_path" "$fake" --library-path "$out/prefix/glibc/lib" --preload "$out/side1.so" "$out/probe" run-path-env "$name")
+    [[ $result == 'arg=argument with spaces marker=present path=/child-only' ]] || { echo 'FAIL: execvpe script fallback or PATH'; exit 1; }
+done
+direct=$(env -i PATH="$search_path" "$fake" --library-path "$out/prefix/glibc/lib" --preload "$out/side1.so" "$out/probe" run "$script" 2>&1 || true)
+[[ $direct == *'Exec format error'* ]] || { echo 'FAIL: execve must not use shell fallback'; exit 1; }
+direct=$(env -i PATH="$search_path" "$fake" --library-path "$out/prefix/glibc/lib" --preload "$out/side1.so" "$out/probe" run-execv "$script" 2>&1 || true)
+[[ $direct == *'Exec format error'* ]] || { echo 'FAIL: execv must not use shell fallback'; exit 1; }
 
 # Passing through: a missing program keeps its ordinary error.
 missing=$(env LD_PRELOAD="$out/side0.so" "$out/probe" run /nonexistent 2>&1 || true)

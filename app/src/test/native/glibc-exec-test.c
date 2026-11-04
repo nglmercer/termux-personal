@@ -30,5 +30,24 @@ int main(int argc, char **argv) {
         perror("run");
         return 4;
     }
+    if (argc > 2 && !strcmp(argv[1], "run-path")) {
+        char *args[] = {argv[2], "argument with spaces", NULL};
+        execvp(argv[2], args);
+        perror("run-path");
+        return 5;
+    }
+    if (argc > 2 && !strcmp(argv[1], "run-execv")) {
+        char *args[] = {argv[2], "argument with spaces", NULL};
+        execv(argv[2], args);
+        perror("run-execv");
+        return 7;
+    }
+    if (argc > 2 && !strcmp(argv[1], "run-path-env")) {
+        char *args[] = {argv[2], "argument with spaces", NULL};
+        char *child_env[] = {"PATH=/child-only", "COMPAT_TEST_MARKER=present", NULL};
+        execvpe(argv[2], args, child_env);
+        perror("run-path-env");
+        return 6;
+    }
     return 1;
 }
