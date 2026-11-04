@@ -59,8 +59,10 @@ public class TermuxOpenReceiver extends BroadcastReceiver {
                 Logger.logDebug(LOG_TAG, "Web launch status: " + status);
                 android.app.Activity foreground = AndroidUrlLauncher.resumedActivity();
                 String notice = null;
-                if (status == AndroidUrlLauncher.Status.QUEUED_FOR_USER && (foreground == null || foreground.isFinishing()))
+                if (status == AndroidUrlLauncher.Status.QUEUED_FOR_USER && (foreground == null || foreground.isFinishing())) {
+                    com.termux.app.compat.PendingUrlNotification.show(context);
                     notice = context.getString(com.termux.R.string.compat_url_queued_notice);
+                }
                 else if (status != AndroidUrlLauncher.Status.DISPATCHED_UNCONFIRMED && status != AndroidUrlLauncher.Status.QUEUED_FOR_USER)
                     notice = context.getString(com.termux.R.string.compat_url_failed, status.name());
                 if (notice != null) {

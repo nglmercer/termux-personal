@@ -392,6 +392,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         consumePendingImagePickerWhenReady();
         showPendingLocalControl();
         com.termux.app.compat.AndroidUrlLauncher.resumed(this);
+        com.termux.app.compat.PendingUrlNotification.cancel(this);
         showPendingWebUrl();
         showPendingBrowserTest();
     }

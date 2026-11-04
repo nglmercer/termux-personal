@@ -465,6 +465,7 @@
     </string-array>
     <string name="compat_pending_title">Open a requested web link?</string>
     <string name="compat_pending_message">A terminal process requested a web link. Open or copy the link only if you trust the process.</string>
+    <string name="compat_pending_notification">Tap to review a terminal web link request.</string>
     <string name="compat_pending_expired">The pending web link has expired.</string>
     <string name="compat_pending_open">Open</string>
     <string name="compat_pending_copy">Copy</string>
