@@ -92,6 +92,21 @@ public class TermuxOpenReceiverTest {
         assertEquals(context.getString(com.termux.R.string.compat_url_queued_notice), notice);
         assertFalse(notice.contains("private"));
     }
+    @Test public void typedWebViewIsDeferredWithChooserOptions() {
+        com.termux.app.compat.AndroidUrlLauncher.resumed(null);
+        while (com.termux.app.compat.AndroidUrlLauncher.takePending() != null) { }
+        Intent input = new Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com/document"));
+        input.putExtra("content-type", "application/pdf");
+        input.putExtra("chooser", true);
+        CapturingContext context = context();
+        new TermuxOpenReceiver().onReceive(context, input);
+        assertNull(context.started);
+        com.termux.app.compat.PendingUrlQueue.Request request = com.termux.app.compat.AndroidUrlLauncher.peekPending();
+        assertNotNull(request);
+        assertEquals("application/pdf", request.contentType());
+        assertTrue(request.chooser());
+        assertEquals("https://example.com/document", com.termux.app.compat.AndroidUrlLauncher.consumePending(request));
+    }
     @Test public void restrictedFileAndNonWebLaunchDoNotEscapeReceiver() throws Exception {
         CapturingContext context = context();
         context.failure = new SecurityException("private URI");

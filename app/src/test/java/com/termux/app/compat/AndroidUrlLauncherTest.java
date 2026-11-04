@@ -82,5 +82,30 @@ public class AndroidUrlLauncherTest {
         assertEquals(1, a.pendingNotifications);
         assertEquals("https://example.com/auth?code=secret", AndroidUrlLauncher.takePending());
     }
+    @Test public void webChooserAndContentTypeArePreservedInDispatchAndQueue() {
+        TestActivity a = activity();
+        AndroidUrlLauncher.resumed(a);
+        assertEquals(AndroidUrlLauncher.Status.DISPATCHED_UNCONFIRMED,
+            AndroidUrlLauncher.openFromReceiver("https://example.com/a", "text/html", true));
+        assertEquals(Intent.ACTION_CHOOSER, a.dispatched.getAction());
+        Intent inner = a.dispatched.getParcelableExtra(Intent.EXTRA_INTENT);
+        assertNotNull(inner);
+        assertEquals(Intent.ACTION_VIEW, inner.getAction());
+        assertEquals("https://example.com/a", inner.getDataString());
+        assertEquals("text/html", inner.getType());
+        AndroidUrlLauncher.paused(a);
+        assertEquals(AndroidUrlLauncher.Status.QUEUED_FOR_USER,
+            AndroidUrlLauncher.openFromReceiver("https://example.com/b", "application/pdf", true));
+        PendingUrlQueue.Request request = AndroidUrlLauncher.peekPending();
+        assertEquals("application/pdf", request.contentType());
+        assertTrue(request.chooser());
+        assertEquals(AndroidUrlLauncher.Status.DISPATCHED_UNCONFIRMED,
+            AndroidUrlLauncher.open(a, request.url(), request.contentType(), request.chooser()));
+        assertEquals("application/pdf", ((Intent) a.dispatched.getParcelableExtra(Intent.EXTRA_INTENT)).getType());
+        assertEquals("https://example.com/b", AndroidUrlLauncher.consumePending(request));
+        assertNull(request.contentType());
+        assertEquals(AndroidUrlLauncher.Status.INVALID_URI,
+            AndroidUrlLauncher.openFromReceiver("https://example.com/", "text/html\nprivate", false));
+    }
 
 }

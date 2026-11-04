@@ -9,6 +9,15 @@ public final class UrlPolicy {
     private static final int MAX_LENGTH = 8192;
     private UrlPolicy() {}
 
+    /** Bound intent metadata and reject control characters without narrowing existing MIME types. */
+    public static boolean isContentTypeSafe(String value) {
+        if (value == null) return true;
+        if (value.isEmpty() || value.length() > 255) return false;
+        for (int i = 0; i < value.length(); i++)
+            if (value.charAt(i) < 32 || value.charAt(i) > 126) return false;
+        return true;
+    }
+
     public static boolean isWebUrl(String value) {
         if (value == null || value.length() == 0 || value.length() > MAX_LENGTH) return false;
         try {

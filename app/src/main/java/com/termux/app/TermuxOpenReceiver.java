@@ -53,9 +53,9 @@ public class TermuxOpenReceiver extends BroadcastReceiver {
 
         String scheme = data.getScheme();
         if (scheme != null && !UriScheme.SCHEME_FILE.equals(scheme)) {
-            if (Intent.ACTION_VIEW.equals(intentAction) && contentTypeExtra == null &&
+            if (Intent.ACTION_VIEW.equals(intentAction) &&
                 ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))) {
-                AndroidUrlLauncher.Status status = AndroidUrlLauncher.openFromReceiver(data.toString());
+                AndroidUrlLauncher.Status status = AndroidUrlLauncher.openFromReceiver(data.toString(), contentTypeExtra, useChooser);
                 Logger.logDebug(LOG_TAG, "Web launch status: " + status);
                 android.app.Activity foreground = AndroidUrlLauncher.resumedActivity();
                 String notice = null;

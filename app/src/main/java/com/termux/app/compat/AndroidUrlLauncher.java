@@ -38,13 +38,16 @@ public final class AndroidUrlLauncher {
     }
 
     public static Status openFromReceiver(String url) {
-        if (!UrlPolicy.isWebUrl(url)) return Status.INVALID_URI;
+        return openFromReceiver(url, null, false);
+    }
+    public static Status openFromReceiver(String url, String contentType, boolean chooser) {
+        if (!UrlPolicy.isWebUrl(url) || !UrlPolicy.isContentTypeSafe(contentType)) return Status.INVALID_URI;
         Activity activity = foreground.get();
         if (activity != null && !activity.isFinishing()) {
-            Status status = open(activity, url);
+            Status status = open(activity, url, contentType, chooser);
             if (status == Status.DISPATCHED_UNCONFIRMED) return status;
         }
-        if (!PENDING.offer(url, SystemClock.elapsedRealtime())) return Status.UNAVAILABLE;
+        if (!PENDING.offer(url, contentType, chooser, SystemClock.elapsedRealtime())) return Status.UNAVAILABLE;
         scheduleExpiry();
         if (activity instanceof PendingListener && !activity.isFinishing())
             ((PendingListener) activity).onPendingWebUrl();
@@ -52,10 +55,15 @@ public final class AndroidUrlLauncher {
     }
 
     public static Status open(Activity activity, String url) {
-        if (!UrlPolicy.isWebUrl(url)) return Status.INVALID_URI;
+        return open(activity, url, null, false);
+    }
+    public static Status open(Activity activity, String url, String contentType, boolean chooser) {
+        if (!UrlPolicy.isWebUrl(url) || !UrlPolicy.isContentTypeSafe(contentType)) return Status.INVALID_URI;
         if (activity == null || activity.isFinishing()) return Status.UNAVAILABLE;
         try {
-            activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            if (contentType != null) intent.setDataAndType(Uri.parse(url), contentType);
+            activity.startActivity(chooser ? Intent.createChooser(intent, null) : intent);
             return Status.DISPATCHED_UNCONFIRMED;
         } catch (ActivityNotFoundException e) {
             return Status.NO_HANDLER;

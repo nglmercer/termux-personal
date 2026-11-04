@@ -9,18 +9,30 @@ public final class PendingUrlQueue {
     private final ArrayDeque<Request> entries = new ArrayDeque<>();
     public static final class Request {
         private volatile String url;
+        private volatile String contentType;
+        private final boolean chooser;
         final long time;
-        private Request(String url, long time) { this.url = url; this.time = time; }
+        private Request(String url, String contentType, boolean chooser, long time) {
+            this.url = url; this.contentType = contentType; this.chooser = chooser; this.time = time;
+        }
         public String url() { return url; }
+        public String contentType() { return contentType; }
+        public boolean chooser() { return chooser; }
     }
     private void expire(long now) {
-        while (!entries.isEmpty() && (now < entries.peekFirst().time || now - entries.peekFirst().time >= TTL_MS))
-            entries.removeFirst().url = null;
+        while (!entries.isEmpty() && (now < entries.peekFirst().time || now - entries.peekFirst().time >= TTL_MS)) {
+            Request expired = entries.removeFirst();
+            expired.url = null;
+            expired.contentType = null;
+        }
     }
     public synchronized boolean offer(String url, long now) {
+        return offer(url, null, false, now);
+    }
+    public synchronized boolean offer(String url, String contentType, boolean chooser, long now) {
         expire(now);
-        if (!UrlPolicy.isWebUrl(url) || entries.size() >= LIMIT) return false;
-        entries.addLast(new Request(url, now));
+        if (!UrlPolicy.isWebUrl(url) || !UrlPolicy.isContentTypeSafe(contentType) || entries.size() >= LIMIT) return false;
+        entries.addLast(new Request(url, contentType, chooser, now));
         return true;
     }
     public synchronized Request peek(long now) {
@@ -43,6 +55,7 @@ public final class PendingUrlQueue {
         Request request = entries.removeFirst();
         String value = request.url;
         request.url = null;
+        request.contentType = null;
         return value;
     }
     /** Expires stale requests and returns the delay until the next expiry, or -1 for an empty queue. */

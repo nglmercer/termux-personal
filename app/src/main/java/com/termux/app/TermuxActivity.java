@@ -429,7 +429,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                     Toast.makeText(this, R.string.compat_pending_expired, Toast.LENGTH_LONG).show();
                     return;
                 }
-                com.termux.app.compat.AndroidUrlLauncher.Status status = com.termux.app.compat.AndroidUrlLauncher.open(this, request.url());
+                com.termux.app.compat.AndroidUrlLauncher.Status status = com.termux.app.compat.AndroidUrlLauncher.open(this, request.url(), request.contentType(), request.chooser());
                 if (status == com.termux.app.compat.AndroidUrlLauncher.Status.DISPATCHED_UNCONFIRMED)
                     com.termux.app.compat.AndroidUrlLauncher.consumePending(request);
                 if (status != com.termux.app.compat.AndroidUrlLauncher.Status.DISPATCHED_UNCONFIRMED) {
