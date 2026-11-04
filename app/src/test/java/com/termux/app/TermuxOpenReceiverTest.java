@@ -68,4 +68,24 @@ public class TermuxOpenReceiverTest {
         new TermuxOpenReceiver().onReceive(context, new Intent(Intent.ACTION_VIEW, Uri.fromFile(missing)));
         assertNull(context.started);
     }
+
+    @Test public void unsupportedActionFallsBackToReadOnlyFileView() throws Exception {
+        File file = temp.newFile("fallback.txt");
+        CapturingContext context = context();
+        new TermuxOpenReceiver().onReceive(context, new Intent(Intent.ACTION_DELETE, Uri.fromFile(file)));
+        assertNotNull(context.started);
+        assertEquals(Intent.ACTION_VIEW, context.started.getAction());
+        assertEquals("content", context.started.getData().getScheme());
+        assertNotEquals(0, context.started.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        assertEquals(0, context.started.getFlags() & Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+    }
+    @Test public void unsupportedWebActionUsesValidatedDeferredWebPolicy() {
+        com.termux.app.compat.AndroidUrlLauncher.resumed(null);
+        while (com.termux.app.compat.AndroidUrlLauncher.takePending() != null) { }
+        CapturingContext context = context();
+        String url = "https://example.com/auth?state=private";
+        new TermuxOpenReceiver().onReceive(context, new Intent(Intent.ACTION_DELETE, Uri.parse(url)));
+        assertNull(context.started);
+        assertEquals(url, com.termux.app.compat.AndroidUrlLauncher.takePending());
+    }
 }

@@ -42,15 +42,13 @@ public class TermuxOpenReceiver extends BroadcastReceiver {
 
         final String contentTypeExtra = intent.getStringExtra("content-type");
         final boolean useChooser = intent.getBooleanExtra("chooser", false);
-        final String intentAction = intent.getAction() == null ? Intent.ACTION_VIEW : intent.getAction();
-        switch (intentAction) {
-            case Intent.ACTION_SEND:
-            case Intent.ACTION_VIEW:
-                // Ok.
-                break;
-            default:
-                Logger.logError(LOG_TAG, "Invalid action '" + intentAction + "', using 'view'");
-                break;
+        final String requestedAction = intent.getAction();
+        final String intentAction;
+        if (requestedAction == null || Intent.ACTION_VIEW.equals(requestedAction)) intentAction = Intent.ACTION_VIEW;
+        else if (Intent.ACTION_SEND.equals(requestedAction)) intentAction = Intent.ACTION_SEND;
+        else {
+            Logger.logError(LOG_TAG, "Invalid action, using view");
+            intentAction = Intent.ACTION_VIEW;
         }
 
         String scheme = data.getScheme();
@@ -89,7 +87,7 @@ public class TermuxOpenReceiver extends BroadcastReceiver {
 
         final File fileToShare = new File(filePath);
         if (!(fileToShare.isFile() && fileToShare.canRead())) {
-            Logger.logError(LOG_TAG, "Not a readable file: '" + fileToShare.getAbsolutePath() + "'");
+            Logger.logError(LOG_TAG, "File is not readable");
             return;
         }
 
