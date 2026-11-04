@@ -81,6 +81,9 @@ public class TermuxOpenReceiver extends BroadcastReceiver {
                 context.startActivity(urlIntent);
             } catch (ActivityNotFoundException e) {
                 Logger.logError(LOG_TAG, "No app handles the requested URI");
+            } catch (SecurityException e) {
+                Logger.logError(LOG_TAG, "Android restricted the requested URI launch");
+                showRestrictedNotice(context);
             }
             return;
         }
@@ -133,7 +136,15 @@ public class TermuxOpenReceiver extends BroadcastReceiver {
             context.startActivity(sendIntent);
         } catch (ActivityNotFoundException e) {
             Logger.logError(LOG_TAG, "No app handles the requested URI");
+        } catch (SecurityException e) {
+            Logger.logError(LOG_TAG, "Android restricted the requested file launch");
+            showRestrictedNotice(context);
         }
+    }
+
+    private static void showRestrictedNotice(Context context) {
+        try { android.widget.Toast.makeText(context, com.termux.R.string.compat_launch_restricted, android.widget.Toast.LENGTH_LONG).show(); }
+        catch (RuntimeException e) { Logger.logWarn(LOG_TAG, "Could not show launch restriction notice"); }
     }
 
     public static class ContentProvider extends android.content.ContentProvider {

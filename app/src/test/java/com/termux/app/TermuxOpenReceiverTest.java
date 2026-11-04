@@ -25,8 +25,9 @@ public class TermuxOpenReceiverTest {
 
     private static final class CapturingContext extends ContextWrapper {
         Intent started;
+        RuntimeException failure;
         CapturingContext(Context base) { super(base); }
-        @Override public void startActivity(Intent intent) { started = intent; }
+        @Override public void startActivity(Intent intent) { if (failure != null) throw failure; started = intent; }
     }
     private CapturingContext context() { return new CapturingContext(RuntimeEnvironment.getApplication()); }
 
@@ -90,5 +91,16 @@ public class TermuxOpenReceiverTest {
         String notice = org.robolectric.shadows.ShadowToast.getTextOfLatestToast();
         assertEquals(context.getString(com.termux.R.string.compat_url_queued_notice), notice);
         assertFalse(notice.contains("private"));
+    }
+    @Test public void restrictedFileAndNonWebLaunchDoNotEscapeReceiver() throws Exception {
+        CapturingContext context = context();
+        context.failure = new SecurityException("private URI");
+        File file = temp.newFile("restricted.txt");
+        new TermuxOpenReceiver().onReceive(context, new Intent(Intent.ACTION_VIEW, Uri.fromFile(file)));
+        new TermuxOpenReceiver().onReceive(context, new Intent(Intent.ACTION_VIEW, Uri.parse("mailto:user@example.com")));
+        assertNull(context.started);
+        String notice = org.robolectric.shadows.ShadowToast.getTextOfLatestToast();
+        assertEquals(context.getString(com.termux.R.string.compat_launch_restricted), notice);
+        assertFalse(notice.contains("user@example.com"));
     }
 }
