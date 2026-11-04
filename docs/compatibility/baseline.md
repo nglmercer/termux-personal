@@ -89,6 +89,17 @@ adb -s DEVICE_SERIAL shell am instrument -w \
 
 The test defaults to an IPv4 listener. Add `-e compatBrowserAddress ipv6` before the runner name to test an IPv6 `::1` listener instead; run the two families independently. IPv6 binding can fail on environments without IPv6 loopback. The test reports whether dispatch was accepted and the temporary listener received its random path; it does not identify which app handled the intent, prove browser visibility, or verify a CLI's authentication exchange. Record the selected default handler and any first-run interactions separately. The test APK builds, but neither external-handler test has yet run on Android.
 
+An additional opt-in instrumentation test invokes one of the actual installed shell commands and waits for an external handler to contact a temporary loopback listener. Complete Termux bootstrap setup and browser first-run setup first, then run each command and address family independently:
+
+```sh
+adb -s DEVICE_SERIAL shell am instrument -w \
+  -e class com.termux.app.compat.LegacyUrlCommandInstrumentedTest \
+  -e compatLegacyUrlCommand true -e compatCommand termux-open-url \
+  -e compatBrowserAddress ipv4 com.termux.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+Replace `termux-open-url` with `termux-open` or `xdg-open`, and `ipv4` with `ipv6` for the other cases. The test allows 30 seconds for the callback; the user may need to approve a deferred request or finish a handler prompt. It discards command output and uses a random non-OAuth URL. A missing installed command causes a skipped test, not a pass. It launches a child shell from the app with a minimal explicit Termux environment and does not exercise an interactive session, managed job, background launch, a custom `BROWSER`, or a real OAuth flow. Success establishes command exit and receipt by the temporary listener, not the identity or visibility of the handler. Record handler choice and user actions in the device matrix. The test has not been run on Android.
+
 For a CLI that honors `BROWSER`, select the installed wrapper explicitly for that invocation:
 
 ```sh
