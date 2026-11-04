@@ -16,7 +16,7 @@ public final class ExecutableInspector {
         public final String detail;
         Report(Status status, String detail) { this.status = status; this.detail = detail; }
         public String describe() { return "Inspection: " + status + "\n" + detail +
-            "\nExecution, shared libraries, kernel support and SELinux: not tested."; }
+            "\nExecution, library resolution, kernel support and SELinux: not tested."; }
     }
     private ExecutableInspector() { }
     private static Report result(Status status, String detail) { return new Report(status, detail); }
@@ -135,6 +135,13 @@ public final class ExecutableInspector {
                         inFile(phoff + (long) i * phsize, phsize, first.length) && inFile(loc, size, first.length);
                 }
                 if (interpreter != null) detail += "\nInterpreter: " + interpreter + "\nRuntime: " + runtime(interpreter);
+                File glibcRoot = glibcLoaderDirectory == null ? null : glibcLoaderDirectory.getParentFile();
+                File prefix = glibcRoot == null ? null : glibcRoot.getParentFile();
+                String libDir = is64 ? "lib64" : "lib";
+                detail += ElfDependencies.inspect(input, length, phoff, phsize, count, is64, order, new File[]{
+                    file.getAbsoluteFile().getParentFile(), prefix == null ? null : new File(prefix, "lib"),
+                    glibcLoaderDirectory, new File("/system/" + libDir),
+                    new File("/apex/com.android.runtime/" + libDir + "/bionic")});
                 if (interpreter != null && "Linux musl".equals(runtime(interpreter)))
                     detail += "\nShell-inherited preload libraries may target a different C runtime; their compatibility with this program is not tested." +
                         " The optional termux-run-clean adapter omits recognized Termux execution preloads for one command and its children, retaining other preloads. This can change path and script handling; Android behavior is not verified." +
