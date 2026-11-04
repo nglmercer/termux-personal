@@ -24,8 +24,11 @@ public class SensitiveUrlClipboardTest {
         assertNotNull(clip);
         assertEquals(url, clip.getItemAt(0).getText().toString());
         assertTrue(clip.getDescription().getExtras().getBoolean(ClipDescription.EXTRA_IS_SENSITIVE));
-        assertFalse(SensitiveUrlClipboard.copy(context, "file:///private"));
+        assertFalse(SensitiveUrlClipboard.copy(context, null));
         assertEquals(url, clipboard.getPrimaryClip().getItemAt(0).getText().toString());
+        // Copying selected text is independent of the stricter web dispatch policy.
+        assertTrue(SensitiveUrlClipboard.copy(context, "https://user:pass@example.com/"));
+        assertEquals("https://user:pass@example.com/", clipboard.getPrimaryClip().getItemAt(0).getText().toString());
     }
 
     @Test @Config(sdk = 28)

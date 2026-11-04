@@ -714,7 +714,10 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
         // Click to copy url to clipboard:
         final AlertDialog dialog = new AlertDialog.Builder(mActivity).setItems(urls, (di, which) -> {
             String url = (String) urls[which];
-            ShareUtils.copyTextToClipboard(mActivity, url, mActivity.getString(R.string.msg_select_url_copied_to_clipboard));
+            String scheme = Uri.parse(url).getScheme();
+            if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))
+                mActivity.copySensitiveWebUrl(url);
+            else ShareUtils.copyTextToClipboard(mActivity, url, mActivity.getString(R.string.msg_select_url_copied_to_clipboard));
         }).setTitle(R.string.title_select_url_dialog).create();
 
         // Long press to open URL:
@@ -738,9 +741,9 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
             ShareUtils.openUrl(mActivity, url);
             return;
         }
-        AndroidUrlLauncher.Status status = AndroidUrlLauncher.open(mActivity, url);
-        if (status != AndroidUrlLauncher.Status.DISPATCHED_UNCONFIRMED)
-            mActivity.showWebOpenFailure(url, status);
+        AndroidUrlLauncher.Status status = AndroidUrlLauncher.openOrQueue(url);
+        if (status != AndroidUrlLauncher.Status.DISPATCHED_UNCONFIRMED && status != AndroidUrlLauncher.Status.QUEUED_FOR_USER)
+            Toast.makeText(mActivity, mActivity.getString(R.string.compat_url_failed, status.name()), Toast.LENGTH_LONG).show();
     }
 
     public void reportIssueFromTranscript() {

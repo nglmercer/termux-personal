@@ -41,6 +41,12 @@ public final class AndroidUrlLauncher {
         return openFromReceiver(url, null, false);
     }
     public static Status openFromReceiver(String url, String contentType, boolean chooser) {
+        return openOrQueue(url, contentType, chooser);
+    }
+    public static Status openOrQueue(String url) {
+        return openOrQueue(url, null, false);
+    }
+    private static Status openOrQueue(String url, String contentType, boolean chooser) {
         if (!UrlPolicy.isWebUrl(url) || !UrlPolicy.isContentTypeSafe(contentType)) return Status.INVALID_URI;
         Activity activity = foreground.get();
         if (activity != null && !activity.isFinishing()) {

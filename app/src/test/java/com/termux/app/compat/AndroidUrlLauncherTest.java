@@ -16,8 +16,10 @@ public class AndroidUrlLauncherTest {
         Intent dispatched;
         RuntimeException failure;
         int pendingNotifications;
+        int attempts;
         @Override public void onPendingWebUrl() { pendingNotifications++; }
         @Override public void startActivity(Intent intent) {
+            attempts++;
             if (failure != null) throw failure;
             dispatched = intent;
         }
@@ -78,8 +80,9 @@ public class AndroidUrlLauncherTest {
         TestActivity a = activity();
         a.failure = new ActivityNotFoundException();
         AndroidUrlLauncher.resumed(a);
-        assertEquals(AndroidUrlLauncher.Status.QUEUED_FOR_USER, AndroidUrlLauncher.openFromReceiver("https://example.com/auth?code=secret"));
+        assertEquals(AndroidUrlLauncher.Status.QUEUED_FOR_USER, AndroidUrlLauncher.openOrQueue("https://example.com/auth?code=secret"));
         assertEquals(1, a.pendingNotifications);
+        assertEquals(1, a.attempts);
         assertEquals("https://example.com/auth?code=secret", AndroidUrlLauncher.takePending());
     }
     @Test public void webChooserAndContentTypeArePreservedInDispatchAndQueue() {

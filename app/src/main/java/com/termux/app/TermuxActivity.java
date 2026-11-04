@@ -402,14 +402,6 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         super.onPause();
     }
 
-    /** Offers a manual fallback without displaying the potentially sensitive link. */
-    public void showWebOpenFailure(String url, com.termux.app.compat.AndroidUrlLauncher.Status status) {
-        new AlertDialog.Builder(this).setTitle(R.string.compat_pending_title)
-            .setMessage(getString(R.string.compat_url_failed, status.name()))
-            .setPositiveButton(R.string.compat_pending_copy, (dialog, which) -> copySensitiveWebUrl(url))
-            .setNegativeButton(android.R.string.cancel, null).show();
-    }
-
     private boolean mPendingWebDialogShowing;
 
     @Override
@@ -458,7 +450,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         }
     }
 
-    private boolean copySensitiveWebUrl(String url) {
+    public boolean copySensitiveWebUrl(String url) {
         boolean copied = com.termux.app.compat.SensitiveUrlClipboard.copy(this, url);
         if (!copied) Toast.makeText(this, R.string.compat_pending_copy_failed, Toast.LENGTH_LONG).show();
         else if (android.os.Build.VERSION.SDK_INT < 33)
