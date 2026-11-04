@@ -1,6 +1,5 @@
 package com.termux.app.compat.network;
 
-import java.net.ConnectException;
 import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
 import javax.net.ssl.SSLHandshakeException;
@@ -16,13 +15,13 @@ public final class NetworkErrorClassifier {
             handshake |= error instanceof SSLHandshakeException;
             timeout |= error instanceof SocketTimeoutException;
             dns |= error instanceof UnknownHostException;
-            refused |= error instanceof ConnectException;
+            refused |= error instanceof android.system.ErrnoException &&
+                ((android.system.ErrnoException) error).errno == android.system.OsConstants.ECONNREFUSED;
             if (error.getCause() == error) break;
         }
         if (handshake) return NetworkCompatibilityReport.Status.TLS_HANDSHAKE_FAILURE;
         if (dns) return NetworkCompatibilityReport.Status.DNS_FAILURE;
-        // ConnectException can also mean an unreachable network, not only refusal.
-        if (refused) return NetworkCompatibilityReport.Status.UNKNOWN;
+        if (refused) return NetworkCompatibilityReport.Status.CONNECTION_REFUSED;
         // A URLConnection timeout can happen during DNS, connection, handshake or read.
         if (timeout) return NetworkCompatibilityReport.Status.TIMEOUT;
         return NetworkCompatibilityReport.Status.UNKNOWN;

@@ -31,7 +31,11 @@ final class TcpSample {
             return NetworkCompatibilityReport.FamilyStatus.CONNECT_TIMEOUT;
         } catch (SecurityException e) {
             return NetworkCompatibilityReport.FamilyStatus.SECURITY_RESTRICTED;
-        } catch (IOException | IllegalArgumentException e) {
+        } catch (IOException e) {
+            if (NetworkErrorClassifier.classify(e) == NetworkCompatibilityReport.Status.CONNECTION_REFUSED)
+                return NetworkCompatibilityReport.FamilyStatus.CONNECTION_REFUSED;
+            return NetworkCompatibilityReport.FamilyStatus.CONNECT_FAILED;
+        } catch (IllegalArgumentException e) {
             return NetworkCompatibilityReport.FamilyStatus.CONNECT_FAILED;
         }
     }

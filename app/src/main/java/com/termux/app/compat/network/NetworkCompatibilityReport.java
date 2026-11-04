@@ -8,7 +8,7 @@ public final class NetworkCompatibilityReport {
         HTTP_RESPONSE, NETWORK_OK, UNKNOWN, TIMEOUT, UNAVAILABLE
     }
     public enum DnsStatus { NOT_TESTED, RESOLVED, NO_RECORDS, DNS_FAILURE, UNKNOWN }
-    public enum FamilyStatus { NOT_TESTED, NO_DNS_RECORD, TCP_CONNECTED, CONNECT_TIMEOUT, CONNECT_FAILED,
+    public enum FamilyStatus { NOT_TESTED, NO_DNS_RECORD, TCP_CONNECTED, CONNECT_TIMEOUT, CONNECTION_REFUSED, CONNECT_FAILED,
         SECURITY_RESTRICTED, SKIPPED_PROXY, SKIPPED_VPN, NETWORK_CHANGED, POLICY_UNKNOWN }
     public final String dns;
     public final DnsStatus dnsStatus;
@@ -65,6 +65,7 @@ public final class NetworkCompatibilityReport {
                 result.append(" Do not disable verification.");
                 break;
             case TLS_HANDSHAKE_FAILURE: result.append("\nCheck TLS configuration and network intermediaries; certificate trust may require separate diagnosis."); break;
+            case CONNECTION_REFUSED: result.append("\nA connection was refused; the endpoint may be the server or a configured proxy."); break;
             case TIMEOUT: result.append("\nThe probe timed out; this alone does not identify DNS, connection, TLS or response as the cause."); break;
             case UNAVAILABLE: result.append("\nThe probe is unavailable or a previous resolver call is still running."); break;
             case HTTP_RESPONSE:

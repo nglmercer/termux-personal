@@ -7,6 +7,9 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.io.FileDescriptor;
+import android.system.Os;
+import android.system.OsConstants;
 import static org.junit.Assert.*;
 
 /** Real local socket mechanics only; this does not test OEM, VPN or internet reachability. */
@@ -24,5 +27,16 @@ public class TcpSampleInstrumentedTest {
                 assertEquals(-1, accepted.getInputStream().read());
             }
         }
+    }
+    @Test public void closedLoopbackPortReportsStructuredRefusal() throws Exception {
+        InetAddress loopback = InetAddress.getByAddress(new byte[]{127, 0, 0, 1});
+        // Reserve the port without listening, so another process cannot claim it during the test.
+        FileDescriptor reserved = Os.socket(OsConstants.AF_INET, OsConstants.SOCK_STREAM, 0);
+        try {
+            Os.bind(reserved, loopback, 0);
+            int port = ((InetSocketAddress) Os.getsockname(reserved)).getPort();
+            assertEquals(NetworkCompatibilityReport.FamilyStatus.CONNECTION_REFUSED,
+                TcpSample.connect(new Socket(), loopback, port, 2000));
+        } finally { Os.close(reserved); }
     }
 }
