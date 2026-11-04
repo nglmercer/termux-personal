@@ -15,6 +15,8 @@ Follow-up on 2026-11-03 at 21:17 UTC: `git ls-remote origin refs/heads/main` ret
 
 `bash scripts/test-glibc-exec-host.sh` passed on the host. This tests the shim with host fixtures, not Android hardware. `adb devices` showed no attached devices. Existing prior testing is recorded in `docs/next-generation/implementation-status.md`; it does not verify the requested compatibility matrix. Other compatibility phases, termux-tools versions, browser and network behavior remain unverified.
 
+Additional host checks on 2026-11-03 passed: the compatibility shell tests (12), Python SDK tests (35), TypeScript SDK tests (38), both SDKs' Java v1 and ADB-bridge interoperability, PTY spawn/output/exit and injected pre-fork failures, managed process launch/signal/path checks, document path checks, and shared-image URI selection. The PTY host script needed `_GNU_SOURCE` for Linux declarations when compiling with strict C11; this affects the host harness, not Android's native build. These results do not establish Android intent grants, Android process behavior, or ROM compatibility.
+
 The host shim checks also exercise malformed ELF64 program-header and interpreter offsets and sizes. They verify conservative pass-through of these fixtures, not execution on Android or support for ELF headers beyond the shim's first-page inspection limit.
 
 ## Implementation in progress
