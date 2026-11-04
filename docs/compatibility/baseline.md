@@ -65,6 +65,8 @@ Host-side receiver tests check that a readable file produces a `content://` view
 
 The receiver catches a `SecurityException` from file and non-web activity launches and attempts a generic notice without displaying or logging the URI. Android may suppress background toasts; these paths and provider grants still require real-device testing.
 
+The existing file provider now compares canonical paths at directory boundaries instead of accepting sibling names sharing a string prefix, and canonicalizes protected property-file paths before applying the existing read-only rule. This does not make the provider's check-then-open sequence race-free against concurrent same-UID filesystem changes. Host tests cover boundary and symlink aliases; actual provider permissions, canonical paths on devices, and cross-app grants remain unverified.
+
 The shared URL/chooser helper also omits URI data, shared intent extras and exception messages from its failure logs. Host tests inject secrets into both a URL and an exception and exercise direct and chooser failures. Android system and receiving-app logs remain outside this check.
 
 The receiver's unsupported-action branch now performs the `ACTION_VIEW` fallback it previously logged but did not apply. HTTP(S) fallback requests consequently use the web policy, while file fallback requests retain the existing read-only content URI path. Raw unsupported action strings and unreadable file paths are no longer written to the receiver log. Host tests cover both fallback routes; Android execution remains unverified.

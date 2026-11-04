@@ -103,4 +103,19 @@ public class TermuxOpenReceiverTest {
         assertEquals(context.getString(com.termux.R.string.compat_launch_restricted), notice);
         assertFalse(notice.contains("user@example.com"));
     }
+    @Test public void providerChecksDirectoryBoundariesAndCanonicalProtectedPaths() throws Exception {
+        File root = temp.newFolder("files");
+        File sibling = temp.newFolder("files-extra");
+        File protectedFile = new File(root, "termux.properties");
+        assertTrue(protectedFile.createNewFile());
+        String rootPath = root.getCanonicalPath();
+        assertTrue(TermuxOpenReceiver.ContentProvider.withinCanonicalRoot(rootPath, rootPath));
+        assertTrue(TermuxOpenReceiver.ContentProvider.withinCanonicalRoot(protectedFile.getCanonicalPath(), rootPath));
+        assertFalse(TermuxOpenReceiver.ContentProvider.withinCanonicalRoot(sibling.getCanonicalPath(), rootPath));
+        assertFalse(TermuxOpenReceiver.ContentProvider.withinCanonicalRoot("relative", rootPath));
+        File alias = new File(temp.getRoot(), "alias");
+        java.nio.file.Files.createSymbolicLink(alias.toPath(), root.toPath());
+        assertTrue(TermuxOpenReceiver.ContentProvider.isProtectedCanonicalPath(
+            protectedFile.getCanonicalPath(), java.util.Collections.singletonList(new File(alias, "termux.properties").getPath())));
+    }
 }

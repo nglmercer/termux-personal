@@ -151,6 +151,18 @@ public class TermuxOpenReceiver extends BroadcastReceiver {
 
         private static final String LOG_TAG = "TermuxContentProvider";
 
+        /** Both paths must already be canonical; compare directory boundaries, not string prefixes. */
+        static boolean withinCanonicalRoot(String path, String root) {
+            if (path == null || root == null || !root.startsWith("/") || !path.startsWith("/")) return false;
+            return path.equals(root) || path.startsWith(root.endsWith("/") ? root : root + "/");
+        }
+
+        static boolean isProtectedCanonicalPath(String path, java.util.List<String> protectedPaths) throws IOException {
+            for (String protectedPath : protectedPaths)
+                if (path.equals(new File(protectedPath).getCanonicalPath())) return true;
+            return false;
+        }
+
         @Override
         public boolean onCreate() {
             return true;
@@ -227,12 +239,12 @@ public class TermuxOpenReceiver extends BroadcastReceiver {
             File file = new File(uri.getPath());
             try {
                 String path = file.getCanonicalPath();
-                String callingPackageName = getCallingPackage();
-                Logger.logDebug(LOG_TAG, "Open file request received from " + callingPackageName + " for \"" + path + "\" with mode \"" + mode + "\"");
+                Logger.logDebug(LOG_TAG, "Open file request received; path omitted");
+                String filesPath = new File(TermuxConstants.TERMUX_FILES_DIR_PATH).getCanonicalPath();
                 String storagePath = Environment.getExternalStorageDirectory().getCanonicalPath();
                 // See https://support.google.com/faqs/answer/7496913:
-                if (!(path.startsWith(TermuxConstants.TERMUX_FILES_DIR_PATH) || path.startsWith(storagePath))) {
-                    throw new IllegalArgumentException("Invalid path: " + path);
+                if (!(withinCanonicalRoot(path, filesPath) || withinCanonicalRoot(path, storagePath))) {
+                    throw new IllegalArgumentException("Path is outside shared roots");
                 }
 
                 // If TermuxConstants.PROP_ALLOW_EXTERNAL_APPS property to not set to "true", then throw exception
@@ -244,8 +256,8 @@ public class TermuxOpenReceiver extends BroadcastReceiver {
                 // **DO NOT** allow these files to be modified by ContentProvider exposed to external
                 // apps, since they may silently modify the values for security properties like
                 // TermuxConstants.PROP_ALLOW_EXTERNAL_APPS set by users without their explicit consent.
-                if (TermuxConstants.TERMUX_PROPERTIES_FILE_PATHS_LIST.contains(path) ||
-                    TermuxConstants.TERMUX_FLOAT_PROPERTIES_FILE_PATHS_LIST.contains(path)) {
+                if (isProtectedCanonicalPath(path, TermuxConstants.TERMUX_PROPERTIES_FILE_PATHS_LIST) ||
+                    isProtectedCanonicalPath(path, TermuxConstants.TERMUX_FLOAT_PROPERTIES_FILE_PATHS_LIST)) {
                     mode = "r";
                 }
 
