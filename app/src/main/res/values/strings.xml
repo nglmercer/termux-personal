@@ -488,6 +488,11 @@
     <string name="compat_auth_title">Browser authentication diagnostics</string>
     <string name="compat_auth_description">Test temporary IPv4 and IPv6 localhost listeners without opening a browser or accessing an authentication session. If a CLI supports BROWSER, you can explicitly run it with BROWSER=termux-open. Existing BROWSER settings are not changed. External browser callbacks and the CLI’s own listener require separate testing.</string>
     <string name="compat_auth_test">Test localhost</string>
+    <string name="compat_auth_more_tests">More tests</string>
+    <string name="compat_auth_port_test">Check callback port</string>
+    <string name="compat_auth_port_hint">Port number (1–65535)</string>
+    <string name="compat_auth_port_description">Briefly bind this port on IPv4 and IPv6 loopback, then release it. This does not contact an existing CLI listener. A CLI using the port may prevent the test from binding.</string>
+    <string name="compat_auth_port_invalid">Enter a port from 1 to 65535.</string>
     <string name="compat_auth_busy">A localhost test is already running.</string>
     <string name="compat_auth_browser_test">Test browser callback</string>
     <string name="compat_auth_browser_family">Choose loopback address</string>

@@ -1291,8 +1291,56 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                 }, "compat-loopback-probe");
                 worker.setDaemon(true);
                 worker.start();
-            }).setNeutralButton(R.string.compat_auth_browser_test, (dialog, which) -> chooseBrowserCallbackFamily())
+            }).setNeutralButton(R.string.compat_auth_more_tests, (dialog, which) -> chooseAuthTest())
             .setNegativeButton(android.R.string.cancel, null).show();
+    }
+
+    private void chooseAuthTest() {
+        CharSequence[] tests = {getString(R.string.compat_auth_browser_test), getString(R.string.compat_auth_port_test)};
+        new AlertDialog.Builder(this).setTitle(R.string.compat_auth_title)
+            .setItems(tests, (dialog, which) -> {
+                if (which == 0) chooseBrowserCallbackFamily(); else chooseCallbackPort();
+            }).setNegativeButton(android.R.string.cancel, null).show();
+    }
+
+    private void chooseCallbackPort() {
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        input.setHint(R.string.compat_auth_port_hint);
+        new AlertDialog.Builder(this).setTitle(R.string.compat_auth_port_test)
+            .setMessage(R.string.compat_auth_port_description).setView(input)
+            .setPositiveButton(R.string.compat_runtime_inspect, (dialog, which) -> {
+                String value = input.getText().toString();
+                if (!value.matches("[0-9]{1,5}")) {
+                    Toast.makeText(this, R.string.compat_auth_port_invalid, Toast.LENGTH_LONG).show();
+                    return;
+                }
+                int port = Integer.parseInt(value);
+                if (port < 1 || port > 65535) {
+                    Toast.makeText(this, R.string.compat_auth_port_invalid, Toast.LENGTH_LONG).show();
+                    return;
+                }
+                if (!COMPAT_LOOPBACK_BUSY.compareAndSet(false, true)) {
+                    Toast.makeText(this, R.string.compat_auth_busy, Toast.LENGTH_LONG).show();
+                    return;
+                }
+                WeakReference<TermuxActivity> activity = new WeakReference<>(this);
+                android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
+                Thread worker = new Thread(() -> {
+                    com.termux.app.compat.network.LoopbackDiagnostics.PortResult result;
+                    try { result = com.termux.app.compat.network.LoopbackDiagnostics.probePort(port); }
+                    finally { COMPAT_LOOPBACK_BUSY.set(false); }
+                    handler.post(() -> {
+                        TermuxActivity current = activity.get();
+                        if (current == null || !com.termux.app.compat.AndroidUrlLauncher.isResumed(current) || current.isFinishing()) return;
+                        new AlertDialog.Builder(current).setTitle(R.string.compat_auth_port_test)
+                            .setMessage(result.describe()).setPositiveButton(android.R.string.ok, null).show();
+                    });
+                }, "compat-loopback-port-probe");
+                worker.setDaemon(true);
+                worker.start();
+            }).setNegativeButton(android.R.string.cancel, null).show();
     }
 
     private void showPendingBrowserTest() {

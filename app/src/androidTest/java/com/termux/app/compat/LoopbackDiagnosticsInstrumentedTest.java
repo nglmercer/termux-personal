@@ -16,4 +16,11 @@ public class LoopbackDiagnosticsInstrumentedTest {
         assertEquals(LoopbackDiagnostics.Status.AVAILABLE, result.ipv4);
         assertNotNull(result.ipv6);
     }
+    @Test public void occupiedIpv4PortFailsWithoutContactingItsListener() throws Exception {
+        try (java.net.ServerSocket listener = new java.net.ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1"))) {
+            LoopbackDiagnostics.PortResult result = LoopbackDiagnostics.probePort(listener.getLocalPort());
+            assertEquals(LoopbackDiagnostics.PortStatus.BIND_FAILED, result.ipv4);
+            assertNotNull(result.ipv6);
+        }
+    }
 }
