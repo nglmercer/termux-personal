@@ -5,6 +5,7 @@ import android.net.ConnectivityManager;
 import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.net.NetworkInfo;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -31,8 +32,15 @@ public final class NetworkDiagnostics {
     public static String snapshot(Context context) {
         StringBuilder out = new StringBuilder();
         ConnectivityManager manager = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
-        if (manager == null || Build.VERSION.SDK_INT < 23) {
+        if (manager == null) {
             out.append("Active network: unavailable on this API\n");
+        } else if (Build.VERSION.SDK_INT < 23) {
+            try {
+                out.append("Legacy active network: ").append(legacyConnected(manager.getActiveNetworkInfo()) ? "connected" : "not reported or disconnected")
+                    .append("\nValidation, DNS resolver addresses, Private DNS, proxy and process binding: unavailable in this snapshot\n");
+            } catch (SecurityException | IllegalStateException e) {
+                out.append("Legacy active network: unavailable\n");
+            }
         } else {
             try {
                 Network network = manager.getActiveNetwork();
@@ -57,6 +65,9 @@ public final class NetworkDiagnostics {
         out.append(CertificateBundleDiagnostics.describe(new File(TermuxConstants.TERMUX_PREFIX_DIR_PATH)));
         return out.toString();
     }
+
+    @SuppressWarnings("deprecation")
+    static boolean legacyConnected(NetworkInfo info) { return info != null && info.isConnected(); }
 
     /** Completion or deadline is delivered once on the main thread. DNS may outlive the deadline. */
     public static void probe(Context context, Callback callback) {
@@ -91,27 +102,43 @@ public final class NetworkDiagnostics {
     }
 
     private static NetworkCompatibilityReport runProbe(Context context, AtomicBoolean delivered) {
+        return runProbe(context, delivered, Build.VERSION.SDK_INT, null);
+    }
+
+    /** Injectable API level and backend allow legacy control flow to be exercised without network access. */
+    static NetworkCompatibilityReport runProbe(Context context, AtomicBoolean delivered, int api,
+                                                NetworkProbeRunner.Backend testBackend) {
         try {
-            if (Build.VERSION.SDK_INT < 23) return new NetworkCompatibilityReport("not tested", NetworkCompatibilityReport.Status.UNAVAILABLE, 0);
             ConnectivityManager manager = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
             if (manager == null) return new NetworkCompatibilityReport("not tested", NetworkCompatibilityReport.Status.UNAVAILABLE, 0);
-            Network bound = manager.getBoundNetworkForProcess();
-            Network network = bound != null ? bound : manager.getActiveNetwork();
-            if (network == null) return new NetworkCompatibilityReport("not tested", NetworkCompatibilityReport.Status.NO_NETWORK, 0);
-            NetworkObservationStore.Ticket ticket = bound == null ? AndroidNetworkObservations.begin(context, network) : null;
-            NetworkCompatibilityReport report = NetworkProbeRunner.run(new NetworkProbeRunner.Backend() {
+            final Network network;
+            final NetworkObservationStore.Ticket ticket;
+            if (api >= 23) {
+                Network bound = manager.getBoundNetworkForProcess();
+                network = bound != null ? bound : manager.getActiveNetwork();
+                if (network == null) return new NetworkCompatibilityReport("not tested", NetworkCompatibilityReport.Status.NO_NETWORK, 0);
+                ticket = bound == null ? AndroidNetworkObservations.begin(context, network) : null;
+            } else {
+                // The legacy state can be null for a VPN and may not represent process binding.
+                // Let the explicitly requested DNS/HTTPS observations use the process route.
+                network = null;
+                ticket = null;
+            }
+            NetworkProbeRunner.Backend backend = testBackend != null ? testBackend : new NetworkProbeRunner.Backend() {
                 @Override public java.net.InetAddress[] resolve() throws java.io.IOException { return java.net.InetAddress.getAllByName("example.com"); }
-                @Override public boolean supportsCertificateReason() { return Build.VERSION.SDK_INT >= 24; }
+                @Override public boolean supportsCertificateReason() { return api >= 24; }
                 @Override public java.net.HttpURLConnection open() throws java.io.IOException {
                     return (java.net.HttpURLConnection) new URL("https://example.com/").openConnection();
                 }
                 @Override public NetworkCompatibilityReport.FamilyStatus tcpSample(java.net.InetAddress address) {
-                    return AndroidTcpSample.sample(manager, network, address, delivered);
+                    return network == null ? NetworkCompatibilityReport.FamilyStatus.POLICY_UNKNOWN :
+                        AndroidTcpSample.sample(manager, network, address, delivered);
                 }
-            }, delivered);
+            };
+            NetworkCompatibilityReport report = NetworkProbeRunner.run(backend, delivered);
             if (!delivered.get()) {
                 try {
-                    LinkProperties link = manager.getLinkProperties(network);
+                    LinkProperties link = network == null ? null : manager.getLinkProperties(network);
                     java.util.List<java.net.InetAddress> dnsServers = link == null ? null : link.getDnsServers();
                     File prefix = new File(TermuxConstants.TERMUX_PREFIX_DIR_PATH);
                     report = report.withResolverFiles(
