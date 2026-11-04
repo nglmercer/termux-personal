@@ -26,15 +26,24 @@ public final class WebCommandShim {
     public static synchronized Status ensure(Context context) { return ensureAsset(context, NAME); }
     public static synchronized Status ensureDoctor(Context context) { return ensureAsset(context, "termux-compat"); }
     public static synchronized Status ensureRuntimeAdapter(Context context) { return ensureAsset(context, "termux-run-clean"); }
+    public static synchronized Status ensureRuntimeAdapterV2(Context context) { return ensureAsset(context, "compat-v2", "termux-run-clean"); }
     private static Status ensureAsset(Context context, String name) {
-        try (InputStream source = context.getAssets().open(DIRECTORY + "/" + name)) {
-            return install(context.getFilesDir(), name, readBounded(source));
+        return ensureAsset(context, DIRECTORY, name);
+    }
+    private static Status ensureAsset(Context context, String directory, String name) {
+        try (InputStream source = context.getAssets().open(directory + "/" + name)) {
+            return install(context.getFilesDir(), directory, name, readBounded(source));
         } catch (IOException | RuntimeException e) { return Status.UNAVAILABLE; }
     }
     static Status install(File filesDir, byte[] expected) { return install(filesDir, NAME, expected); }
     static Status install(File filesDir, String name, byte[] expected) {
-        if (filesDir == null || (!NAME.equals(name) && !"termux-compat".equals(name) && !"termux-run-clean".equals(name)) || expected == null || expected.length == 0 || expected.length > MAX_BYTES) return Status.UNAVAILABLE;
-        File directory = new File(filesDir, DIRECTORY);
+        return install(filesDir, DIRECTORY, name, expected);
+    }
+    static Status install(File filesDir, String directoryName, String name, byte[] expected) {
+        boolean supported = (DIRECTORY.equals(directoryName) && (NAME.equals(name) || "termux-compat".equals(name) || "termux-run-clean".equals(name))) ||
+            ("compat-v2".equals(directoryName) && "termux-run-clean".equals(name));
+        if (filesDir == null || !supported || expected == null || expected.length == 0 || expected.length > MAX_BYTES) return Status.UNAVAILABLE;
+        File directory = new File(filesDir, directoryName);
         try {
             try { Os.mkdir(directory.getPath(), 0700); }
             catch (ErrnoException e) { if (e.errno != OsConstants.EEXIST) return Status.UNAVAILABLE; }

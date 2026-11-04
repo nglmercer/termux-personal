@@ -46,13 +46,13 @@ if [[ -n "${TERMUX_EXEC_SHIM:-}" ]]; then
     # Source the adapter into an already-started host shell to model a Bionic shell with the
     # chain loaded; starting a glibc host shell with Bionic libraries would itself fail.
     mkdir -p "$out/prefix/lib"
-    cp "$TERMUX_EXEC_SHIM" "$out/prefix/lib/libtermux-exec-ld-preload.so"
     printf '%s\n' 'void user_preload_marker(void) {}' > "$out/user-preload.c"
     env -u LD_PRELOAD "$MUSL_CC" -shared -fPIC "$out/user-preload.c" -o "$out/user-preload.so"
-    chain="$ANDROID_EXEC_SHIM:$out/prefix/lib/libtermux-exec-ld-preload.so:$out/user-preload.so"
+    cp "$TERMUX_EXEC_SHIM" "$out/prefix/lib/libtermux-exec.so"
+    chain="$ANDROID_EXEC_SHIM:$out/prefix/lib/libtermux-exec.so:$out/user-preload.so"
     line=$(env -u LD_PRELOAD -u TERMUX_GLIBC_EXE PREFIX="$out/prefix" TERMUX_GLIBC_EXEC="$ANDROID_EXEC_SHIM" \
         /bin/sh -c 'LD_PRELOAD=$1; export LD_PRELOAD; shift; . "$@"' test \
-        "$chain" "$repo_dir/app/src/main/assets/compat-v1/termux-run-clean" "$probe" report)
+        "$chain" "$repo_dir/app/src/main/assets/compat-v2/termux-run-clean" "$probe" report)
     [[ $line == "exe=$probe argv0=$probe glibc_exe=- preload=$out/user-preload.so" ]] || { echo 'FAIL: filtered musl execution'; exit 1; }
     echo 'bundled Bionic preload relocation failure and explicit per-process removal reproduced'
 fi

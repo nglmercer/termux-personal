@@ -164,6 +164,7 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
             com.termux.app.compat.cli.WebCommandShim.ensure(getApplicationContext());
             com.termux.app.compat.cli.WebCommandShim.ensureDoctor(getApplicationContext());
             com.termux.app.compat.cli.WebCommandShim.ensureRuntimeAdapter(getApplicationContext());
+            com.termux.app.compat.cli.WebCommandShim.ensureRuntimeAdapterV2(getApplicationContext());
             ShellCompatibility.ensure();
         }, "TermuxShellCompat").start();
 

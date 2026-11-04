@@ -1,0 +1,29 @@
+#!/system/bin/sh
+# Explicit per-command adapter: omit only the app's shim and known Termux exec preloads.
+# This changes execution semantics for the command and its children.
+if [ "$#" -eq 0 ]; then
+    printf '%s\n' 'Usage: termux-run-clean /absolute/path/to/program [arguments...]' >&2
+    exit 2
+fi
+case "$1" in
+    /*) ;;
+    *) printf '%s\n' 'An absolute executable path is required.' >&2; exit 2 ;;
+esac
+prefix=${PREFIX:-/data/data/com.termux/files/usr}
+old_ifs=$IFS
+IFS=' :'
+set -f
+filtered=
+removed=no
+for library in ${LD_PRELOAD-}; do
+    case "$library" in
+        "${TERMUX_GLIBC_EXEC:-}"|"$prefix/lib/libtermux-exec.so"|"$prefix/lib/libtermux-exec-ld-preload.so"|"$prefix/lib/libtermux-exec-direct-ld-preload.so"|"$prefix/lib/libtermux-exec-linker-ld-preload.so")
+            removed=yes ;;
+        *) if [ -z "$filtered" ]; then filtered=$library; else filtered=$filtered:$library; fi ;;
+    esac
+done
+IFS=$old_ifs
+if [ "$removed" = yes ]; then
+    if [ -n "$filtered" ]; then LD_PRELOAD=$filtered; export LD_PRELOAD; else unset LD_PRELOAD; fi
+fi
+exec "$@"

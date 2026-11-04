@@ -1355,7 +1355,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         EditText path = new EditText(this);
         path.setSingleLine(true);
         path.setHint(R.string.compat_runtime_path_hint);
-        com.termux.app.compat.cli.WebCommandShim.Status adapter = com.termux.app.compat.cli.WebCommandShim.ensureRuntimeAdapter(this);
+        com.termux.app.compat.cli.WebCommandShim.Status adapter = com.termux.app.compat.cli.WebCommandShim.ensureRuntimeAdapterV2(this);
         new AlertDialog.Builder(this).setTitle(R.string.compat_runtime_title)
             .setMessage(getString(R.string.compat_runtime_description) + "\n\n" + getString(R.string.compat_runtime_adapter_description, adapter.name())).setView(path)
             .setPositiveButton(R.string.compat_runtime_inspect, (dialog, which) -> {

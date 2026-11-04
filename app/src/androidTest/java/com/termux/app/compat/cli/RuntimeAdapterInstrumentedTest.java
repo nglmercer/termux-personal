@@ -24,17 +24,17 @@ public class RuntimeAdapterInstrumentedTest {
         File base = new File(context.getCacheDir(), "runtime-adapter-" + UUID.randomUUID());
         File lib = new File(base, "lib");
         assertTrue(lib.mkdirs());
-        File alias = new File(lib, "libtermux-exec-ld-preload.so");
-        File adapterDir = new File(base, "compat-v1");
+        File alias = new File(lib, "libtermux-exec.so");
+        File adapterDir = new File(base, "compat-v2");
         File adapter = new File(adapterDir, "termux-run-clean");
         Process process = null;
         try {
             ByteArrayOutputStream asset = new ByteArrayOutputStream();
-            try (InputStream in = context.getAssets().open("compat-v1/termux-run-clean")) {
+            try (InputStream in = context.getAssets().open("compat-v2/termux-run-clean")) {
                 byte[] buffer = new byte[1024];
                 for (int n; (n = in.read(buffer)) != -1; ) asset.write(buffer, 0, n);
             }
-            assertEquals(WebCommandShim.Status.READY, WebCommandShim.install(base, "termux-run-clean", asset.toByteArray()));
+            assertEquals(WebCommandShim.Status.READY, WebCommandShim.install(base, "compat-v2", "termux-run-clean", asset.toByteArray()));
             File shim = new File(context.getApplicationInfo().nativeLibraryDir, "libtermux-glibc-exec.so");
             assertTrue(shim.isFile());
             Os.symlink(shim.getAbsolutePath(), alias.getAbsolutePath());
@@ -67,20 +67,20 @@ public class RuntimeAdapterInstrumentedTest {
     @Test(timeout = 30000) public void installedTermuxExecPreservesOtherPreloadsThroughAdapter() throws Exception {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         File prefix = new File(TermuxConstants.TERMUX_PREFIX_DIR_PATH);
-        File termuxExec = new File(prefix, "lib/libtermux-exec-ld-preload.so");
+        File termuxExec = new File(prefix, "lib/libtermux-exec.so");
         Assume.assumeTrue("Termux bootstrap and termux-exec are required", termuxExec.isFile());
         File base = new File(context.getCacheDir(), "runtime-real-exec-" + UUID.randomUUID());
         assertTrue(base.mkdir());
-        File adapterDir = new File(base, "compat-v1");
+        File adapterDir = new File(base, "compat-v2");
         File adapter = new File(adapterDir, "termux-run-clean");
         Process process = null;
         try {
             ByteArrayOutputStream asset = new ByteArrayOutputStream();
-            try (InputStream in = context.getAssets().open("compat-v1/termux-run-clean")) {
+            try (InputStream in = context.getAssets().open("compat-v2/termux-run-clean")) {
                 byte[] buffer = new byte[1024];
                 for (int n; (n = in.read(buffer)) != -1; ) asset.write(buffer, 0, n);
             }
-            assertEquals(WebCommandShim.Status.READY, WebCommandShim.install(base, "termux-run-clean", asset.toByteArray()));
+            assertEquals(WebCommandShim.Status.READY, WebCommandShim.install(base, "compat-v2", "termux-run-clean", asset.toByteArray()));
             File shim = new File(context.getApplicationInfo().nativeLibraryDir, "libtermux-glibc-exec.so");
             assertTrue(shim.isFile());
             boolean is64 = System.getProperty("os.arch", "").contains("64");

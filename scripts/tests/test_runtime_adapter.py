@@ -6,7 +6,8 @@ import subprocess
 import tempfile
 import unittest
 
-WRAPPER = pathlib.Path(__file__).resolve().parents[2] / "app/src/main/assets/compat-v1/termux-run-clean"
+ROOT = pathlib.Path(__file__).resolve().parents[2] / "app/src/main/assets"
+WRAPPER = ROOT / "compat-v2/termux-run-clean"
 
 
 class RuntimeAdapterTest(unittest.TestCase):
@@ -17,6 +18,7 @@ class RuntimeAdapterTest(unittest.TestCase):
         self.shim = str(self.prefix / "shim[1].so")
         self.custom = str(self.prefix / "custom[1].so")
         self.exec_preload = str(self.prefix / "lib/libtermux-exec-ld-preload.so")
+        self.legacy_preload = str(self.prefix / "lib/libtermux-exec.so")
         self.env = dict(os.environ, PREFIX=str(self.prefix), TERMUX_GLIBC_EXEC=self.shim)
         self.env.pop("LD_PRELOAD", None)
 
@@ -52,6 +54,15 @@ class RuntimeAdapterTest(unittest.TestCase):
         result = self.call(f"{decoy}:{direct} {linker}:{self.custom}:{self.custom}", "/bin/sh", "-c", command)
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual(f"{decoy}:{self.custom}:{self.custom}", result.stdout)
+
+    def test_v2_removes_legacy_alias_without_changing_v1(self):
+        command = 'printf "%s" "${LD_PRELOAD-unset}"'
+        self.assertEqual(self.custom, self.call(f"{self.legacy_preload}:{self.custom}", "/bin/sh", "-c", command).stdout)
+        env = dict(self.env, LD_PRELOAD=f"{self.legacy_preload}:{self.custom}")
+        old = subprocess.run(["/bin/sh", str(ROOT / "compat-v1/termux-run-clean"), "/bin/sh", "-c", command],
+                             env=env, text=True, capture_output=True)
+        self.assertEqual(0, old.returncode)
+        self.assertEqual(f"{self.legacy_preload}:{self.custom}", old.stdout)
 
     def test_requires_absolute_path_and_preserves_exit_status(self):
         self.assertEqual(2, self.call(None).returncode)
