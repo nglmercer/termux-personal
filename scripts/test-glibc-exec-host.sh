@@ -40,4 +40,5 @@ echo "$child"
 # Passing through: a missing program keeps its ordinary error.
 missing=$(env LD_PRELOAD="$out/side0.so" "$out/probe" run /nonexistent 2>&1 || true)
 [[ $missing == *"No such file"* ]] || { echo "FAIL: passthrough errno: $missing"; exit 1; }
+python3 "$repo_dir/scripts/tests/test_glibc_fifo.py" "$out" "$fake"
 echo "glibc exec shim host checks passed"

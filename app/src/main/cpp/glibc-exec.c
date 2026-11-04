@@ -38,6 +38,8 @@ typedef unsigned char u8;
 #define NR_read 63
 #define NR_close 57
 #define NR_faccessat 48
+#define NR_fstat 80
+#define KERNEL_STAT_MODE_OFFSET 16
 #define NR_execve 221
 static long sys3(long n, long a, long b, long c) {
     register long x8 __asm__("x8") = n, x0 __asm__("x0") = a, x1 __asm__("x1") = b, x2 __asm__("x2") = c;
@@ -54,6 +56,8 @@ static long sys4(long n, long a, long b, long c, long d) {
 #define NR_read 0
 #define NR_close 3
 #define NR_faccessat 269
+#define NR_fstat 5
+#define KERNEL_STAT_MODE_OFFSET 24
 #define NR_execve 59
 static long sys3(long n, long a, long b, long c) {
     long r;
@@ -71,6 +75,8 @@ static long sys4(long n, long a, long b, long c, long d) {
 #define NR_read 3
 #define NR_close 6
 #define NR_faccessat 334
+#define NR_fstat 197 /* fstat64 */
+#define KERNEL_STAT_MODE_OFFSET 16
 #define NR_execve 11
 /* r7 is the Thumb frame pointer, so it is saved around the call rather than bound to a variable. */
 static long sys3(long n, long a, long b, long c) {
@@ -88,6 +94,8 @@ static long sys4(long n, long a, long b, long c, long d) {
 #define NR_read 3
 #define NR_close 6
 #define NR_faccessat 307
+#define NR_fstat 197 /* fstat64 */
+#define KERNEL_STAT_MODE_OFFSET 16
 #define NR_execve 11
 static long sys3(long n, long a, long b, long c) {
     long r;
@@ -113,6 +121,8 @@ __attribute__((constructor)) static void resolve_next(void) { next_execve = (exe
 
 #define AT_FDCWD (-100)
 #define O_RDONLY_CLOEXEC 02000000
+#define O_NONBLOCK 00004000
+#define O_PATH 010000000
 #define X_OK 1
 
 /* errno belongs to whichever C library loaded us; both accessors are optional weak symbols. */
@@ -169,14 +179,36 @@ static const char *env_get(char *const envp[], const char *name) {
     return 0;
 }
 
+/* Linux kernel stat layouts for the four supported ABIs place st_mode at the offsets above.
+ * Use a generously sized aligned buffer: this library is freestanding on the glibc side. */
+static int is_regular_fd(long fd) {
+    union { unsigned long alignment; u8 bytes[256]; } stat_buffer;
+    if (sys3(NR_fstat, fd, (long) &stat_buffer, 0) < 0) return -1;
+    const u8 *mode = stat_buffer.bytes + KERNEL_STAT_MODE_OFFSET;
+    unsigned value = (unsigned) mode[0] | ((unsigned) mode[1] << 8) |
+        ((unsigned) mode[2] << 16) | ((unsigned) mode[3] << 24);
+    return (value & 0170000) == 0100000;
+}
+
 /*
  * For a glibc ELF program, writes the matching Termux glibc loader path into loader and returns 1.
  * Returns 0 for anything else, including when glibc-runner is not installed.
  */
 static int glibc_loader_for(const char *path, char *loader) {
     u8 head[4096];
-    long fd = sys4(NR_openat, AT_FDCWD, (long) path, O_RDONLY_CLOEXEC, 0);
+    /* Do not open devices or block on FIFOs while merely deciding whether to use glibc.
+     * Check the opened descriptor again after the normal open in case the path changed. */
+    long fd = sys4(NR_openat, AT_FDCWD, (long) path, O_PATH | O_RDONLY_CLOEXEC, 0);
+    if (fd >= 0) {
+        int regular = is_regular_fd(fd);
+        sys3(NR_close, fd, 0, 0);
+        if (regular == 0) return 0;
+        /* Older kernels may not support fstat on O_PATH descriptors. The nonblocking
+         * read descriptor below is checked independently before any data is read. */
+    }
+    fd = sys4(NR_openat, AT_FDCWD, (long) path, O_RDONLY_CLOEXEC | O_NONBLOCK, 0);
     if (fd < 0) return 0;
+    if (is_regular_fd(fd) != 1) { sys3(NR_close, fd, 0, 0); return 0; }
     long got = sys3(NR_read, fd, (long) head, sizeof(head));
     sys3(NR_close, fd, 0, 0);
     if (got < 64 || head[0] != 0x7f || head[1] != 'E' || head[2] != 'L' || head[3] != 'F') return 0;
