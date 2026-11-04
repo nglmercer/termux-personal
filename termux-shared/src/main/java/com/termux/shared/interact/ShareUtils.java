@@ -15,7 +15,6 @@ import androidx.appcompat.app.AppCompatActivity;
 
 import com.termux.shared.R;
 import com.termux.shared.data.DataUtils;
-import com.termux.shared.data.IntentUtils;
 import com.termux.shared.file.FileUtils;
 import com.termux.shared.logger.Logger;
 import com.termux.shared.errors.Error;
@@ -46,7 +45,8 @@ public class ShareUtils {
         try {
             context.startActivity(chooserIntent);
         } catch (Exception e) {
-            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to open system chooser for:\n" + IntentUtils.getIntentString(chooserIntent), e);
+            // Intent extras and exception messages may contain private URLs or shared text.
+            Logger.logError(LOG_TAG, "Failed to open system chooser");
         }
     }
 
@@ -172,7 +172,7 @@ public class ShareUtils {
             // If no activity found to handle intent, show system chooser
             openSystemAppChooser(context, intent, context.getString(R.string.title_open_url_with));
         } catch (Exception e) {
-            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to open url \"" + url + "\"", e);
+            Logger.logError(LOG_TAG, "Failed to open URL");
         }
     }
 
