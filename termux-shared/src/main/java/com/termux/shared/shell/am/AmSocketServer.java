@@ -20,7 +20,6 @@ import com.termux.shared.net.socket.local.LocalSocketManager;
 import com.termux.shared.net.socket.local.LocalSocketManagerClientBase;
 import com.termux.shared.net.socket.local.LocalSocketRunConfig;
 import com.termux.shared.shell.ArgumentTokenizer;
-import com.termux.shared.shell.command.ExecutionCommand;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
@@ -93,8 +92,8 @@ public class AmSocketServer {
 
         String amCommandString = data.toString();
 
-        Logger.logVerbose(LOG_TAG, "am command received from peer " + clientSocket.getPeerCred().getMinimalString() +
-            "\nam command: `" + amCommandString + "`");
+        // Arguments can contain OAuth URLs, tokens, or other private data. Keep them out of logs.
+        Logger.logDebug(LOG_TAG, "am command received; arguments omitted");
 
         // Parse am command string and convert it to a list of arguments
         List<String> amCommandList = new ArrayList<>();
@@ -105,9 +104,6 @@ public class AmSocketServer {
         }
 
         String[] amCommandArray = amCommandList.toArray(new String[0]);
-
-        Logger.logDebug(LOG_TAG, "am command received from peer " + clientSocket.getPeerCred().getMinimalString() +
-            "\n" + ExecutionCommand.getArgumentsLogString("am command", amCommandArray));
 
         AmSocketServerRunConfig amSocketServerRunConfig = (AmSocketServerRunConfig) localSocketManager.getLocalSocketRunConfig();
 
@@ -161,7 +157,7 @@ public class AmSocketServer {
      */
     public static int sanitizeExitCode(@NonNull LocalClientSocket clientSocket, int exitCode) {
         if (exitCode < 0 || exitCode > 255) {
-            Logger.logWarn(LOG_TAG, "Ignoring invalid peer "  + clientSocket.getPeerCred().getMinimalString() + " result value \"" + exitCode + "\" and force setting it to \"" + 1 + "\"");
+            Logger.logWarn(LOG_TAG, "Ignoring invalid socket result value \"" + exitCode + "\" and force setting it to \"" + 1 + "\"");
             exitCode = 1;
         }
 

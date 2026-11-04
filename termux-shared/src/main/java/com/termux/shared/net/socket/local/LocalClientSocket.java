@@ -88,7 +88,7 @@ public class LocalClientSocket implements Closeable {
     @Override
     public void close() throws IOException {
         if (mFD >= 0) {
-            Logger.logVerbose(LOG_TAG, "Client socket close for \"" + mLocalSocketRunConfig.getTitle() + "\" server: " + getPeerCred().getMinimalString());
+            Logger.logVerbose(LOG_TAG, "Client socket closed: pid=" + getPeerCred().pid + ", uid=" + getPeerCred().uid);
             JniResult result = LocalSocketManager.closeSocket(mLocalSocketRunConfig.getLogTitle() + " (client)", mFD);
             if (result == null || result.retval != 0) {
                 throw new IOException(JniResult.getErrorString(result));

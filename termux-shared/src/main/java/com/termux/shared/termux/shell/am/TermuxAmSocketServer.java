@@ -11,7 +11,6 @@ import com.termux.shared.logger.Logger;
 import com.termux.shared.net.socket.local.LocalClientSocket;
 import com.termux.shared.net.socket.local.LocalServerSocket;
 import com.termux.shared.net.socket.local.LocalSocketManager;
-import com.termux.shared.net.socket.local.LocalSocketManagerClientBase;
 import com.termux.shared.net.socket.local.LocalSocketRunConfig;
 import com.termux.shared.shell.am.AmSocketServerRunConfig;
 import com.termux.shared.shell.am.AmSocketServer;
@@ -29,9 +28,8 @@ import com.termux.shared.termux.shell.command.environment.TermuxAppShellEnvironm
  * {@link AmSocketServer}.
  *
  * The {@link TermuxAmSocketServerClient} extends the {@link AmSocketServer.AmSocketServerClient}
- * class to also show plugin error notifications for errors and disallowed client connections in
- * addition to logging the messages to logcat, which are only logged by {@link LocalSocketManagerClientBase}
- * if log level is debug or higher for privacy issues.
+ * class to show plugin error notifications for errors and disallowed client connections. Logs and
+ * notifications contain only a numeric error code because peer command lines can contain private data.
  *
  * It uses a filesystem socket server with the socket file at
  * {@link TermuxConstants.TERMUX_APP#TERMUX_AM_SOCKET_FILE_PATH}. It would normally only allow
@@ -155,14 +153,19 @@ public class TermuxAmSocketServer {
      * @param context The {@link Context} to send the notification with.
      * @param error The {@link Error} generated.
      * @param localSocketRunConfig The {@link LocalSocketRunConfig} for {@link LocalSocketManager}.
-     * @param clientSocket The optional {@link LocalClientSocket} for which the error was generated.
+     * @param clientSocket The optional {@link LocalClientSocket}; its details are not included.
      */
     public static synchronized void showErrorNotification(@NonNull Context context, @NonNull Error error,
                                                           @NonNull LocalSocketRunConfig localSocketRunConfig,
                                                           @Nullable LocalClientSocket clientSocket) {
+        String summary = safeErrorSummary(error);
         TermuxPluginUtils.sendPluginCommandErrorNotification(context, LOG_TAG,
-            localSocketRunConfig.getTitle() + " Socket Server Error", error.getMinimalErrorString(),
-            LocalSocketManager.getErrorMarkdownString(error, localSocketRunConfig, clientSocket));
+            localSocketRunConfig.getTitle() + " Socket Server Error", summary, summary);
+    }
+
+    /** Do not include exception text, peer command lines or socket payloads in notifications or logs. */
+    static String safeErrorSummary(@NonNull Error error) {
+        return "Socket error code " + error.getCode() + "; request details omitted.";
     }
 
 
@@ -207,8 +210,7 @@ public class TermuxAmSocketServer {
                     localSocketManager.getLocalSocketRunConfig(), clientSocket);
             }
 
-            // But log the exception
-            super.onError(localSocketManager, clientSocket, error);
+            Logger.logError(LOG_TAG, safeErrorSummary(error));
         }
 
         @Override
@@ -217,7 +219,7 @@ public class TermuxAmSocketServer {
             // Always show notification and log error regardless of if server is running or not
             TermuxAmSocketServer.showErrorNotification(localSocketManager.getContext(), error,
                 localSocketManager.getLocalSocketRunConfig(), clientSocket);
-            super.onDisallowedClientConnected(localSocketManager, clientSocket, error);
+            Logger.logWarn(LOG_TAG, safeErrorSummary(error));
         }
 
 
