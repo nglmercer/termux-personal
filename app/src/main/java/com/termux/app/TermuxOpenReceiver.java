@@ -57,9 +57,16 @@ public class TermuxOpenReceiver extends BroadcastReceiver {
                 ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))) {
                 AndroidUrlLauncher.Status status = AndroidUrlLauncher.openFromReceiver(data.toString());
                 Logger.logDebug(LOG_TAG, "Web launch status: " + status);
-                if (status != AndroidUrlLauncher.Status.DISPATCHED_UNCONFIRMED &&
-                    status != AndroidUrlLauncher.Status.QUEUED_FOR_USER)
-                    android.widget.Toast.makeText(context, context.getString(com.termux.R.string.compat_url_failed, status.name()), android.widget.Toast.LENGTH_LONG).show();
+                android.app.Activity foreground = AndroidUrlLauncher.resumedActivity();
+                String notice = null;
+                if (status == AndroidUrlLauncher.Status.QUEUED_FOR_USER && (foreground == null || foreground.isFinishing()))
+                    notice = context.getString(com.termux.R.string.compat_url_queued_notice);
+                else if (status != AndroidUrlLauncher.Status.DISPATCHED_UNCONFIRMED && status != AndroidUrlLauncher.Status.QUEUED_FOR_USER)
+                    notice = context.getString(com.termux.R.string.compat_url_failed, status.name());
+                if (notice != null) {
+                    try { android.widget.Toast.makeText(context, notice, android.widget.Toast.LENGTH_LONG).show(); }
+                    catch (RuntimeException e) { Logger.logWarn(LOG_TAG, "Could not show web request notice"); }
+                }
                 return;
             }
             Intent urlIntent = new Intent(intentAction, data);

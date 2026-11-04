@@ -87,5 +87,8 @@ public class TermuxOpenReceiverTest {
         new TermuxOpenReceiver().onReceive(context, new Intent(Intent.ACTION_DELETE, Uri.parse(url)));
         assertNull(context.started);
         assertEquals(url, com.termux.app.compat.AndroidUrlLauncher.takePending());
+        String notice = org.robolectric.shadows.ShadowToast.getTextOfLatestToast();
+        assertEquals(context.getString(com.termux.R.string.compat_url_queued_notice), notice);
+        assertFalse(notice.contains("private"));
     }
 }

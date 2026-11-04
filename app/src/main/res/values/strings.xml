@@ -468,6 +468,7 @@
     <string name="compat_pending_open">Open</string>
     <string name="compat_pending_copy">Copy</string>
     <string name="compat_url_failed">Could not open web link: %1$s</string>
+    <string name="compat_url_queued_notice">Open Termux to review a pending web link.</string>
     <string name="compat_network_title">Compatibility network diagnostics</string>
     <string name="compat_network_description">The test sends a DNS query and an HTTPS HEAD request to example.com. It also samples one IPv4 and one IPv6 TCP address when available, skipping direct connections if a proxy, VPN, explicit process binding, or uncertain policy is detected. It does not test CLI networking.</string>
     <string name="compat_network_test">Test example.com</string>
