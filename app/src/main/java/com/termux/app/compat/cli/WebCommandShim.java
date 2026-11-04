@@ -25,6 +25,7 @@ public final class WebCommandShim {
 
     public static synchronized Status ensure(Context context) { return ensureAsset(context, NAME); }
     public static synchronized Status ensureDoctor(Context context) { return ensureAsset(context, "termux-compat"); }
+    public static synchronized Status ensureDoctorV2(Context context) { return ensureAsset(context, "compat-v2", "termux-compat"); }
     public static synchronized Status ensureRuntimeAdapter(Context context) { return ensureAsset(context, "termux-run-clean"); }
     public static synchronized Status ensureRuntimeAdapterV2(Context context) { return ensureAsset(context, "compat-v2", "termux-run-clean"); }
     private static Status ensureAsset(Context context, String name) {
@@ -41,7 +42,7 @@ public final class WebCommandShim {
     }
     static Status install(File filesDir, String directoryName, String name, byte[] expected) {
         boolean supported = (DIRECTORY.equals(directoryName) && (NAME.equals(name) || "termux-compat".equals(name) || "termux-run-clean".equals(name))) ||
-            ("compat-v2".equals(directoryName) && "termux-run-clean".equals(name));
+            ("compat-v2".equals(directoryName) && ("termux-run-clean".equals(name) || "termux-compat".equals(name)));
         if (filesDir == null || !supported || expected == null || expected.length == 0 || expected.length > MAX_BYTES) return Status.UNAVAILABLE;
         File directory = new File(filesDir, directoryName);
         try {

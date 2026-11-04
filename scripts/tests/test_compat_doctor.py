@@ -15,6 +15,7 @@ DOCTOR = pathlib.Path(__file__).resolve().parents[2] / "app/src/main/assets/comp
 
 
 class DoctorTest(unittest.TestCase):
+    DOCTOR = DOCTOR
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         root = pathlib.Path(self.tmp.name)
@@ -38,7 +39,7 @@ class DoctorTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def run_doctor(self, *args, **extra):
-        return subprocess.run(["/bin/sh", str(DOCTOR), *args], env=dict(self.env, **extra),
+        return subprocess.run(["/bin/sh", str(self.DOCTOR), *args], env=dict(self.env, **extra),
                               text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
 
     def test_json_is_sanitized_and_tls_verification_remains_enabled(self):
@@ -126,6 +127,10 @@ class DoctorTest(unittest.TestCase):
         self.assertIn("BROWSER: SET", result.stdout)
         self.assertNotIn("secret", result.stdout)
         self.assertEqual(2, self.run_doctor("network", "extra").returncode)
+
+
+class DoctorV2Test(DoctorTest):
+    DOCTOR = DOCTOR.parents[1] / "compat-v2" / "termux-compat"
 
 
 if __name__ == "__main__":

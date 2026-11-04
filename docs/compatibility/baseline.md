@@ -128,6 +128,15 @@ export PATH="$TERMUX_APP__FILES_DIR/compat-v1:$PATH"
 
 This alters command resolution for that shell and its children, and does not intercept absolute paths to the package-owned command. Undo by restoring the prior `PATH` or starting a fresh shell. The wrapper does not automatically override existing user settings. A conflicting existing app-owned path is left untouched and reported as `CONFLICT` in Compatibility diagnostics. If a failed or interrupted installation leaves an incomplete file, it must be inspected before removal or replacement. Local host script tests exercise argument routing, but Android shell execution, managed jobs, user-profile behavior, upgrade and rollback are not verified.
 
+The app-owned v2 CLI also offers an explicit one-command mode, without editing shell configuration or package files:
+
+```sh
+"$TERMUX_APP__FILES_DIR/compat-v2/termux-compat" browser-run -- your-command arg
+"$TERMUX_APP__FILES_DIR/compat-v2/termux-compat" browser-run --path -- your-command arg
+```
+
+Both forms set `BROWSER` to the app-owned v1 wrapper only when it is unset; an existing value, including an empty value, is preserved. The optional `--path` additionally prepends the v1 directory to `PATH` for the command and its children, so relative calls to `termux-open-url` can reach the wrapper. This also changes resolution of any other commands found in that directory and does not intercept absolute package paths. When either change requires the wrapper, the command checks its versioned content using Termux's `sha256sum` and refuses a missing, conflicting or unverifiable wrapper. The check cannot prevent a same-UID process from replacing the file afterward. The mode invokes the command directly with its original arguments and propagates its exit status. The v1 diagnostic and wrapper remain installed without replacement. Host tests cover environment preservation, argument handling, command resolution, actual and mocked digest checks, and failure paths; an Android shell test is included but has not run on a device. Neither mode proves that an external browser was displayed or that a CLI supports `BROWSER`.
+
 The bootstrap audit also found that its `xdg-open` link targets `termux-open`. The wrapper's installer pins its app-owned directory and uses exclusive, no-follow creation; a conflict is not overwritten. Robolectric's `Os` shadow does not implement the exclusive/no-follow flags, so host mocks cannot validate those flags. Instrumented tests for existing files and symlinks are included but have not run on Android.
 
 The optional `termux-compat` shell diagnostic is installed beside the URL wrapper without changing `PATH` or package-owned files. Run it directly, or add its directory to `PATH` explicitly:

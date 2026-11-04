@@ -29,6 +29,7 @@ public class WebCommandShimInstrumentedTest {
         directory.delete();
         File v2 = new File(base, "compat-v2");
         new File(v2, "termux-run-clean").delete();
+        new File(v2, "termux-compat").delete();
         v2.delete();
         new File(base, "sentinel").delete();
         base.delete();
@@ -51,6 +52,9 @@ public class WebCommandShimInstrumentedTest {
         assertEquals(WebCommandShim.Status.READY, WebCommandShim.install(base, "termux-compat", doctor));
         assertEquals(WebCommandShim.Status.READY, WebCommandShim.install(base, open));
         assertEquals(WebCommandShim.Status.CONFLICT, WebCommandShim.install(base, "termux-compat", open));
+        assertEquals(WebCommandShim.Status.READY, WebCommandShim.install(base, "compat-v2", "termux-compat", doctor));
+        assertEquals(WebCommandShim.Status.READY, WebCommandShim.install(base, "compat-v2", "termux-compat", doctor));
+        assertEquals(WebCommandShim.Status.CONFLICT, WebCommandShim.install(base, "compat-v2", "termux-compat", open));
         assertEquals(WebCommandShim.Status.UNAVAILABLE, WebCommandShim.install(base, "../sentinel", open));
     }
     @Test public void runtimeAdapterIsInstalledWithoutReplacingExistingFiles() {
