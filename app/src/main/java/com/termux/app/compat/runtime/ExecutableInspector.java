@@ -112,6 +112,7 @@ public final class ExecutableInspector {
                 if (count == 0xffff || count > 128 || (count > 0 && (phsize < (is64 ? 56 : 32) || !inFile(phoff, (long) phsize * count, length))))
                     return result(Status.INVALID_FORMAT, detail + "\nProgram header table is invalid or exceeds inspection limits.");
                 String interpreter = null;
+                boolean shimCanInspectInterpreter = false;
                 byte[] ph = new byte[is64 ? 56 : 32];
                 for (int i = 0; i < count; i++) {
                     input.seek(phoff + (long) i * phsize);
@@ -128,6 +129,10 @@ public final class ExecutableInspector {
                     if (raw[raw.length - 1] != 0) return result(Status.INVALID_FORMAT, detail + "\nUnterminated interpreter field.");
                     interpreter = safeAscii(raw, 0, raw.length - 1);
                     if (interpreter == null || !interpreter.startsWith("/")) return result(Status.INVALID_FORMAT, detail + "\nInvalid interpreter path.");
+                    // The app's existing exec shim inspects at most the first 4096 bytes and at
+                    // most 64 program headers. A matching loader alone does not bypass that limit.
+                    shimCanInspectInterpreter = first.length >= 64 && order == ByteOrder.LITTLE_ENDIAN && count <= 64 &&
+                        inFile(phoff + (long) i * phsize, phsize, first.length) && inFile(loc, size, first.length);
                 }
                 if (interpreter != null) detail += "\nInterpreter: " + interpreter + "\nRuntime: " + runtime(interpreter);
                 if (interpreter != null && "Linux musl".equals(runtime(interpreter)))
@@ -142,8 +147,11 @@ public final class ExecutableInspector {
                 if (interpreter == null) return result(Status.UNTESTED, detail + "\nNo ELF interpreter: possibly static or a shared object. Runtime cannot be determined from this alone.");
                 if (!new File(interpreter).canExecute()) {
                     File adapter = glibcLoaderDirectory == null ? null : new File(glibcLoaderDirectory, new File(interpreter).getName());
-                    if ("Linux glibc".equals(runtime(interpreter)) && adapter != null && adapter.isFile() && adapter.canExecute())
+                    if ("Linux glibc".equals(runtime(interpreter)) && adapter != null && adapter.isFile() && adapter.canExecute()) {
+                        if (!shimCanInspectInterpreter)
+                            return result(Status.UNTESTED, detail + "\nA matching loader exists, but the app's automatic shim cannot inspect this interpreter within its first-4096-byte and 64-header limits. Other execution adapters were not tested.");
                         return result(Status.COMPATIBILITY_ADAPTER_AVAILABLE, detail + "\nA matching glibc loader exists; whether this execution context enables the shim is not tested.");
+                    }
                     return result(Status.MISSING_INTERPRETER, detail + "\nThe named interpreter is not executable at its literal path; execution shims were not tested.");
                 }
                 return result(Status.UNTESTED, detail + "\nThe interpreter is present; compatibility is not established.");

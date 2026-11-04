@@ -51,6 +51,27 @@ public class ExecutableInspectorTest {
         assertEquals(ExecutableInspector.Status.UNTESTED, nativeAbi.status);
         assertTrue(nativeAbi.detail.contains("possibly static"));
     }
+    @Test public void matchingLoaderDoesNotImplyShimCanReadDistantHeaders() throws Exception {
+        String interpreter = "/does-not-exist/ld-linux-aarch64.so.1";
+        byte[] source = elf64(183, interpreter);
+        File loaders = temp.newFolder();
+        File loader = new File(loaders, "ld-linux-aarch64.so.1");
+        assertTrue(loader.createNewFile()); assertTrue(loader.setExecutable(true));
+        byte[] distantHeader = java.util.Arrays.copyOf(source, 8192);
+        System.arraycopy(source, 64, distantHeader, 5000, 56);
+        ByteBuffer.wrap(distantHeader).order(ByteOrder.LITTLE_ENDIAN).putLong(32, 5000);
+        byte[] distantInterpreter = java.util.Arrays.copyOf(source, 8192);
+        byte[] path = (interpreter + "\0").getBytes(StandardCharsets.US_ASCII);
+        System.arraycopy(path, 0, distantInterpreter, 6000, path.length);
+        ByteBuffer.wrap(distantInterpreter).order(ByteOrder.LITTLE_ENDIAN).putLong(72, 6000);
+        byte[] tooManyHeaders = java.util.Arrays.copyOf(source, 8192);
+        ByteBuffer.wrap(tooManyHeaders).order(ByteOrder.LITTLE_ENDIAN).putShort(56, (short) 65);
+        for (byte[] elf : new byte[][]{distantHeader, distantInterpreter, tooManyHeaders}) {
+            ExecutableInspector.Report report = ExecutableInspector.inspect(file(elf), new String[]{"arm64-v8a"}, loaders);
+            assertEquals(ExecutableInspector.Status.UNTESTED, report.status);
+            assertTrue(report.detail.contains("automatic shim cannot inspect"));
+        }
+    }
     @Test public void muslReportDoesNotAssumeInheritedPreloadsAreCompatible() throws Exception {
         File binary = file(elf64(183, "/missing/ld-musl-aarch64.so.1"));
         ExecutableInspector.Report report = ExecutableInspector.inspect(binary, new String[]{"arm64-v8a"}, null);
