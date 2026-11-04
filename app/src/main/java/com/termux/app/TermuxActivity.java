@@ -425,7 +425,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         new AlertDialog.Builder(this).setTitle(R.string.compat_pending_title)
             .setMessage(R.string.compat_pending_message)
             .setPositiveButton(R.string.compat_pending_open, (dialog, which) -> {
-                if (!com.termux.app.compat.AndroidUrlLauncher.isPending(request)) return;
+                if (!com.termux.app.compat.AndroidUrlLauncher.isPending(request)) {
+                    Toast.makeText(this, R.string.compat_pending_expired, Toast.LENGTH_LONG).show();
+                    return;
+                }
                 com.termux.app.compat.AndroidUrlLauncher.Status status = com.termux.app.compat.AndroidUrlLauncher.open(this, request.url());
                 if (status == com.termux.app.compat.AndroidUrlLauncher.Status.DISPATCHED_UNCONFIRMED)
                     com.termux.app.compat.AndroidUrlLauncher.consumePending(request);
@@ -452,6 +455,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         String url = com.termux.app.compat.AndroidUrlLauncher.consumePending(request);
         if (url != null)
             com.termux.shared.interact.ShareUtils.copyTextToClipboard(this, url, getString(R.string.msg_select_url_copied_to_clipboard));
+        else Toast.makeText(this, R.string.compat_pending_expired, Toast.LENGTH_LONG).show();
     }
 
     @Override

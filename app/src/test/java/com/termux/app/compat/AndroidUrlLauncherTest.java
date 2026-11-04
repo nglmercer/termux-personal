@@ -66,6 +66,14 @@ public class AndroidUrlLauncherTest {
         assertFalse(AndroidUrlLauncher.isPending(request));
         assertNull(AndroidUrlLauncher.consumePending(request));
     }
+    @Test public void pendingUrlReferenceExpiresWithoutAnotherQueueOperation() {
+        assertEquals(AndroidUrlLauncher.Status.QUEUED_FOR_USER, AndroidUrlLauncher.openFromReceiver("https://example.com/?code=secret"));
+        PendingUrlQueue.Request request = AndroidUrlLauncher.peekPending();
+        assertNotNull(request);
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(5, java.util.concurrent.TimeUnit.MINUTES);
+        assertNull(request.url());
+        assertNull(AndroidUrlLauncher.peekPending());
+    }
     @Test public void failedForegroundDispatchOffersDeferredUserAction() {
         TestActivity a = activity();
         a.failure = new ActivityNotFoundException();

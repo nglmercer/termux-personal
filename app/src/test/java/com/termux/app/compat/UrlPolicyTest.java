@@ -30,11 +30,13 @@ public class UrlPolicyTest {
         assertSame(oldView, queue.peek(12)); // Showing or recreating a view does not consume it.
         assertTrue(queue.isPending(oldView, 13));
         assertNull(queue.peek(300010));
+        assertNull(oldView.url());
         assertTrue(queue.offer(url, 300010)); // A later identical URL is a distinct request.
         PendingUrlQueue.Request newView = queue.peek(300010);
         assertNotSame(oldView, newView);
         assertNull(queue.consume(oldView, 300011));
         assertEquals(url, queue.consume(newView, 300011));
+        assertNull(newView.url());
         assertNull(queue.peek(300011));
     }
 }
