@@ -149,6 +149,13 @@ static long exec_next(const char *path, char *const argv[], char *const envp[]) 
     return sys3(NR_execve, (long) path, (long) argv, (long) envp);
 }
 
+/* The loader lives in $PREFIX/glibc/lib, not in app-private storage that termux-exec needs to route
+ * through /system/bin/linker64. That indirection rejects the loader because it is an ET_DYN object
+ * without PT_PHDR, so execute the loader directly and keep termux-exec for non-glibc programs. */
+static long exec_loader(const char *loader, char *const argv[], char *const envp[]) {
+    return sys3(NR_execve, (long) loader, (long) argv, (long) envp);
+}
+
 /* The compiler may emit calls to these for struct copies; keep them local to this object. */
 __attribute__((visibility("hidden"))) void *memcpy(void *dst, const void *src, size_t_ n) {
     u8 *d = dst; const u8 *s = src; while (n--) *d++ = *s++; return dst;
@@ -284,7 +291,7 @@ static long exec_glibc(const char *loader, const char *program, char *const argv
         env[e++] = bionic_var;
     }
     env[e] = 0;
-    return exec_next(loader, args, env);
+    return exec_loader(loader, args, env);
 }
 
 #if TERMUX_GLIBC_SIDE
