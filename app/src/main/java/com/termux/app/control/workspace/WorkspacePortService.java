@@ -34,6 +34,16 @@ import java.util.concurrent.atomic.AtomicInteger;
  * </ul>
  */
 public final class WorkspacePortService implements Closeable {
+    /**
+     * Always the IPv4 literal 127.0.0.1. {@code InetAddress.getLoopbackAddress()} is not used: on Android it can be {@code ::1}, and a
+     * development server that listens on 127.0.0.1 only would then look closed and a relay would never reach it.
+     */
+    static final InetAddress LOOPBACK = loopback();
+    private static InetAddress loopback() {
+        try { return InetAddress.getByAddress(new byte[] {127, 0, 0, 1}); }
+        catch (java.net.UnknownHostException e) { throw new IllegalStateException(e); }
+    }
+
     public static final int MAX_PROXIES = 4, MAX_CONNECTIONS = 32, IDLE_TIMEOUT_MILLIS = 5 * 60 * 1000, MIN_LISTEN_PORT = 1024;
 
     public static final class Proxy {
@@ -58,7 +68,7 @@ public final class WorkspacePortService implements Closeable {
     // ---- observation ----
 
     /** True when something accepts connections on {@code 127.0.0.1:port}. Blocking, bounded by the timeout. */
-    public static boolean listeningOnLoopback(int port, int timeoutMillis) { return connects(InetAddress.getLoopbackAddress(), port, timeoutMillis); }
+    public static boolean listeningOnLoopback(int port, int timeoutMillis) { return connects(LOOPBACK, port, timeoutMillis); }
 
     /** True when the port also accepts connections on a non-loopback address of this device. */
     public static boolean lanExposed(int port, int timeoutMillis) {
@@ -190,7 +200,7 @@ public final class WorkspacePortService implements Closeable {
     private void relay(Socket client, int targetPort) {
         Socket target = new Socket();
         try {
-            target.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), targetPort), 3000);
+            target.connect(new InetSocketAddress(LOOPBACK, targetPort), 3000);
             client.setSoTimeout(IDLE_TIMEOUT_MILLIS); target.setSoTimeout(IDLE_TIMEOUT_MILLIS);
             Thread back = new Thread(() -> pump(target, client), "TermuxPortRelayBack");
             back.setDaemon(true); back.start();
