@@ -5,7 +5,8 @@ An optional `resources` object on `job.start` asks for resource handling for one
 ```json
 {"resources": {"profile": "balanced", "memorySoftBytes": 1073741824, "cpuTimeSeconds": null,
                "addressSpaceBytes": null, "maxOutputBytes": 131072, "processConcurrencyHint": 2,
-               "niceLevel": 5, "onPressure": "warn", "requireNice": false, "applyBuildPreset": true}}
+               "niceLevel": 5, "onPressure": "warn", "requireNice": false, "applyBuildPreset": true,
+               "testConcurrency": 1}}
 ```
 
 Every member is optional and `null` means unset. Out-of-range or inconsistent values are rejected with `INVALID_REQUEST`; they are never clamped. Wrong JSON types or unknown members are invalid params.
@@ -68,7 +69,38 @@ Pressure is derived by `PressureTracker` from available RAM (enter below max(512
 | `ninja` | `-j N` first | `-j` present |
 | `make`, `gmake` | `-jN` first | `-j`/`--jobs` present or `MAKEFLAGS` set |
 
-Executables are matched by exact basename; anything else is never rewritten, flags after `--` are ignored, and the user's arguments are only ever added to. `N` is capped at the CPU count. Node's `--max-old-space-size` is added only when `job.start` also sets `resources.nodeHeapMiB` (64 to 16384) together with `applyBuildPreset`; a heap limit without the preset is refused, and stored task presets cannot carry it. `job.preview` and `workspace.task.preview` return the effective command (arguments, whether a preset applied, what changed and why) without starting anything. They use the same planning code as `job.start` and `workspace.task.run`, so a preview cannot differ from what a start launches.
+Executables are matched by exact basename; anything else is never rewritten, flags after `--` are ignored, and the user's arguments are only ever added to. `N` is capped at the CPU count. Node's `--max-old-space-size` is added only when `job.start` also sets `resources.nodeHeapMiB` (64 to 16384) together with `applyBuildPreset`; a heap limit without the preset is refused, and stored task presets cannot carry it. `job.preview` and `workspace.task.preview` return the effective command (arguments, whether a preset applied, what changed and why) without starting anything.
+
+When a preset writes a worker count and the request gave no `processConcurrencyHint`, the job's recorded policy (in the preview, in `job.resource.get` and in the idempotency fingerprint) carries the count really written. A hint the caller gave is kept exactly as given. Earlier versions recorded the unset hint while writing the derived count into the command.
+
+### Test runners: `testConcurrency`
+
+`resources.testConcurrency` (1–16, `null` = absent) is a separate, explicit opt-in. It needs `applyBuildPreset: true` (otherwise `INVALID_REQUEST`), it is a planning option of `job.start`/`job.preview` only (like `nodeHeapMiB`), and a workspace or task profile never turns it on. It is not a global thread or process cap.
+
+| Command | Added | Left unchanged when |
+|---|---|---|
+| `cargo test`, `cargo t`, with an optional `+toolchain` and the no-value flags `-v`/`-q`/`--offline`/`--frozen`/`--locked` before the subcommand | `--test-threads=N` right after the first `--`; `-- --test-threads=N` appended when there is no `--` | `--test-threads=N` or `--test-threads N` in the harness section, `RUST_TEST_THREADS` in the job's `env`, `--no-run`, or any other option before the subcommand (ambiguous) |
+| `node --test`, `nodejs --test`, where `--test` is among Node's own options (before the script and before `--`) | `--test-concurrency=N` right after `--test` | `--test-concurrency` already among Node's options, or `NODE_OPTIONS` in the job's `env` (its value is not inspected, so a conflict cannot be ruled out) |
+
+Build jobs and test threads are decided independently: `cargo test -j 4` keeps `-j 4` and still gets the harness limit, and `CARGO_BUILD_JOBS` only suppresses the `-j`. Every addition or skip appears in the preview's `notes`.
+
+Limits of this option, stated so it is not over-trusted:
+
+* **Cargo:** only the standard libtest harness understands `--test-threads`. The command name does not prove that every target uses it: a target with `harness = false`, `cargo nextest`, a custom runner or a wrapper script may reject or ignore the flag. Manifests are not inspected. Opt in only when you know the runner.
+* **Node:** `--test-concurrency` exists in Node 18.19.0+ (18.x), 20.10.0+ (20.x) and 21+. Nothing checks the version: `job.preview` never runs `node --version` or any other binary. An older runtime rejects the flag; the job then fails with Node's error and is not retried without it. The flag limits how many test files run at once, not the threads or processes the tests themselves create.
+* `npm test`, `npm run`, `pnpm`, `yarn`, shell scripts and interactive sessions are never rewritten.
+
+### Running exactly what was previewed
+
+`job.preview` and `job.start` share the planning code, but sharing code is not enough: the worker recommendation follows the current pressure and free admission slots, so two calls can plan different commands. `job.preview` therefore returns `previewFingerprint`, a 64-hex-digit digest of the materialized plan (executable, arguments, cwd, workspace, `env`, stdin, timeout, presentation and the effective resource policy), derived from the existing job fingerprint. `job.start` accepts it as `expectedPreviewFingerprint`:
+
+* if the new plan matches, that one materialized spec is admitted; nothing transforms it again while it is queued or launched;
+* if it differs, the start fails with the existing `CONFLICT` error before anything is admitted;
+* a start without it behaves as before.
+
+To make a reviewed plan reproducible, start with the same fields and pin `processConcurrencyHint` to the `resources.processConcurrencyHint` the preview reported. The fingerprint only detects a change. It grants nothing, it is not an authorization and it does not replace consent or the path policy. Arguments and environment are hashed in memory, never logged. `clientRequestId` replay rules are unchanged: if a start's response is lost, read the job state before sending it again, and do not read a later `CONFLICT` as proof that the earlier request never started.
+
+For a step-by-step guide from an interactive terminal to a protected managed job (preview, start, observe, cancel, history), see the walkthrough in [tools/termux-control/README.md](../../tools/termux-control/README.md#walkthrough-a-long-build-as-a-protected-managed-job).
 
 ## Legacy `RUN_COMMAND` output
 

@@ -201,6 +201,29 @@ class BackgroundAndPreviewTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             c.jobs.preview("cargo", "build")
 
+    def test_preview_accepts_every_plan_field_and_start_pins_its_fingerprint(self):
+        fp = "b" * 64
+        preview = {"executable": "/usr/bin/cargo", "arguments": ["test", "-j", "1", "--", "--test-threads=1"], "presetApplied": True,
+                   "changed": True, "notes": [], "resources": {"profile": "protected", "processConcurrencyHint": 1}, "previewFingerprint": fp}
+        sent = []
+
+        def handler(request, transport):
+            sent.append((request["method"], request["params"]))
+            transport.reply(request, preview if request["method"] == "job.preview" else {"job": JOB})
+        c = client(handler)
+        fields = dict(cwd="/home/p", workspace_id=WS, env={"A": "1"}, stdin="x", timeout_ms=5000, presentation="background",
+                      resources={"profile": "protected", "applyBuildPreset": True, "testConcurrency": 1})
+        reviewed = c.jobs.preview("/usr/bin/cargo", ["test"], **fields)
+        c.jobs.start("/usr/bin/cargo", ["test"], expected_preview_fingerprint=reviewed["previewFingerprint"], **fields)
+        (m1, preview_params), (m2, start_params) = sent
+        self.assertEqual((m1, m2), ("job.preview", "job.start"))
+        self.assertEqual(start_params.pop("expectedPreviewFingerprint"), fp)
+        self.assertEqual(start_params, preview_params)
+        with self.assertRaises(ValueError):
+            c.jobs.start("/usr/bin/cargo", ["test"], expected_preview_fingerprint="ABC")
+        with self.assertRaises(ProtocolError):
+            client(replying({**preview, "previewFingerprint": 7})).jobs.preview("cargo", [])
+
 
 class WorkspaceAndJobsCompatibilityTest(unittest.TestCase):
     WSDATA = {"id": WS, "name": "app", "rootId": "home", "path": "p", "createdAt": 1, "updatedAt": 2, "available": True,

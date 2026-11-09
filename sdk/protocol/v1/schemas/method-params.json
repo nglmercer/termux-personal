@@ -44,12 +44,29 @@
         "onPressure": {"enum": ["warn", "pause_admission", "stop_job", null]},
         "requireNice": {"type": "boolean"},
         "applyBuildPreset": {"type": "boolean"},
-        "nodeHeapMiB": {"type": "integer", "minimum": 64, "maximum": 16384}
+        "nodeHeapMiB": {"type": "integer", "minimum": 64, "maximum": 16384},
+        "testConcurrency": {"type": ["integer", "null"], "minimum": 1, "maximum": 16, "description": "Explicit test-runner limit for cargo test (libtest --test-threads) and node --test (--test-concurrency). Needs applyBuildPreset. Not a global thread or process cap."}
       },
       "additionalProperties": false
     },
     "requestId": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$"},
     "job.start": {
+      "type": "object", "properties": {
+        "executable": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "args": {"type": "array", "maxItems": 128, "items": {"type": "string", "maxLength": 4096}},
+        "cwd": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^/"},
+        "workspaceId": {"type": "string", "minLength": 1, "maxLength": 64},
+        "env": {"type": "object", "maxProperties": 64, "propertyNames": {"pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"}, "additionalProperties": {"type": "string", "maxLength": 4096}},
+        "stdin": {"type": "string", "maxLength": 65536},
+        "timeoutMs": {"type": "integer", "minimum": 0, "maximum": 86400000},
+        "presentation": {"enum": ["foreground", "background"]},
+        "clientRequestId": {"$ref": "#/$defs/requestId"},
+        "resources": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/jobResources"}]},
+        "expectedPreviewFingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "previewFingerprint of a reviewed job.preview; a different plan is refused with CONFLICT before anything starts."}
+      },
+      "required": ["executable", "args"], "additionalProperties": false
+    },
+    "job.preview": {
       "type": "object", "properties": {
         "executable": {"type": "string", "minLength": 1, "maxLength": 4096},
         "args": {"type": "array", "maxItems": 128, "items": {"type": "string", "maxLength": 4096}},
@@ -128,7 +145,6 @@
     "workspace.backup.import": {"type": "object", "properties": {"workspaceId": {"$ref": "#/$defs/wsId"}, "backupId": {"type": "string", "minLength": 1, "maxLength": 80}, "paths": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"type": "string", "minLength": 1, "maxLength": 240}}, "overwrite": {"type": "boolean"}, "confirm": {"type": "boolean"}, "applyConfig": {"type": "boolean"}, "async": {"type": "boolean"}}, "required": ["workspaceId", "backupId"], "additionalProperties": false},
     "workspace.backup.status": {"type": "object", "properties": {"operationId": {"type": "string", "pattern": "^bk_[0-9]{1,9}$"}}, "required": ["operationId"], "additionalProperties": false},
     "workspace.backup.cancel": {"type": "object", "properties": {"operationId": {"type": "string", "pattern": "^bk_[0-9]{1,9}$"}}, "required": ["operationId"], "additionalProperties": false},
-    "job.preview": {"$ref": "#/$defs/job.start"},
     "workspace.task.preview": {"type": "object", "properties": {"workspaceId": {"$ref": "#/$defs/wsId"}, "taskId": {"$ref": "#/$defs/presetId"}}, "required": ["workspaceId", "taskId"], "additionalProperties": false}
   }
 }

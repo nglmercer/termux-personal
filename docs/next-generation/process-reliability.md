@@ -32,13 +32,17 @@ See [resource-policy.md](resource-policy.md) for semantics.
 * `DiagnosticBundleExporter` builds a bounded, redacted bundle. Output is included only on explicit consent. The UI shares the text report through the Android share sheet.
 * The existing jobs dialog shows queue position, live resources, the termination reason and its uncertainty, the persistent history and a stop button that uses the owned handle.
 
+## Protected builds and test runners
+
+[tools/termux-control/README.md](../../tools/termux-control/README.md#walkthrough-a-long-build-as-a-protected-managed-job) walks through moving a long build from an interactive terminal to a `protected` managed job: preview, start, observe resources and output, cancel, and recover history metadata. `resources.testConcurrency` explicitly opts into `--test-threads` for `cargo test` (standard libtest harness only) and `--test-concurrency` for `node --test`; `job.preview` returns a `previewFingerprint` that `job.start` can require so a changed plan is refused instead of launched (see [resource-policy.md](resource-policy.md#test-runners-testconcurrency)). Lowering concurrency is a mitigation. It does not prevent Android from ending processes and it was not measured to improve any particular build.
+
 ## Developer experience (PR 3)
 
 Device-aware resource policy, workspace profiles and per-task resources, managed workspace services with restart policies, workspace backup and restore, port observation and loopback proxies, and the `resource.*`, `job.resource/history/diagnostics/processes` and `workspace.service/backup.*` methods with CLI, Python and TypeScript support. See [resource-policy.md](resource-policy.md).
 
 ## Not implemented yet
 
-A working isolated execution backend: only the abstraction and capability detection exist, and the VM is reported as unsupported (see [execution-backend.md](execution-backend.md)). The UI (the jobs dialog) has not been exercised on a device.
+A working isolated execution backend: only the abstraction and capability detection exist, and the VM is reported as unsupported (see [execution-backend.md](execution-backend.md)). The jobs dialog was exercised by hand on one device (see below); it has no automated UI test, and other devices were not tried.
 
 ## Verification on Android
 
@@ -60,6 +64,33 @@ Run on a physical POCO X3 Pro (`vayu`, Android 16 / API 36, kernel 4.14, arm64-v
 * Found and fixed here: the detail dialog showed `profile unknown` for a running job, because the stored record is only loaded for finished jobs. It now takes the profile from the live policy first. A record stored while a job runs still says `STARTING`; it is only an "unfinished" marker used for LOST recovery, and the live state comes from the registry.
 
 Not covered on the device: the thermal and low-memory pressure paths of the supervisor (real memory pressure is deliberately not induced) and the VM backend, which reports `UNSUPPORTED` here. The x86_64 emulator was not usable on the build host (no KVM).
+
+## Device validation of resource profiles and pressure (issue #11)
+
+Run on 2026-11-09 with `scripts/test-control-resources-device.sh` from branch `feature/protected-builds-test-concurrency` (base commit `ab2e7b00` plus the harness changes committed with this table) on a Xiaomi POCO X3 Pro (`M2102J20SG`, `vayu`), Android 16 / API 36, ROM `BP4A.251205.006`, kernel `4.14.356-Helios`, `arm64-v8a`, debug build installed over the existing app with `adb install -r`. Toolchains in the Termux prefix: Node `v24.18.0`, Cargo `1.99.1`, rustc `1.99.1`. Result: `OK (29 tests)`, the 10 cases of `ResourcePressureInstrumentedTest` plus the existing `RpcOnDeviceInstrumentedTest`, `ManagedLimitsInstrumentedTest` and `WorkspaceExtrasInstrumentedTest`.
+
+The new class uses the production launcher, AppShell, real child processes and the real `/proc`. Only the device reading (available/total RAM, the low-memory flag and the thermal status) is **injected** through the supervisor's `Sampler`, a test-only seam: no production endpoint fakes sensors. Nothing exhausted memory or heated the phone.
+
+| Case | Kind | Expected | Observed |
+|---|---|---|---|
+| `protected` job running, `balanced` job started | instrumentation, real processes | the second waits in `queued` | as expected |
+| cancel while queued | instrumentation | `cancelled`, never had a PID or start time | as expected |
+| cancel while running | instrumentation | `cancelled`, slot released, next job runs | as expected (next job exited 0) |
+| process table unreadable (`/proc` replaced by a missing directory) | instrumentation, injected | metrics `incomplete`, RSS and CPU `null`, never zero | as expected |
+| critical memory pressure, then normal | instrumentation, injected | `critical` after two samples, nothing admitted, `normal` after three, admission resumes after the cooldown | as expected |
+| `warn` / `stop_job` under critical | instrumentation, injected | only the `stop_job` job ends, as `RESOURCE_GUARD_STOP`; the `warn` job keeps running | as expected |
+| `pause_admission` under severe thermal status | instrumentation, injected | `elevated`; the next job waits while the pausing job runs and is admitted once it is cancelled; the pausing job is never stopped | as expected |
+| no supervised jobs | instrumentation | no device sample at all, also during an unmanaged job; sampling stops after the last supervised job | as expected |
+| preview, then injected pressure, then start with `expectedPreviewFingerprint` | instrumentation, injected | `CONFLICT`, no job added | as expected |
+| `node --test` on two files with `testConcurrency: 1` | instrumentation, real Node 24.18.0 | `--test-concurrency=1` right after `--test`, exit 0 | as expected |
+| `cargo test --offline` on a two-test crate with `testConcurrency: 1` | instrumentation, real Cargo 1.99.1 | `test -j 1 --offline -- --test-threads=1`, exit 0 | as expected |
+| cost of one real sample (device reading plus `/proc` scan for one running job), 50 rounds | instrumentation, real sensors and `/proc`, measured not asserted | orientative only | two runs: 4.8 and 7.2 ms wall, 4.0 and 5.5 ms thread CPU per sample, i.e. about 0.2–0.3 % of one core at the normal 2 s interval (twice that under pressure); nothing is sampled while no supervised job exists |
+
+**Guide walkthrough over the real socket (issue #12).** On the same phone, with Local control on, the walkthrough of [tools/termux-control/README.md](../../tools/termux-control/README.md#walkthrough-a-long-build-as-a-protected-managed-job) was run from a Termux session with `termux-control` built on the phone by its own clang from this branch's source: `capabilities` and `resources capabilities` answered; `jobs preview --profile protected --build-preset --test-concurrency 1 -- $PREFIX/bin/cargo test --offline` returned `test -j 1 --offline -- --test-threads=1`, `processConcurrencyHint: 1` and a fingerprint, and started nothing; `jobs run` with the limits written by hand passed 2 tests and exited 0; `jobs start --expect-fingerprint FP --workers 1 …` was accepted and `get`, `resource` (limits `protected`, hint 1), `processes`, `logs --stream stdout --follow`, `logs --stream stderr` and `history-get` (`EXITED`, `protected`, exit 0) behaved as documented; a running `protected` `$PREFIX/bin/sleep 60` job was cancelled (`cancelled`, history `stopReason CANCEL`, `signal 15`); a stale fingerprint was refused with `CONFLICT`; `--test-concurrency` without `--build-preset` was a usage error (exit 2) that never reached the socket; and the manual `cargo test -j 1 -- --test-threads=1` and `node --test --test-concurrency=1` exited 0 in the ordinary session.
+
+Notes from the run: `run-as com.termux` is refused by SELinux on this ROM, so the harness installs over the app and reads the tool versions from a job inside the test instead; `connectedDebugAndroidTest` is avoided because it uninstalls the app (and the Termux home) when it finishes.
+
+Hysteresis, queue ordering, the admission rules, missing data and the sampler's stop are also covered by `PressureTrackerTest`, `ResourceAdmissionControllerTest` and `JobResourceSupervisorTest` on the host; the device class only adds what needs a real launcher and `/proc`. **Not covered:** real thermal or low-memory sensor transitions (deliberately not provoked), the sampling cost under many jobs or with a large process table (only one job was measured), interaction with busy interactive sessions, the effect of the test limits on memory or build time (not measured; no improvement is claimed), and other devices, ROMs and ABIs.
 
 ## Test environment
 

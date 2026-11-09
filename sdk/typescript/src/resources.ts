@@ -226,10 +226,15 @@ export class Services extends Domain {
   }
 }
 
-export interface CommandPreview { executable: string; arguments: string[]; presetApplied: boolean; changed: boolean; notes: string[]; resources: Record<string, unknown> | null }
+export interface CommandPreview {
+  executable: string; arguments: string[]; presetApplied: boolean; changed: boolean; notes: string[]; resources: Record<string, unknown> | null;
+  /** job.preview only: pass it as expectedPreviewFingerprint to start exactly this plan. Absent from older servers. */
+  previewFingerprint?: string;
+}
 export function commandPreview(result: unknown): CommandPreview {
   if (!isObject(result) || typeof result.executable !== "string" || !Array.isArray(result.arguments) || !result.arguments.every(a => typeof a === "string") ||
-      typeof result.presetApplied !== "boolean" || typeof result.changed !== "boolean" || !Array.isArray(result.notes))
+      typeof result.presetApplied !== "boolean" || typeof result.changed !== "boolean" || !Array.isArray(result.notes) ||
+      !(result.previewFingerprint === undefined || (typeof result.previewFingerprint === "string" && /^[0-9a-f]{64}$/.test(result.previewFingerprint))))
     throw new ProtocolError("Invalid command preview");
   return result as unknown as CommandPreview;
 }

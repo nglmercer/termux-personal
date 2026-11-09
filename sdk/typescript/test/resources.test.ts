@@ -179,3 +179,23 @@ test("previews validate the response and send the same parameters as a start", a
   assert.equal((await client.workspaces.previewTask(WS_ID, "build")).changed, true);
   await assert.rejects((await TermuxClient.fromTransport(new Mock(replying({ ...preview, arguments: [1] })))).jobs.preview({ executable: "cargo", args: [] }), ProtocolError);
 });
+
+test("a reviewed preview fingerprint is sent only by start and the plan fields match", async () => {
+  const fp = "a".repeat(64);
+  const spec = { executable: "/usr/bin/cargo", args: ["test"], cwd: "/home/p", workspaceId: WS_ID, stdin: "x", timeoutMs: 5000, presentation: "background" as const,
+    resources: { profile: "protected", applyBuildPreset: true, testConcurrency: 1 } };
+  const preview = { executable: "/usr/bin/cargo", arguments: ["test", "-j", "1", "--", "--test-threads=1"], presetApplied: true, changed: true, notes: [],
+    resources: { profile: "protected", processConcurrencyHint: 1 }, previewFingerprint: fp };
+  const peer = new Mock(request => peer.reply(request, request.method === "job.preview" ? preview : { job: JOB }));
+  const client = await TermuxClient.fromTransport(peer);
+  const reviewed = await client.jobs.preview({ ...spec, expectedPreviewFingerprint: fp });
+  await client.jobs.start({ ...spec, expectedPreviewFingerprint: reviewed.previewFingerprint });
+  const sentPreview = peer.requests.find(r => r.method === "job.preview")?.params as Record<string, unknown>;
+  const sentStart = peer.requests.find(r => r.method === "job.start")?.params as Record<string, unknown>;
+  assert.ok(!("expectedPreviewFingerprint" in sentPreview));
+  assert.equal(sentStart.expectedPreviewFingerprint, fp);
+  const { expectedPreviewFingerprint: _ignored, ...rest } = sentStart;
+  assert.deepEqual(rest, sentPreview);
+  await assert.rejects(client.jobs.start({ ...spec, expectedPreviewFingerprint: "ABC" }), TypeError);
+  await assert.rejects((await TermuxClient.fromTransport(new Mock(replying({ ...preview, previewFingerprint: 7 })))).jobs.preview(spec), ProtocolError);
+});
