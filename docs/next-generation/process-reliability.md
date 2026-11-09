@@ -45,7 +45,20 @@ Settings → Debugging → *Session Exit Results* (off by default) keeps, in the
 * At most 32 results, deduplicated by the session's random handle, with no reference to a session or an Activity. Nothing is persisted: results are lost when the service stops or is killed, and nothing is recorded while the option is off. The copied text has only the UTC time and status of each result, fixed explanation lines and the Android API level: no session title or name, command, arguments, environment, directory, input or transcript. No job IDs are created; the job history is not used.
 * The visible `[Process completed (signal N) - press Enter]` line, automatic close, plugin result processing and cleanup are unchanged.
 
-Verified on the host: `SessionExitStatusTest` (0, 7, 130, 137, 139, −9, −11, −15, unknown signals and the sentinel), `SessionExitRegistryTest` (capacity, deduplication, contents of the copied text) and `scripts/test-headless-pty.sh`, which now also runs real PTY root processes that `exit 137`, are killed by `SIGKILL` and `SIGSEGV`, and a shell whose child is killed while the shell exits 0 (reported as exit code 0). **Not tested on a device**: foreground and background sessions, automatic close, the option turned off, the dialog and the copied text on Android. Not in scope: observing each command inside a shell, a persistent session history, and attributing a signal to its sender.
+Verified on the host: `SessionExitStatusTest` (0, 7, 130, 137, 139, −9, −11, −15, unknown signals and the sentinel), `SessionExitRegistryTest` (capacity, deduplication, contents of the copied text) and `scripts/test-headless-pty.sh`, which now also runs real PTY root processes that `exit 137`, are killed by `SIGKILL` and `SIGSEGV`, and a shell whose child is killed while the shell exits 0 (reported as exit code 0). Verified by hand on 2026-11-09 over ADB on the POCO X3 Pro (`vayu`, Android 16 / API 36, ROM `BP4A.251205.006`, `arm64-v8a`), debug build of this branch installed with `adb install -r`:
+
+| Case | Observed |
+|---|---|
+| option off, a session ends with `exit 7` | no *Session exit results* entry in the context menu |
+| option on, foreground, `exit 7` | `exit code 7`; the session stays with `[Process completed (code 7) - press Enter]` as before |
+| foreground, `kill -9 $$` | `signal 9 (SIGKILL)` |
+| foreground, `exit` (closes itself on exit 0) | `exit code 0` kept after the session was removed |
+| `sleep 100` interrupted with Ctrl+C, shell still alive | no entry |
+| activity in the background (home screen), `sleep 8; exit 5` | `exit code 5` |
+| activity destroyed (developer option *Don't keep activities*, the activity record showed `app=null`), `sleep 8; exit 3` | `exit code 3`, recorded through the service client |
+| *Copy*, pasted into `cat` | only the fixed header lines, `android api: 36` and one `UTC time  status` line per result |
+
+The developer option and the preference were restored afterwards. Not in scope: observing each command inside a shell, a persistent session history, and attributing a signal to its sender.
 
 ## Not implemented yet
 
