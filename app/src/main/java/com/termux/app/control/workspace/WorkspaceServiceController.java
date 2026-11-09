@@ -89,7 +89,16 @@ public final class WorkspaceServiceController implements AutoCloseable {
         String lastReason;
         Integer lastExitCode;
         ScheduledFuture<?> pending;
+        /** Identity of the current run; a new one for every launch, null when nothing runs. */
+        String instanceId;
+        /** Credential of the current run when the service opted in; dropped as soon as the run ends. */
+        String credential;
     }
+
+    /** Environment names a service that opted into a credential receives; see {@link #endpoint}. */
+    public static final String ENV_INSTANCE_ID = "TERMUX_SERVICE_INSTANCE_ID", ENV_TOKEN = "TERMUX_SERVICE_TOKEN",
+        ENV_PORT = "TERMUX_SERVICE_PORT", ENV_ORIGIN = "TERMUX_SERVICE_ORIGIN";
+    private static final java.security.SecureRandom RANDOM = new java.security.SecureRandom();
 
     private final Definitions mDefinitions;
     private final Jobs mJobs;
@@ -232,6 +241,48 @@ public final class WorkspaceServiceController implements AutoCloseable {
         return status;
     }
 
+    /**
+     * How a local client reaches the current run of a service. The URL always uses the IPv4 loopback literal (never
+     * {@code localhost}, which is {@code ::1} on some devices). A port is not an identity: the client must compare
+     * {@code instanceId} and authenticate with the credential, and a changed {@code instanceId} means a different run,
+     * whose previous credential is no longer valid. Nothing is retried or replayed here. The credential is returned only
+     * for a running service that opted in; same-UID processes can still read it from the service's environment, so it
+     * separates browsers, other apps and pages from the backend, not Termux processes from each other. Blocking probe.
+     */
+    public Map<String, Object> endpoint(String workspaceId, String serviceId, int probeTimeoutMillis) throws WorkspaceRepository.WorkspaceException {
+        WorkspaceRepository.ServiceDefinition def = mDefinitions.resolve(workspaceId, serviceId).service;
+        String state, instanceId, credential;
+        synchronized (this) {
+            Entry entry = mEntries.get(key(workspaceId, serviceId));
+            state = (entry == null ? State.STOPPED : entry.state).name().toLowerCase(java.util.Locale.ROOT);
+            boolean running = entry != null && entry.state == State.RUNNING;
+            instanceId = running ? entry.instanceId : null;
+            credential = running ? entry.credential : null;
+        }
+        Integer port = def.ports.isEmpty() ? null : def.ports.get(0);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("workspaceId", workspaceId); result.put("serviceId", serviceId); result.put("state", state);
+        result.put("instanceId", instanceId);
+        result.put("port", port);
+        result.put("url", port == null ? null : origin(port) + "/");
+        result.put("origin", port == null ? null : origin(port));
+        result.put("listening", port != null && instanceId != null && probe(port, probeTimeoutMillis));
+        result.put("credentialRequired", def.credential);
+        result.put("credential", credential);
+        return result;
+    }
+
+    static String origin(int port) { return "http://127.0.0.1:" + port; }
+
+    private static String randomToken(int bytes) {
+        byte[] raw = new byte[bytes];
+        RANDOM.nextBytes(raw);
+        StringBuilder hex = new StringBuilder(bytes * 2);
+        for (byte b : raw) hex.append(Character.forDigit((b >> 4) & 0xf, 16)).append(Character.forDigit(b & 0xf, 16));
+        java.util.Arrays.fill(raw, (byte) 0);
+        return hex.toString();
+    }
+
     static boolean probe(int port, int timeoutMillis) {
         try (Socket socket = new Socket()) {
             socket.connect(new InetSocketAddress("127.0.0.1", port), Math.max(50, Math.min(timeoutMillis, 2000)));
@@ -260,9 +311,18 @@ public final class WorkspaceServiceController implements AutoCloseable {
     private Outcome launch(String ws, String svc, Entry entry, Definitions.Resolved resolved) {
         WorkspaceRepository.ServiceDefinition def = resolved.service;
         JobResourcePolicy resources = def.resources != null ? def.resources : resolved.workspaceProfile == null ? null : JobResourcePolicy.ofProfile(resolved.workspaceProfile);
+        String instanceId = randomToken(16), credential = def.credential ? randomToken(32) : null;
+        // Without the opt-in the environment stays exactly as before; with it, the backend gets what it needs to check
+        // its own clients. Values live only in memory: job history and diagnostics never store the environment.
+        java.util.Map<String, String> env = Collections.<String, String>emptyMap();
+        if (credential != null) {
+            env = new java.util.TreeMap<>();
+            env.put(ENV_INSTANCE_ID, instanceId); env.put(ENV_TOKEN, credential);
+            env.put(ENV_PORT, Integer.toString(def.ports.get(0))); env.put(ENV_ORIGIN, origin(def.ports.get(0)));
+        }
         JobSpec spec;
         try {
-            spec = new JobSpec(def.executable, def.args, null, ws, Collections.<String, String>emptyMap(), null, 0, JobSpec.Presentation.BACKGROUND, null, resources);
+            spec = new JobSpec(def.executable, def.args, null, ws, env, null, 0, JobSpec.Presentation.BACKGROUND, null, resources);
         } catch (IllegalArgumentException e) { return Outcome.INVALID; }
         Jobs.Started started = mJobs.start(spec, entry.lease);
         switch (started.status) {
@@ -273,6 +333,7 @@ public final class WorkspaceServiceController implements AutoCloseable {
             default: return Outcome.UNAVAILABLE;
         }
         entry.state = State.RUNNING; entry.jobId = started.jobId; entry.lastJobId = started.jobId; entry.generation++;
+        entry.instanceId = instanceId; entry.credential = credential;
         final long generation = entry.generation;
         mJobs.onFinished(started.jobId, () -> onExit(ws, svc, generation));
         return Outcome.STARTED;
@@ -286,6 +347,7 @@ public final class WorkspaceServiceController implements AutoCloseable {
             String finishedJob = entry.jobId;
             JobRecord.Snapshot snap = mJobs.snapshot(finishedJob);
             entry.jobId = null;
+            entry.instanceId = null; entry.credential = null; // a credential never outlives its run
             entry.lastExitCode = snap == null ? null : snap.exitCode;
             JobTerminationEvidence evidence = mEvidence == null ? null : mEvidence.of(finishedJob);
             entry.lastReason = evidence != null ? evidence.reason.name().toLowerCase(java.util.Locale.ROOT) : snap == null ? "unknown" : snap.state.name().toLowerCase(java.util.Locale.ROOT);

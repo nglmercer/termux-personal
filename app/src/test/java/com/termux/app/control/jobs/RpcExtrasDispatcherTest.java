@@ -162,7 +162,7 @@ public class RpcExtrasDispatcherTest {
         List<String> readOnly = methods(scopes(JR, WR));
         assertTrue(readOnly.containsAll(java.util.Arrays.asList("resource.capabilities", "resource.snapshot", "job.resource.get", "job.history.list",
             "job.history.get", "job.diagnostics.export", "workspace.service.list", "workspace.service.status", "workspace.service.health", "workspace.service.ports")));
-        for (String hidden : new String[] {"workspace.service.start", "workspace.service.stop", "workspace.service.restart", "workspace.service.logs",
+        for (String hidden : new String[] {"workspace.service.start", "workspace.service.stop", "workspace.service.restart", "workspace.service.logs", "workspace.service.endpoint",
             "workspace.service.proxy", "workspace.backup.export", "workspace.backup.import", "job.processes"}) assertFalse(hidden, readOnly.contains(hidden));
         assertTrue(methods(ALL).containsAll(java.util.Arrays.asList("workspace.service.start", "workspace.service.logs", "workspace.service.proxy",
             "workspace.backup.export", "workspace.backup.import", "job.processes")));
@@ -304,6 +304,31 @@ public class RpcExtrasDispatcherTest {
     }
 
     // ---- services ----
+
+    @Test public void theEndpointNeedsExecutionConsentAndHandsOutACredentialOnlyForAnOptedInRun() throws Exception {
+        String id = workspace(",\"services\":[{\"id\":\"api\",\"executable\":\"node\",\"args\":[\"s.js\"],\"ports\":[" + freePort() + "],\"credential\":true},"
+            + "{\"id\":\"plain\",\"executable\":\"node\",\"args\":[\"s.js\"],\"ports\":[" + freePort() + "]}]");
+        String ref = "{\"workspaceId\":\"" + id + "\",\"serviceId\":\"api\"}";
+        assertEquals("DENIED", err(rpc("workspace.service.endpoint", ref, scopes(WR))));
+        JsonObject idle = ok(rpc("workspace.service.endpoint", ref, scopes(WR, JE))).getAsJsonObject("endpoint");
+        assertEquals("stopped", idle.get("state").getAsString());
+        assertTrue(idle.get("credential").isJsonNull()); assertTrue(idle.get("instanceId").isJsonNull());
+        assertTrue(idle.get("credentialRequired").getAsBoolean());
+        assertTrue(idle.get("url").getAsString().matches("http://127\\.0\\.0\\.1:[0-9]+/"));
+        ok(rpc("workspace.service.start", ref, scopes(WR, JE)));
+        assertTrue(until(() -> launched.size() == 1));
+        JsonObject running = ok(rpc("workspace.service.endpoint", ref, scopes(WR, JE))).getAsJsonObject("endpoint");
+        String credential = running.get("credential").getAsString();
+        assertEquals(credential, launched.get(0).environment().get("TERMUX_SERVICE_TOKEN"));
+        assertEquals(running.get("instanceId").getAsString(), launched.get(0).environment().get("TERMUX_SERVICE_INSTANCE_ID"));
+        assertFalse("the credential never appears in the service status", rpc("workspace.service.status", ref, scopes(WR)).toString().contains(credential));
+        assertFalse("nor in the job record", rpc("job.list", "{}", ALL).toString().contains(credential));
+        ok(rpc("workspace.service.start", "{\"workspaceId\":\"" + id + "\",\"serviceId\":\"plain\"}", scopes(WR, JE)));
+        assertTrue(until(() -> launched.size() == 2));
+        assertTrue("no opt-in, no environment change", launched.get(1).environment().isEmpty());
+        assertEquals(-32602, rpc("workspace.create", "{\"name\":\"x\",\"rootId\":\"home\",\"path\":\"projects/app\",\"services\":[{\"id\":\"a\",\"executable\":\"node\",\"args\":[],\"credential\":\"yes\"}]}", ALL)
+            .getAsJsonObject("error").get("code").getAsInt());
+    }
 
     @Test public void aServiceStartsThroughTheCoordinatorAndStopsByTheOwnedHandle() throws Exception {
         String id = workspace(SERVICE);

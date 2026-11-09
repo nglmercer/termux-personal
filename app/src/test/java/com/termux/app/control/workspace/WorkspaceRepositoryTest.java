@@ -181,6 +181,21 @@ public class WorkspaceRepositoryTest {
         assertEquals("services untouched when not given", 1, open().get(created.id).services.size());
     }
 
+    @Test public void theEndpointCredentialOptInPersistsOnlyWhenChosen() throws Exception {
+        WorkspaceRepository repository = open();
+        WorkspaceRepository.ServiceDefinition api = new WorkspaceRepository.ServiceDefinition("api", "node", java.util.Arrays.asList("s.js"),
+            WorkspaceRepository.RestartPolicy.NEVER, null, java.util.Arrays.asList(8080), true);
+        WorkspaceRepository.ServiceDefinition plain = new WorkspaceRepository.ServiceDefinition("plain", "node", java.util.Arrays.asList("s.js"),
+            WorkspaceRepository.RestartPolicy.NEVER, null, java.util.Arrays.asList(8081));
+        WorkspaceRepository.Workspace created = repository.create("web", "home", "projects/app", Collections.<WorkspaceRepository.TaskPreset>emptyList(),
+            null, java.util.Arrays.asList(api, plain));
+        WorkspaceRepository.Workspace loaded = open().get(created.id);
+        assertTrue(loaded.services.get(0).credential);
+        assertFalse(loaded.services.get(1).credential);
+        String raw = new String(java.nio.file.Files.readAllBytes(new File(store, "v1.json").toPath()), java.nio.charset.StandardCharsets.UTF_8);
+        assertEquals("written once, for the service that chose it", raw.indexOf("\"credential\""), raw.lastIndexOf("\"credential\""));
+    }
+
     @Test public void invalidOptionalFieldsNeverCostTheUserTheirWorkspaces() throws Exception {
         String damaged = V1_FILE.replace("\"taskPresets\":[{", "\"resourceProfile\":\"turbo\",\"services\":[{\"id\":\"BAD ID\"},{\"id\":\"ok\",\"executable\":\"node\",\"args\":[],\"restartPolicy\":\"sometimes\"}],\"taskPresets\":[{\"resources\":{\"memorySoftBytes\":1},")
             ;

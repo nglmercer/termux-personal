@@ -5,7 +5,7 @@ import { TermuxClient, ProtocolError, UnavailableError, type ByteTransport } fro
 const WS_ID = "ws_0123456789abcdef";
 const METHODS = ["system.hello", "system.capabilities", "resource.capabilities", "resource.snapshot", "job.resource.get", "job.history.list", "job.history.get",
   "job.diagnostics.export", "job.processes", "job.start", "workspace.get", "workspace.update", "workspace.service.list", "workspace.service.status",
-  "workspace.service.start", "workspace.service.stop", "workspace.service.restart", "workspace.service.logs", "workspace.service.health",
+  "workspace.service.start", "workspace.service.stop", "workspace.service.restart", "workspace.service.logs", "workspace.service.health", "workspace.service.endpoint",
   "workspace.service.ports", "workspace.service.proxy", "workspace.backup.export", "workspace.backup.import", "workspace.backup.status", "workspace.backup.cancel", "job.preview", "workspace.task.preview"];
 const SERVICE = { workspaceId: WS_ID, serviceId: "dev-server", state: "running", restartPolicy: "never", jobId: "job_1", restartsInWindow: 0,
   nextStartInMillis: null, lastReason: null, lastExitCode: null, ports: [3000] };
@@ -198,4 +198,15 @@ test("a reviewed preview fingerprint is sent only by start and the plan fields m
   assert.deepEqual(rest, sentPreview);
   await assert.rejects(client.jobs.start({ ...spec, expectedPreviewFingerprint: "ABC" }), TypeError);
   await assert.rejects((await TermuxClient.fromTransport(new Mock(replying({ ...preview, previewFingerprint: 7 })))).jobs.preview(spec), ProtocolError);
+});
+
+test("service endpoints are loopback only and strictly validated", async () => {
+  const ep = { workspaceId: WS_ID, serviceId: "dev-server", state: "running", instanceId: "a".repeat(32), port: 3000,
+    url: "http://127.0.0.1:3000/", origin: "http://127.0.0.1:3000", listening: true, credentialRequired: true, credential: "b".repeat(64) };
+  const ok = await TermuxClient.fromTransport(new Mock(replying({ endpoint: ep })));
+  assert.equal((await ok.services.endpoint(WS_ID, "dev-server")).credential, "b".repeat(64));
+  for (const patch of [{ url: "http://localhost:3000/" }, { url: "http://192.168.1.2:3000/" }, { origin: "http://127.0.0.1:3001" }, { credential: "short" }, { listening: "yes" }]) {
+    const bad = await TermuxClient.fromTransport(new Mock(replying({ endpoint: { ...ep, ...patch } })));
+    await assert.rejects(bad.services.endpoint(WS_ID, "dev-server"), ProtocolError);
+  }
 });

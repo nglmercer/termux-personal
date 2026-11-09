@@ -13,7 +13,7 @@ WS = "ws_0123456789abcdef"
 METHODS = ["system.hello", "system.capabilities", "resource.capabilities", "resource.snapshot", "job.resource.get", "job.history.list",
            "job.history.get", "job.diagnostics.export", "job.processes", "job.start", "workspace.create", "workspace.update", "workspace.get",
            "workspace.service.list", "workspace.service.status", "workspace.service.start", "workspace.service.stop", "workspace.service.restart",
-           "workspace.service.logs", "workspace.service.health", "workspace.service.ports", "workspace.service.proxy",
+           "workspace.service.logs", "workspace.service.health", "workspace.service.endpoint", "workspace.service.ports", "workspace.service.proxy",
            "workspace.backup.export", "workspace.backup.import", "workspace.backup.status", "workspace.backup.cancel", "job.preview", "workspace.task.preview"]
 SERVICE = {"workspaceId": WS, "serviceId": "dev-server", "state": "running", "restartPolicy": "never", "jobId": "job_1", "restartsInWindow": 0,
            "nextStartInMillis": None, "lastReason": None, "lastExitCode": None, "ports": [3000]}
@@ -79,6 +79,17 @@ class ServicesTest(unittest.TestCase):
         for patch in ({"state": "zombie"}, {"ports": ["3000"]}, {"restartsInWindow": -1}, {"restartPolicy": "sometimes"}):
             with self.assertRaises(ProtocolError):
                 client(replying({"service": {**SERVICE, **patch}})).services.status(WS, "dev-server")
+
+    def test_endpoint_is_loopback_only_and_strictly_validated(self):
+        ep = {"workspaceId": WS, "serviceId": "dev-server", "state": "running", "instanceId": "a" * 32, "port": 3000,
+              "url": "http://127.0.0.1:3000/", "origin": "http://127.0.0.1:3000", "listening": True, "credentialRequired": True, "credential": "b" * 64}
+        self.assertEqual(client(replying({"endpoint": ep})).services.endpoint(WS, "dev-server")["credential"], "b" * 64)
+        stopped = {**ep, "state": "stopped", "instanceId": None, "credential": None, "listening": False}
+        self.assertIsNone(client(replying({"endpoint": stopped})).services.endpoint(WS, "dev-server")["instanceId"])
+        for patch in ({"url": "http://localhost:3000/"}, {"url": "http://192.168.1.2:3000/"}, {"origin": "http://127.0.0.1:3001"},
+                      {"credential": "short"}, {"instanceId": 7}, {"listening": "yes"}):
+            with self.assertRaises(ProtocolError):
+                client(replying({"endpoint": {**ep, **patch}})).services.endpoint(WS, "dev-server")
 
     def test_ids_are_validated_locally(self):
         transport = FakeTransport(METHODS, replying({"service": SERVICE}))

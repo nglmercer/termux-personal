@@ -72,15 +72,26 @@ public final class WorkspaceRepository {
         public final List<Integer> ports;
         public final RestartPolicy restartPolicy;
         public final JobResourcePolicy resources;
+        /**
+         * Opt-in local endpoint credential: each start gets a fresh random credential and instance ID in the service's
+         * environment, and {@code workspace.service.endpoint} hands them to an authorized local client. Needs a port.
+         */
+        public final boolean credential;
         public ServiceDefinition(String id, String executable, List<String> args, RestartPolicy restartPolicy,
                                  JobResourcePolicy resources, List<Integer> ports) throws WorkspaceException {
+            this(id, executable, args, restartPolicy, resources, ports, false);
+        }
+        public ServiceDefinition(String id, String executable, List<String> args, RestartPolicy restartPolicy,
+                                 JobResourcePolicy resources, List<Integer> ports, boolean credential) throws WorkspaceException {
             if (!validPresetId(id) || !validExecutable(executable) || args == null || args.size() > MAX_ARGS || restartPolicy == null ||
                 ports == null || ports.size() > MAX_PORTS) throw new WorkspaceException("INVALID_REQUEST");
             for (String arg : args) if (!validText(arg, 4096, true)) throw new WorkspaceException("INVALID_REQUEST");
             for (Integer port : ports) if (port == null || port < 1 || port > 65535) throw new WorkspaceException("INVALID_REQUEST");
             if (new java.util.HashSet<>(ports).size() != ports.size()) throw new WorkspaceException("INVALID_REQUEST");
             this.id = id; this.executable = executable; this.args = Collections.unmodifiableList(new ArrayList<>(args));
+            if (credential && ports.isEmpty()) throw new WorkspaceException("INVALID_REQUEST");
             this.restartPolicy = restartPolicy; this.resources = resources; this.ports = Collections.unmodifiableList(new ArrayList<>(ports));
+            this.credential = credential;
         }
     }
 
@@ -337,7 +348,8 @@ public final class WorkspaceRepository {
                 List<Integer> ports = new ArrayList<>();
                 if (sv.has("ports")) for (JsonElement port : sv.getAsJsonArray("ports")) ports.add(port.getAsInt());
                 services.add(new ServiceDefinition(sv.get("id").getAsString(), sv.get("executable").getAsString(), sargs,
-                    RestartPolicy.parse(sv.has("restartPolicy") ? sv.get("restartPolicy").getAsString() : "never"), readResources(sv), ports));
+                    RestartPolicy.parse(sv.has("restartPolicy") ? sv.get("restartPolicy").getAsString() : "never"), readResources(sv), ports,
+                    sv.has("credential") && sv.get("credential").getAsBoolean()));
             } catch (WorkspaceException | RuntimeException e) { /* skip only the unreadable service; the workspace and its tasks survive */ }
             if (services.size() >= MAX_SERVICES) break;
         }
@@ -406,6 +418,7 @@ public final class WorkspaceRepository {
                 JsonArray ports = new JsonArray(); for (Integer port : service.ports) ports.add(port);
                 sv.add("ports", ports);
                 if (service.resources != null) sv.add("resources", service.resources.toJson());
+                if (service.credential) sv.addProperty("credential", true); // absent unless chosen, as for every optional field
                 services.add(sv);
             }
             item.add("services", services);

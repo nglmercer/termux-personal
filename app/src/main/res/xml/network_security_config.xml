@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The defaults of this app's target SDK stay in force everywhere (no cleartext, system trust anchors). The only change is
+  plain HTTP to the IPv4 loopback literal, which local services and the opt-in service viewer use; traffic there never
+  leaves the device. "localhost" and every other host keep the default. See docs/next-generation/localhost-contract.md.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>

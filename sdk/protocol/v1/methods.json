@@ -59,6 +59,7 @@
     {"name": "workspace.service.restart", "scopes": ["WORKSPACES_READ", "JOBS_EXECUTE"], "mutates": true, "binaryDirection": "none", "outputService": false},
     {"name": "workspace.service.logs", "scopes": ["WORKSPACES_READ", "JOBS_OUTPUT"], "mutates": false, "binaryDirection": "response", "outputService": false},
     {"name": "workspace.service.health", "scopes": ["WORKSPACES_READ"], "mutates": false, "binaryDirection": "none", "outputService": false},
+    {"name": "workspace.service.endpoint", "scopes": ["WORKSPACES_READ", "JOBS_EXECUTE"], "mutates": false, "binaryDirection": "none", "outputService": false},
     {"name": "workspace.service.ports", "scopes": ["WORKSPACES_READ"], "mutates": false, "binaryDirection": "none", "outputService": false},
     {"name": "workspace.service.proxy", "scopes": ["WORKSPACES_WRITE"], "mutates": true, "binaryDirection": "none", "outputService": false},
     {"name": "workspace.backup.export", "scopes": ["WORKSPACES_WRITE", "FILES_READ"], "mutates": true, "binaryDirection": "none", "outputService": false},

@@ -186,6 +186,22 @@ class Services(_Domain):
         result, _ = self._call("workspace.service.health", {"workspaceId": workspace_id, "serviceId": service_id})
         return ServiceStatus.parse(_obj(result, "Invalid service health").get("service"))
 
+    def endpoint(self, workspace_id: str, service_id: str) -> dict:
+        """How to reach the current run: loopback URL, ``instanceId`` and, for a service that opted in, its credential.
+        A changed ``instanceId`` is a different run; its previous credential is invalid. Nothing is retried here."""
+        _check_ws(workspace_id); _check_service(service_id)
+        result, _ = self._call("workspace.service.endpoint", {"workspaceId": workspace_id, "serviceId": service_id})
+        e = _obj(result, "Invalid service endpoint").get("endpoint")
+        hexes = lambda v, n: v is None or (isinstance(v, str) and len(v) == n and all(c in "0123456789abcdef" for c in v))
+        port = e.get("port") if isinstance(e, dict) else None
+        if (not isinstance(e, dict) or not isinstance(e.get("state"), str) or not hexes(e.get("instanceId"), 32) or
+                not hexes(e.get("credential"), 64) or not isinstance(e.get("listening"), bool) or
+                not isinstance(e.get("credentialRequired"), bool) or not (port is None or (type(port) is int and 1 <= port <= 65535)) or
+                e.get("url") != (None if port is None else "http://127.0.0.1:%d/" % port) or
+                e.get("origin") != (None if port is None else "http://127.0.0.1:%d" % port)):
+            raise ProtocolError("Invalid service endpoint")
+        return e
+
     def _control(self, action, workspace_id, service_id, client_request_id):
         _check_ws(workspace_id); _check_service(service_id)
         params = {"workspaceId": workspace_id, "serviceId": service_id}
