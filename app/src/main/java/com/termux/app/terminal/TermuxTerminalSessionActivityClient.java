@@ -178,6 +178,8 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
     @Override
     public void onSessionFinished(@NonNull TerminalSession finishedSession) {
         TermuxService service = mActivity.getTermuxService();
+        // Recorded first, so a session that is closed automatically below keeps its result.
+        if (service != null) service.recordSessionExit(finishedSession);
 
         if (service == null || service.wantsToStop()) {
             // The service wants to stop as soon as possible.

@@ -55,7 +55,27 @@ public final class HeadlessPtySmoke {
             throw new AssertionError("Unexpected PTY result: status=" + status + ", output=" + text);
         if (JNI.waitFor(Integer.MAX_VALUE) != Integer.MIN_VALUE)
             throw new AssertionError("waitpid failure was not reported");
-        System.out.println("PTY spawn, output, exit status and wait failure passed");
+        if (SessionExitStatus.decode(Integer.MIN_VALUE).kind != SessionExitStatus.Kind.UNAVAILABLE)
+            throw new AssertionError("wait failure must decode as unavailable");
+        // A root process that exits with 137 is exit code 137, not SIGKILL; one killed by a signal is reported as that signal.
+        expectRoot(shell, "exit 137", 137, "exit code 137");
+        expectRoot(shell, "kill -9 $$", -9, "signal 9 (SIGKILL)");
+        expectRoot(shell, "kill -SEGV $$", -11, "signal 11 (SIGSEGV)");
+        // A child that dies by a signal while its shell survives is not a session exit: the root reports its own code.
+        expectRoot(shell, "sh -c 'kill -9 $$'; echo child-gone; exit 0", 0, "exit code 0");
+        System.out.println("PTY spawn, output, exit status, signals, child-only signal and wait failure passed");
+    }
+
+    private static void expectRoot(String shell, String script, int raw, String description) throws Exception {
+        int[] pid = new int[1];
+        int fd = JNI.createSubprocess(shell, "/", new String[]{"sh", "-c", script},
+            new String[]{"PATH=/system/bin:/system/xbin:/usr/bin:/bin"}, pid, 24, 80, 8, 16);
+        if (fd < 0 || pid[0] <= 0) throw new AssertionError("PTY did not start for " + script);
+        int status = JNI.waitFor(pid[0]);
+        JNI.close(fd);
+        String decoded = SessionExitStatus.decode(status).describe();
+        if (status != raw || !decoded.equals(description))
+            throw new AssertionError(script + ": status=" + status + " decoded=" + decoded + ", expected " + raw + " / " + description);
     }
 
     private static void verifyStartupFailure(String shell, String failure) throws Exception {

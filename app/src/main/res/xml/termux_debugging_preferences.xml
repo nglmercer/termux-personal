@@ -28,6 +28,12 @@
             app:summaryOn="@string/termux_crash_report_notifications_enabled_on"
             app:title="@string/termux_crash_report_notifications_enabled_title" />
 
+        <SwitchPreferenceCompat
+            app:key="session_exit_diagnostics_enabled"
+            app:summaryOff="@string/termux_session_exit_diagnostics_enabled_off"
+            app:summaryOn="@string/termux_session_exit_diagnostics_enabled_on"
+            app:title="@string/termux_session_exit_diagnostics_enabled_title" />
+
     </PreferenceCategory>
 
 </PreferenceScreen>

@@ -168,6 +168,11 @@
                 <string name="termux_crash_report_notifications_enabled_off">Disable notifications for crash reports.</string>
                 <string name="termux_crash_report_notifications_enabled_on">Show notifications for crash reports. (Default)</string>
 
+                <!-- Session Exit Diagnostics -->
+                <string name="termux_session_exit_diagnostics_enabled_title">Session Exit Results</string>
+                <string name="termux_session_exit_diagnostics_enabled_off">Do not keep how terminal sessions ended. (Default)</string>
+                <string name="termux_session_exit_diagnostics_enabled_on">Keep the exit code or signal of the last 32 sessions whose shell ended, in memory only, viewable from the context menu. Commands that end while their shell keeps running are not observed.</string>
+
 
         <!-- Terminal IO Preferences -->
         <string name="termux_terminal_io_preferences_title">Terminal I/O</string>
@@ -273,6 +278,11 @@
     <string name="session_options_kill">Kill process</string>
     <string name="session_options_close">Close</string>
     <string name="action_jobs">Managed jobs</string>
+    <string name="action_session_exits">Session exit results</string>
+    <string name="session_exits_note">How the shell (the root process) of recent sessions ended, newest first. A command that ended while its shell kept running is not listed. An exit code is not a signal, and a signal does not say who sent it or why: the cause is unknown. Kept in memory only, at most 32, and lost when the Termux service stops.</string>
+    <string name="session_exits_empty">No session has ended since this option was turned on.</string>
+    <string name="session_exits_copy">Copy</string>
+    <string name="session_exits_copied">Session exit results copied</string>
     <string name="jobs_empty">No managed jobs in this service session. Local clients start them through local control.</string>
     <string name="jobs_state_exit">%1$s (exit %2$d)</string>
     <string name="jobs_detail_state">State: %1$s</string>

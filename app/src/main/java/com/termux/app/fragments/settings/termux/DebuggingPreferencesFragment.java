@@ -132,6 +132,9 @@ class DebuggingPreferencesDataStore extends PreferenceDataStore {
             case "crash_report_notifications_enabled":
                 mPreferences.setCrashReportNotificationsEnabled(value);
                 break;
+            case "session_exit_diagnostics_enabled":
+                mPreferences.setSessionExitDiagnosticsEnabled(value);
+                break;
             default:
                 break;
         }
@@ -147,6 +150,8 @@ class DebuggingPreferencesDataStore extends PreferenceDataStore {
                 return mPreferences.arePluginErrorNotificationsEnabled(false);
             case "crash_report_notifications_enabled":
                 return mPreferences.areCrashReportNotificationsEnabled(false);
+            case "session_exit_diagnostics_enabled":
+                return mPreferences.areSessionExitDiagnosticsEnabled();
             default:
                 return false;
         }

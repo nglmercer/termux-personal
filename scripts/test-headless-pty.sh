@@ -11,6 +11,7 @@ clang -std=c11 -D_GNU_SOURCE -shared -fPIC -Wall -Wextra -Werror \
     -I "$JAVA_HOME/include" -I "$JAVA_HOME/include/linux" \
     terminal-emulator/src/main/jni/termux.c -o "$out_dir/libtermux.so"
 javac -d "$out_dir/classes" terminal-emulator/src/main/java/com/termux/terminal/JNI.java \
+    terminal-emulator/src/main/java/com/termux/terminal/SessionExitStatus.java \
     terminal-emulator/src/test/host/HeadlessPtySmoke.java
 LD_LIBRARY_PATH="$out_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
     java --add-opens java.base/java.io=ALL-UNNAMED -cp "$out_dir/classes" com.termux.terminal.HeadlessPtySmoke
