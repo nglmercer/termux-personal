@@ -13,7 +13,6 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Collections;
-import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -44,15 +43,51 @@ public class ManagedLimitsInstrumentedTest {
 
     @Test public void addressSpaceAndCpuLimitsAreAppliedInTheChildAndTheAppItselfIsUntouched() throws Exception {
         String before = limitsOfSelf();
-        OwnedChildProcess child = launch("cat /proc/self/limits", new ManagedNative.NativeLimits(512L << 20, 3, -1,
+        OwnedChildProcess child = launch("cat /proc/self/limits", new ManagedNative.NativeLimits(8L << 30, 3, -1,
             ManagedNative.NativeLimits.REQUIRE_ADDRESS_SPACE | ManagedNative.NativeLimits.REQUIRE_CPU_TIME));
         String limits = drain(child.getInputStream());
         assertEquals(0, (int) onWorker(child::waitFor));
-        assertTrue(limits, limits.matches("(?s).*Max address space\\s+536870912\\s+536870912\\s+bytes.*"));
+        assertTrue(limits, limits.matches("(?s).*Max address space\\s+8589934592\\s+8589934592\\s+bytes.*"));
         // The soft CPU limit is the requested 3 s and the hard limit five seconds later.
         assertTrue(limits, limits.matches("(?s).*Max cpu time\\s+3\\s+8\\s+seconds.*"));
         assertEquals("the app process was not limited", before, limitsOfSelf());
         drain(child.getErrorStream());
+    }
+
+    /** Measured on a real device: the linker reserves enough address space that a small limit aborts even a trivial process. */
+    @Test public void theMeasuredMinimumAddressSpaceIsWhatATrivialProcessReallyNeeds() throws Exception {
+        long minimum = onWorker(ManagedNative::minAddressSpaceBytes);
+        assertTrue("the probe found a working limit", minimum > 0);
+        OwnedChildProcess ok = launch("echo alive", new ManagedNative.NativeLimits(minimum, 0, -1, ManagedNative.NativeLimits.REQUIRE_ADDRESS_SPACE));
+        assertEquals("alive\n", drain(ok.getInputStream()));
+        assertEquals(0, (int) onWorker(ok::waitFor));
+        drain(ok.getErrorStream());
+        if (minimum > (256L << 20)) {
+            // One step below the minimum the same trivial process must not start cleanly.
+            OwnedChildProcess low = launch("echo alive", new ManagedNative.NativeLimits(minimum / 2, 0, -1, ManagedNative.NativeLimits.REQUIRE_ADDRESS_SPACE));
+            drain(low.getInputStream());
+            assertNotEquals("below the minimum the process aborts", 0, (int) onWorker(low::waitFor));
+            drain(low.getErrorStream());
+        }
+    }
+
+    @Test public void theCoordinatorRefusesAnAddressSpaceLimitTheDeviceCannotRun() throws Exception {
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        JobAuthority authority = new JobAuthority();
+        JobAuthority.Lease lease = authority.grant(java.util.EnumSet.allOf(JobAuthority.Permission.class));
+        JobCoordinator.Policy policy = new JobCoordinator.Policy() {
+            @Override public JobCoordinator.Resolution authorizeAndResolve(JobSpec spec, long epoch) { return new JobCoordinator.Resolution("/system/bin/sh", "/"); }
+            @Override public boolean authorizeReplay(JobSpec spec, long epoch) { return true; }
+        };
+        JobCoordinator coordinator = new JobCoordinator(new JobRegistry(new JobIoPool(JobIoPool.MAX_JOBS), new JobOutputStore(), JobOutputStore.DEFAULT_RECORD_LIMIT),
+            new AppShellJobAdapter(context), policy, authority);
+        try {
+            long minimum = onWorker(ManagedNative::minAddressSpaceBytes);
+            assertTrue(minimum > (256L << 20));
+            JobSpec tooSmall = new JobSpec("/system/bin/sh", java.util.Arrays.asList("-c", ":"), "/", null, Collections.<String, String>emptyMap(), null, 0,
+                JobSpec.Presentation.BACKGROUND, "small-1", JobResourcePolicy.builder().addressSpaceBytes(Math.max(JobResourcePolicy.MIN_ADDRESS_SPACE_BYTES, minimum / 2)).build());
+            assertEquals("refused up front, not launched to die", JobCoordinator.StartStatus.UNSUPPORTED, onWorker(() -> coordinator.start(tooSmall, lease)).status);
+        } finally { coordinator.stopAccepting(); }
     }
 
     @Test public void theNiceLevelLowersThePriorityOfTheChildOnly() throws Exception {
@@ -92,30 +127,54 @@ public class ManagedLimitsInstrumentedTest {
         // On a build where the parent's nice is already 0 this limit is satisfiable; that is a valid outcome and not a failure.
     }
 
-    @Test public void theSupervisorMeasuresARealChildThroughProcOnAndroid() throws Exception {
+    /** The production path: a coordinator with admission and a supervisor, launching through AppShell and the owned launcher. */
+    @Test public void aPolicyJobIsLimitedMeasuredAndStoppedThroughTheProductionCoordinator() throws Exception {
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         ResourceAdmissionController admission = new ResourceAdmissionController();
         JobResourceSupervisor supervisor = JobResourceSupervisor.forAndroid(context, admission);
-        ScheduledThreadPoolExecutor timers = new ScheduledThreadPoolExecutor(1);
+        JobAuthority authority = new JobAuthority();
+        JobAuthority.Lease lease = authority.grant(java.util.EnumSet.allOf(JobAuthority.Permission.class));
+        JobCoordinator.Policy policy = new JobCoordinator.Policy() {
+            @Override public JobCoordinator.Resolution authorizeAndResolve(JobSpec spec, long epoch) { return new JobCoordinator.Resolution("/system/bin/sh", "/"); }
+            @Override public boolean authorizeReplay(JobSpec spec, long epoch) { return true; }
+        };
+        JobRegistry registry = new JobRegistry(new JobIoPool(JobIoPool.MAX_JOBS), new JobOutputStore(), JobOutputStore.DEFAULT_RECORD_LIMIT);
+        JobCoordinator coordinator = new JobCoordinator(registry, new AppShellJobAdapter(context), policy, authority, admission, supervisor);
         try {
-            OwnedChildProcess child = launch("sleep 20", ManagedNative.NativeLimits.NONE);
-            JobRecord record = new JobRecord("job_" + "a".repeat(32), null, 1);
-            assertTrue(record.begin() && record.started(null, 1));
-            OwnedProcessControl control = OwnedProcessControl.forAndroid(record, timers, 1000, true);
-            control.attach(child);
-            supervisor.track(record, control, child, JobResourcePolicy.ofProfile(JobResourcePolicy.Profile.BALANCED));
+            JobResourcePolicy resources = JobResourcePolicy.builder().profile(JobResourcePolicy.Profile.BALANCED).addressSpaceBytes(8192L << 20)
+                .cpuTimeSeconds(120L).build();
+            JobSpec spec = new JobSpec("/system/bin/sh", java.util.Arrays.asList("-c", "cat /proc/self/limits; sleep 20"), "/", null,
+                Collections.<String, String>emptyMap(), null, 0, JobSpec.Presentation.BACKGROUND, "dev-1", resources);
+            JobCoordinator.StartResult started = onWorker(() -> coordinator.start(spec, lease));
+            assertEquals(JobCoordinator.StartStatus.ACCEPTED, started.status);
+            String id = started.job.id;
+            JobRecord.State state = null;
+            for (int i = 0; i < 100 && state != JobRecord.State.RUNNING; i++) { Thread.sleep(100); state = coordinator.get(id, lease).job.job.state; }
+            assertEquals("the job reached RUNNING through the production launcher", JobRecord.State.RUNNING, state);
+            // The limits the child really has, read from its own /proc/self/limits.
+            String limits = "";
+            for (int i = 0; i < 50 && !limits.contains("Max address space"); i++) {
+                Thread.sleep(100);
+                JobCoordinator.OutputResult out = coordinator.readOutput(id, lease, JobOutputStore.Stream.STDOUT, 0, 4096);
+                limits = new String(out.output.data, StandardCharsets.UTF_8);
+            }
+            assertTrue(limits, limits.matches("(?s).*Max address space\\s+8589934592\\s+8589934592\\s+bytes.*"));
+            assertTrue(limits, limits.matches("(?s).*Max cpu time\\s+120\\s+125\\s+seconds.*"));
+            // The supervisor measured the running child through /proc as the app UID.
             JobResourceSupervisor.Metrics metrics = null;
-            for (int i = 0; i < 100 && (metrics == null || metrics.rssBytes == null); i++) { Thread.sleep(100); metrics = supervisor.metrics(record.snapshot().id); }
+            for (int i = 0; i < 100 && (metrics == null || metrics.rssBytes == null); i++) { Thread.sleep(100); metrics = supervisor.metrics(id); }
             assertNotNull("the supervisor sampled the job", metrics);
             assertNotNull("RSS of the child is visible to the app UID", metrics.rssBytes);
-            assertTrue(metrics.rssBytes > 0);
-            assertTrue(metrics.processCount >= 1);
-            assertFalse("the child kept its identity", metrics.identityLost);
-            assertNotEquals("device pressure was read from the real platform", PressureTracker.Level.UNKNOWN, supervisor.pressure());
-            assertEquals(OwnedProcessControl.Request.ACCEPTED, control.requestStop(JobRecord.StopReason.CANCEL));
-            assertEquals(128 + OwnedChildProcess.SIGTERM, (int) onWorker(child::waitFor));
-            drain(child.getInputStream()); drain(child.getErrorStream());
-        } finally { supervisor.close(); timers.shutdownNow(); }
+            assertTrue(metrics.rssBytes > 0 && metrics.processCount >= 1);
+            assertFalse(metrics.identityLost);
+            assertEquals(JobCoordinator.CancelStatus.ACCEPTED, coordinator.cancel(id, lease));
+            for (int i = 0; i < 150 && !JobRecord.isTerminal(coordinator.get(id, lease).job.job.state); i++) Thread.sleep(100);
+            assertEquals(JobRecord.State.CANCELLED, coordinator.get(id, lease).job.job.state);
+            assertEquals("the admission slot was released", 0, admission.activeCount());
+        } finally {
+            coordinator.stopAccepting();
+            supervisor.close();
+        }
     }
 
     @Test public void theProcessSnapshotFindsAnOwnedChildAndItsDescendantsOnAndroid() throws Exception {

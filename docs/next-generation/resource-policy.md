@@ -15,7 +15,7 @@ Every member is optional and `null` means unset. Out-of-range or inconsistent va
 | Field | Enforced by | Guarantee |
 |---|---|---|
 | `memorySoftBytes` | supervisor sampling | **Observed only.** RSS of the job's process tree is compared to it at each sample. Nothing stops a process from exceeding it between samples. |
-| `addressSpaceBytes` | `RLIMIT_AS` in the child before `execve` | Virtual address space, **not** resident memory. Breaks runtimes that reserve large ranges (JVM, V8, some Rust allocators), so no profile ever sets it. |
+| `addressSpaceBytes` | `RLIMIT_AS` in the child before `execve` | Virtual address space, **not** resident memory. Breaks runtimes that reserve large ranges (JVM, V8, some Rust allocators), so no profile ever sets it. On the tested Android 16 device even `cat` aborts below 4 GiB, so the device's measured minimum is enforced: a lower request is refused as `UNSUPPORTED`. |
 | `cpuTimeSeconds` | `RLIMIT_CPU` in the child | CPU seconds, not wall time and not a percentage. `SIGXCPU` at the limit, `SIGKILL` five seconds later. The wall-clock `timeoutMs` stays separate. |
 | `niceLevel` | `setpriority` in the child | Lowers priority only (0–19). Best effort unless `requireNice`. |
 | `maxOutputBytes` | `JobOutputStore` | Retention per stream, 1 KiB – 256 KiB (the replay buffer's capacity). Larger requests are rejected. |

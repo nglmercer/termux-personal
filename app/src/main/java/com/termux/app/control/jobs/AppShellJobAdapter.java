@@ -17,6 +17,8 @@ public final class AppShellJobAdapter {
         Process launch(JobSpec spec, String executable, String cwd, AppShellJobCapture capture, Completion completion);
         /** True only when every launched child is an {@link OwnedChildProcess} that can be signalled safely. */
         default boolean ownsChildIdentity() { return false; }
+        /** Measured smallest workable address-space limit, or zero when unknown. */
+        default long minAddressSpaceBytes() { return 0; }
     }
     interface Completion {
         void finished(Integer exitCode, boolean captureFailed);
@@ -109,6 +111,9 @@ public final class AppShellJobAdapter {
     /** Whether stop requests can terminate a running child through its owned handle. */
     public boolean ownsChildIdentity() { return mBackend.ownsChildIdentity(); }
 
+    /** Smallest address-space limit a trivial child survives on this device; zero when unknown. Worker-only on Android. */
+    public long minAddressSpaceBytes() { return mBackend.minAddressSpaceBytes(); }
+
     private static void validate(JobRegistry.Entry entry, JobSpec spec, String executable, String cwd,
                                  OwnedProcessControl control) {
         if (entry == null || !entry.matches(spec) || !isNormalizedAbsolute(executable) || !isNormalizedAbsolute(cwd) ||
@@ -152,7 +157,7 @@ public final class AppShellJobAdapter {
             // Limits are resolved against what this device can enforce and applied in the child only.
             final JobResourcePolicy policy = spec.resources();
             final ManagedNative.NativeLimits limits = policy == null ? ManagedNative.NativeLimits.NONE :
-                policy.resolve(new JobResourcePolicy.Capabilities(ownsChildIdentity())).nativeLimits;
+                policy.resolve(new JobResourcePolicy.Capabilities(ownsChildIdentity(), minAddressSpaceBytes())).nativeLimits;
             final java.util.concurrent.atomic.AtomicBoolean limitFailure = new java.util.concurrent.atomic.AtomicBoolean();
             AppShell.ManagedLauncher launcher = !ownsChildIdentity() ? null : (argv, environ, directory) -> {
                 final OwnedChildProcess process;
@@ -173,5 +178,6 @@ public final class AppShellJobAdapter {
 
         /** No fallback to Runtime.exec once the library loaded: that child could not be signalled safely. */
         @Override public boolean ownsChildIdentity() { return ManagedNative.isLibraryAvailable(); }
+        @Override public long minAddressSpaceBytes() { return ManagedNative.isLibraryAvailable() ? ManagedNative.minAddressSpaceBytes() : 0; }
     }
 }

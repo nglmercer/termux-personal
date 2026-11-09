@@ -38,13 +38,19 @@ Device-aware resource policy, workspace profiles and per-task resources, managed
 
 ## Not implemented yet
 
-A working isolated execution backend: only the abstraction and capability detection exist, and the VM is reported as unsupported (see [execution-backend.md](execution-backend.md)). The UI and everything native have not been run on a physical Android device.
+A working isolated execution backend: only the abstraction and capability detection exist, and the VM is reported as unsupported (see [execution-backend.md](execution-backend.md)). The UI (the jobs dialog) has not been exercised on a device.
 
 ## Verification on Android
 
-Everything above was verified with host unit tests, native host tests, cross-compilation and the packaged APK, but not on Android. An attempt to run the instrumented tests on an x86_64 emulator failed for host reasons: the machine has no KVM and two CPUs, so Android 15 either lost `system_server` to the watchdog (Google APIs image) or never brought up `adbd` (default image). Nothing about the code was learned from that attempt.
+Run on a physical POCO X3 Pro (`vayu`, Android 16 / API 36, kernel 4.14, arm64-v8a) over ADB, with the debug build installed:
 
-`ManagedLimitsInstrumentedTest` is ready for a real device or an emulator with hardware acceleration: `./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.termux.app.control.jobs.ManagedLimitsInstrumentedTest`. It checks, on bionic and the app's seccomp policy, that `RLIMIT_AS`, `RLIMIT_CPU` and `nice` are applied to the child only and the app is untouched, that a CPU-bound child ends by `SIGXCPU`/`SIGKILL`, that a required limit that cannot be applied fails the launch as a limit failure, and that the supervisor and `ProcessSnapshot` measure a real child through `/proc` as the app UID. Until it has been run, device behaviour (including whether Android restricts these calls) remains unverified. The `ManagedNativeInstrumentedTest` and `OwnedChildProcessInstrumentedTest` that already existed are in the same state.
+* `ManagedLimitsInstrumentedTest` (9 tests) passes. It confirms on bionic and the app's seccomp policy that `RLIMIT_AS`, `RLIMIT_CPU` and `nice` are applied to the child only and the app's own limits are unchanged, that a CPU-bound child is ended by its CPU limit (`SIGXCPU`/`SIGKILL`), that a required limit that cannot be applied fails the launch and is attributed to the limit, that `ProcessSnapshot` finds an owned child and its descendants, and, through the production coordinator, AppShell and the owned launcher, that a job with a resource policy reaches `RUNNING`, has exactly the requested limits, is measured through `/proc` by the supervisor, is cancelled, and releases its admission slot.
+* The whole `com.termux.app.control` instrumented package passes (17 tests, including the existing managed-native, owned-child and worker-policy tests).
+* The full instrumented suite has 15 failures, all in packages this work does not touch (`compat.cli`, `compat.network`, `compat.runtime`, `extrakeys`, `filepicker`): package-private access across the test APK, an ELF-inspection expectation and a hard-link permission on this device. They are not caused by these changes.
+
+**Finding from the device:** on this Android 16 build the dynamic linker reserves enough address space that any process, even `cat`, aborts at startup with an `RLIMIT_AS` of 2 GiB or less, and starts at 4 GiB. A small limit would therefore only produce a job that dies at once. The minimum is not a constant: `ManagedNative.minAddressSpaceBytes()` measures it once by launching a trivial child under ascending limits, and a job that asks for a lower `addressSpaceBytes` is refused before admission as `UNSUPPORTED` (an unknown minimum never blocks). The probe runs only when a job asks for an address-space limit. Other devices were not tested, which is why it is measured and not hard-coded.
+
+Not covered on the device: the process-manager dialog (no UI automation was run), the thermal and low-memory paths of the supervisor under real pressure, and `workspace.*` services and backups end to end. The x86_64 emulator was not usable on the build host (no KVM).
 
 ## Test environment
 
