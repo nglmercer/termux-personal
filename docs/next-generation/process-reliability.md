@@ -52,7 +52,14 @@ Run on a physical POCO X3 Pro (`vayu`, Android 16 / API 36, kernel 4.14, arm64-v
 
 **Findings from the device.** (1)  on this Android 16 build the dynamic linker reserves enough address space that any process, even `cat`, aborts at startup with an `RLIMIT_AS` of 2 GiB or less, and starts at 4 GiB. A small limit would therefore only produce a job that dies at once. The minimum is not a constant: `ManagedNative.minAddressSpaceBytes()` measures it once by launching a trivial child under ascending limits, and a job that asks for a lower `addressSpaceBytes` is refused before admission as `UNSUPPORTED` (an unknown minimum never blocks). The probe runs only when a job asks for an address-space limit. Other devices were not tested, which is why it is measured and not hard-coded. (2) `InetAddress.getLoopbackAddress()` is `::1` on this Android build, so a service listening on `127.0.0.1` looked closed and a relay could not reach it. The port service now uses the IPv4 literal `127.0.0.1` everywhere, as its contract says.
 
-Not covered on the device: the jobs dialog (the phone was locked and its lock screen is not bypassed, so no UI was exercised), the thermal and low-memory pressure paths of the supervisor (real memory pressure is deliberately not induced), and the local control socket transport itself (the RPC layer is exercised in process on the device, and the socket by the host interop tests). The x86_64 emulator was not usable on the build host (no KVM).
+**Local control socket and UI, driven by hand over ADB** (with the owner enabling Local control in the app, and the CLI built on the phone from `tools/termux-control`):
+
+* Over the real socket, `resources capabilities`, `jobs start|run|list|resource|processes|history-get` and `jobs cancel` behave as the in-process tests do. A job started without `resources` is unmanaged (`limits: null`, no metrics, as the opt-in rule requires); one started with `--profile balanced` reports `limits.profile = balanced`, live RSS/CPU/process metrics and its root process.
+* The Managed jobs dialog lists real jobs, opens a detail view with the resources line, and its Cancel job button asks for confirmation, moves the job through `cancelling` to `cancelled`, and the detail then shows `USER_CANCELLED (confidence confirmed)` plus the evidence that is not available (`ApplicationExitInfo` for native children, logcat). A job that ends by itself shows `NORMAL_EXIT`.
+* Replacing the app while two jobs were running made both appear in the history as `lost` / `SERVICE_LOST` after the restart, and the earlier finished jobs kept their `exited` / `NORMAL_EXIT` records. No process id is stored.
+* Found and fixed here: the detail dialog showed `profile unknown` for a running job, because the stored record is only loaded for finished jobs. It now takes the profile from the live policy first. A record stored while a job runs still says `STARTING`; it is only an "unfinished" marker used for LOST recovery, and the live state comes from the registry.
+
+Not covered on the device: the thermal and low-memory pressure paths of the supervisor (real memory pressure is deliberately not induced) and the VM backend, which reports `UNSUPPORTED` here. The x86_64 emulator was not usable on the build host (no KVM).
 
 ## Test environment
 
@@ -63,4 +70,4 @@ The unit suite passes in full (0 failures) on JDK 21. On JDK 27 the 35 Robolectr
 * Descendants that call `setsid` or change process group are outside the group signal and may survive a stop. The supervisor's RSS sum also loses a descendant once its parent exits and it is reparented.
 * Android may hide other processes from `/proc`; the snapshot reports `incomplete` and metrics stay `null` rather than zero.
 * The sampler is a poll; the low-memory killer can act between samples.
-* Native limits rely on `setrlimit`/`setpriority`, which no seccomp policy is known to block, but this has not been run on a device.
+* Native limits rely on `setrlimit`/`setpriority`. They were applied and verified on one device (see above); other devices and ROMs were not tested, and the address-space minimum in particular varies.

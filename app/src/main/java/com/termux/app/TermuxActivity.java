@@ -1012,8 +1012,11 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         com.termux.app.control.jobs.JobResourceSupervisor supervisor = service == null ? null : service.getJobSupervisorIfCreated();
         com.termux.app.control.jobs.JobResourceSupervisor.Metrics m = supervisor == null ? null : supervisor.metrics(id);
         String unknown = getString(R.string.jobs_unknown);
+        // A running job has no stored record loaded (that read is only done for finished jobs), so the live policy comes first.
+        com.termux.app.control.jobs.JobResourcePolicy live = jobs.resourcePolicy(id);
+        String profile = live != null ? live.profile().wireName() : stored != null && stored.resourceProfile != null ? stored.resourceProfile : unknown;
         if (m != null)
-            text.append("\n").append(getString(R.string.jobs_detail_resources, stored != null && stored.resourceProfile != null ? stored.resourceProfile : unknown,
+            text.append("\n").append(getString(R.string.jobs_detail_resources, profile,
                 formatBytes(m.rssBytes, unknown), formatBytes(m.peakRssBytes, unknown),
                 m.cpuPercent == null ? unknown : String.format(java.util.Locale.ROOT, "%.0f%%", m.cpuPercent),
                 m.processCount == null ? unknown : String.valueOf(m.processCount)));
