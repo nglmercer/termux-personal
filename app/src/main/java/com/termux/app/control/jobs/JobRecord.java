@@ -11,7 +11,7 @@ public final class JobRecord {
     private State mState = State.QUEUED;
     private StopReason mStopReason;
     private Long mStartedAt, mEndedAt;
-    private Integer mPid, mExitCode;
+    private Integer mPid, mExitCode, mSignal;
     private Failure mFailure;
 
     public JobRecord(String id, String workspaceId, long authorizationEpoch) {
@@ -58,9 +58,18 @@ public final class JobRecord {
         return true;
     }
 
+    /**
+     * The signal that terminated the child, as observed when it was reaped. Informational: recorded before the terminal
+     * state so a snapshot of a finished job always includes it. Ignored once the record is terminal.
+     */
+    public synchronized void observedSignal(Integer signal) {
+        if (signal == null || signal <= 0 || signal > 64 || isTerminal(mState) || mSignal != null) return;
+        mSignal = signal;
+    }
+
     public synchronized Snapshot snapshot() {
         return new Snapshot(mId, mWorkspaceId, mAuthorizationEpoch, mState, mStopReason,
-            mStartedAt, mEndedAt, mPid, mExitCode, mFailure);
+            mStartedAt, mEndedAt, mPid, mExitCode, mFailure, mSignal);
     }
 
     public static boolean isTerminal(State state) {
@@ -77,8 +86,11 @@ public final class JobRecord {
         public final Long startedAt, endedAt;
         public final Integer pid, exitCode;
         public final Failure failure;
+        /** Terminating signal of the child when one was observed; the exit code then reads 128 + signal. */
+        public final Integer signal;
         private Snapshot(String id, String workspaceId, long epoch, State state, StopReason stopReason,
-                         Long startedAt, Long endedAt, Integer pid, Integer exitCode, Failure failure) {
+                         Long startedAt, Long endedAt, Integer pid, Integer exitCode, Failure failure, Integer signal) {
+            this.signal = signal;
             this.id = id; this.workspaceId = workspaceId; this.authorizationEpoch = epoch; this.state = state;
             this.stopReason = stopReason; this.startedAt = startedAt; this.endedAt = endedAt;
             this.pid = pid; this.exitCode = exitCode; this.failure = failure;

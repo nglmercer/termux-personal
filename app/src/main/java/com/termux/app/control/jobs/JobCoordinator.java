@@ -78,25 +78,38 @@ public final class JobCoordinator {
     /** Both optional: without them every job launches as before and nothing is supervised. */
     private final ResourceAdmissionController mAdmission;
     private final JobResourceSupervisor mSupervisor;
+    /** Optional: termination evidence and persistent history. */
+    private final JobDiagnostics mDiagnostics;
     private boolean mStopping, mClosed;
 
     public JobCoordinator(JobRegistry registry, AppShellJobAdapter adapter, Policy policy, JobAuthority authority) {
-        this(registry, adapter, new WorkerJobPolicy(policy), authority, JobIoPool.MAX_JOBS, null, null);
+        this(registry, adapter, new WorkerJobPolicy(policy), authority, JobIoPool.MAX_JOBS, null, null, null);
     }
 
     /** Jobs that carry a resource policy (other than UNRESTRICTED) go through {@code admission} and are watched by {@code supervisor}. */
     public JobCoordinator(JobRegistry registry, AppShellJobAdapter adapter, Policy policy, JobAuthority authority,
                           ResourceAdmissionController admission, JobResourceSupervisor supervisor) {
-        this(registry, adapter, new WorkerJobPolicy(policy), authority, JobIoPool.MAX_JOBS, admission, supervisor);
+        this(registry, adapter, new WorkerJobPolicy(policy), authority, JobIoPool.MAX_JOBS, admission, supervisor, null);
+    }
+
+    /** As above, also recording termination evidence and history through {@code diagnostics}. */
+    public JobCoordinator(JobRegistry registry, AppShellJobAdapter adapter, Policy policy, JobAuthority authority,
+                          ResourceAdmissionController admission, JobResourceSupervisor supervisor, JobDiagnostics diagnostics) {
+        this(registry, adapter, new WorkerJobPolicy(policy), authority, JobIoPool.MAX_JOBS, admission, supervisor, diagnostics);
     }
 
     JobCoordinator(JobRegistry registry, AppShellJobAdapter adapter, Policy policy, JobAuthority authority, int launchWorkers) {
-        this(registry, adapter, policy, authority, launchWorkers, null, null);
+        this(registry, adapter, policy, authority, launchWorkers, null, null, null);
     }
 
     JobCoordinator(JobRegistry registry, AppShellJobAdapter adapter, Policy policy, JobAuthority authority, int launchWorkers,
                    ResourceAdmissionController admission, JobResourceSupervisor supervisor) {
-        mAdmission = admission; mSupervisor = supervisor;
+        this(registry, adapter, policy, authority, launchWorkers, admission, supervisor, null);
+    }
+
+    JobCoordinator(JobRegistry registry, AppShellJobAdapter adapter, Policy policy, JobAuthority authority, int launchWorkers,
+                   ResourceAdmissionController admission, JobResourceSupervisor supervisor, JobDiagnostics diagnostics) {
+        mAdmission = admission; mSupervisor = supervisor; mDiagnostics = diagnostics;
         if (registry == null || adapter == null || policy == null || authority == null) throw new IllegalArgumentException("Missing job service dependency");
         if (launchWorkers < 1 || launchWorkers > JobIoPool.MAX_JOBS) throw new IllegalArgumentException("Invalid launcher count");
         mRegistry = registry; mAdapter = adapter; mPolicy = policy; mAuthority = authority;
@@ -126,7 +139,7 @@ public final class JobCoordinator {
                 try { allowed = mPolicy.authorizeReplay(spec, authorizationEpoch); }
                 catch (SecurityException e) { return new StartResult(StartStatus.DENIED, null); }
                 catch (RuntimeException e) { return new StartResult(StartStatus.UNAVAILABLE, null); }
-                return allowed ? new StartResult(StartStatus.REPLAY, replay.entry.record().snapshot(), replay.entry.output().offsets()) :
+                return allowed ? new StartResult(StartStatus.REPLAY, replay.snapshot(), replay.offsets()) :
                     new StartResult(StartStatus.DENIED, null);
             }
         }
@@ -155,8 +168,8 @@ public final class JobCoordinator {
                 }
                 StartStatus status = admission.status == JobRegistry.Status.REPLAY ? StartStatus.REPLAY :
                     admission.status == JobRegistry.Status.CONFLICT ? StartStatus.CONFLICT : StartStatus.LIMIT_REACHED;
-                return admission.entry == null ? new StartResult(status, null) :
-                    new StartResult(status, admission.entry.record().snapshot(), admission.entry.output().offsets());
+                return admission.snapshot() == null ? new StartResult(status, null) :
+                    new StartResult(status, admission.snapshot(), admission.offsets());
             }
             Work work = new Work(admission.entry, spec, resolution, lease, heavy ? mAdmission.newTicket(resources) : null);
             mWork.put(admission.entry.record().snapshot().id, work);
@@ -179,6 +192,19 @@ public final class JobCoordinator {
         if (work.done || work.claimed) return;
         try { mLaunchers.execute(work); }
         catch (RejectedExecutionException e) { work.failQueued(); }
+    }
+
+    /**
+     * PIDs of the unfinished children this coordinator owns, for process views. These are trusted roots: each was created by
+     * this service's own launcher. Observation only; nothing here authorizes a signal.
+     */
+    public synchronized java.util.Set<Integer> ownedRootPids() {
+        java.util.Set<Integer> pids = new java.util.HashSet<>();
+        for (Work work : mWork.values()) {
+            Integer pid = work.control.ownedPid();
+            if (pid != null) pids.add(pid);
+        }
+        return pids;
     }
 
     /** One-based place in the resource admission queue, or 0 when the job is not waiting for resources. */
@@ -350,7 +376,10 @@ public final class JobCoordinator {
              ResourceAdmissionController.Ticket ticket) {
             this.entry = entry; this.spec = spec; this.resolution = resolution; this.lease = lease; this.ticket = ticket;
             this.control = OwnedProcessControl.forAndroid(entry.record(), mTimers, CANCEL_GRACE_MILLIS, mAdapter.ownsChildIdentity());
-            // The reservation is released by whichever path completes the job, and only once.
+            // Evidence first, while the supervisor still holds the job's last samples; then the reservation, whichever path
+            // completes the job, and each only once.
+            final JobResourcePolicy policy = spec.resources();
+            if (mDiagnostics != null) control.onCompleted(() -> mDiagnostics.finished(entry.record(), policy));
             if (ticket != null) control.onCompleted(() -> mAdmission.release(ticket));
         }
         @Override public void run() {
@@ -359,6 +388,7 @@ public final class JobCoordinator {
                 claimed = true;
                 if (!entry.record().begin()) { failQueued(); return; }
             }
+            if (mDiagnostics != null) mDiagnostics.started(entry.record(), spec.resources());
             try {
                 Resolution current = mPolicy.authorizeAndResolve(spec, entry.record().snapshot().authorizationEpoch);
                 if (current == null || !Objects.equals(current.executable, resolution.executable) ||

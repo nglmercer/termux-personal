@@ -504,4 +504,21 @@
     <string name="compat_overview_title">Compatibility overview</string>
     <string name="compat_network_no_recent">No recent Android network observation is available.</string>
     <string name="compat_network_recent">When this dialog opened, the last example.com test was %1$s seconds old: DNS %2$s; HTTPS %3$s. This snapshot can expire or the network can change.</string>
+
+    <string name="jobs_history">History</string>
+    <string name="jobs_history_empty">No finished managed jobs are recorded.</string>
+    <string name="jobs_history_title">Managed job history</string>
+    <string name="jobs_detail_resources">Resources: profile %1$s, now %2$s, peak %3$s, CPU %4$s, processes %5$s</string>
+    <string name="jobs_detail_queue">Waiting for resources: position %1$d</string>
+    <string name="jobs_detail_reason">Ended because: %1$s (confidence %2$s)</string>
+    <string name="jobs_detail_inferred">Inferred, not proven: %1$s</string>
+    <string name="jobs_detail_unavailable">Not available: %1$s</string>
+    <string name="jobs_detail_detached">%1$d process(es) may have detached from this job and may still be running. They are not stopped.</string>
+    <string name="jobs_export">Share diagnostics</string>
+    <string name="jobs_export_title">Share diagnostic report</string>
+    <string name="jobs_export_message">The report has device capabilities, job records and termination evidence, with secrets redacted by pattern. Process output is not included unless you choose to. Output can hold private data that no filter can recognise.</string>
+    <string name="jobs_export_without_output">Without output</string>
+    <string name="jobs_export_with_output">Include output</string>
+    <string name="jobs_export_failed">Could not build the report.</string>
+    <string name="jobs_unknown">unknown</string>
 </resources>

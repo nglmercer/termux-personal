@@ -48,9 +48,26 @@ public final class JobResourceSupervisor implements AutoCloseable {
         public final Double cpuPercent;
         public final Integer processCount;
         public final boolean incomplete, memorySoftExceeded, identityLost;
-        private Metrics(Long rss, Long peak, Double cpu, Integer count, boolean incomplete, boolean exceeded, boolean lost) {
+        /** Device state at this job's most recent sample; null when no reading was available. */
+        public final Long availableBytesAtLastSample, totalBytesAtLastSample;
+        public final Boolean androidLowMemoryAtLastSample;
+        public final PressureTracker.Level pressureAtLastSample;
+        /** Number of samples taken of this job; zero means nothing was ever observed. */
+        public final int samples;
+        /**
+         * Processes that were once part of the job's tree and are still alive but no longer descend from its root (for
+         * example reparented to init after their parent exited, or after setsid). Possibly detached and possibly still
+         * running, never proven to belong to the job, and never signalled by the supervisor. Bounded.
+         */
+        public final List<Integer> orphanPossiblePids;
+        private Metrics(Long rss, Long peak, Double cpu, Integer count, boolean incomplete, boolean exceeded, boolean lost,
+                        Long available, Long total, Boolean lowMemory, PressureTracker.Level pressure, int samples,
+                        List<Integer> orphans) {
+            orphanPossiblePids = Collections.unmodifiableList(new ArrayList<>(orphans));
             rssBytes = rss; peakRssBytes = peak; cpuPercent = cpu; processCount = count;
             this.incomplete = incomplete; memorySoftExceeded = exceeded; identityLost = lost;
+            availableBytesAtLastSample = available; totalBytesAtLastSample = total; androidLowMemoryAtLastSample = lowMemory;
+            pressureAtLastSample = pressure; this.samples = samples;
         }
     }
 
@@ -66,6 +83,7 @@ public final class JobResourceSupervisor implements AutoCloseable {
     /** Notified once per tracked job when it reaches a terminal state, with the last metrics seen. */
     public interface FinishListener { void finished(String jobId, Metrics metrics, List<Event> events); }
 
+    static final int MAX_KNOWN = 256;
     static final int MAX_EVENTS = 256, MAX_FINISHED = 32, MAX_EVENTS_PER_JOB = 32;
     static final long ACTIVE_INTERVAL_MILLIS = 2000, PRESSURE_INTERVAL_MILLIS = 1000, GUARD_COOLDOWN_MILLIS = 30_000;
     static final int GUARD_CONSECUTIVE_SAMPLES = 2;
@@ -188,7 +206,7 @@ public final class JobResourceSupervisor implements AutoCloseable {
             synchronized (this) {
                 level = mTracker.update(reading);
                 long now = mSampler.monotonicMillis();
-                if (processes != null) for (Tracked tracked : mTracked.values()) tracked.sample(processes, mSampler, now);
+                if (processes != null) for (Tracked tracked : mTracked.values()) tracked.sample(processes, mSampler, now, reading, level);
                 evaluate(level, now);
                 pruneFinished(deliveries);
                 boolean idle = mTracked.isEmpty() && mAdmission.queuedCount() == 0 && mAdmission.activeCount() == 0;
@@ -276,6 +294,13 @@ public final class JobResourceSupervisor implements AutoCloseable {
         Double cpu;
         Integer count;
         boolean incomplete, identityLost;
+        Long lastAvailable, lastTotal;
+        Boolean lastLow;
+        PressureTracker.Level lastLevel;
+        int samples;
+        /** pid -> start ticks of every process ever seen in the tree (bounded), to tell a reparented survivor from an exited one. */
+        final Map<Integer, Long> known = new LinkedHashMap<>();
+        List<Integer> orphans = new ArrayList<>();
 
         Tracked(JobRecord record, OwnedProcessControl control, OwnedChildProcess process, JobResourcePolicy policy, long now) {
             this.record = record; this.control = control; this.pid = process.pid(); this.policy = policy;
@@ -286,8 +311,11 @@ public final class JobResourceSupervisor implements AutoCloseable {
 
         boolean exceededSoft(long now) { return policy.memorySoftBytes() != 0 && rss >= policy.memorySoftBytes(); }
 
-        void sample(ProcessSnapshot snapshot, Sampler sampler, long now) {
+        void sample(ProcessSnapshot snapshot, Sampler sampler, long now, PressureTracker.Reading reading, PressureTracker.Level level) {
             if (identityLost) return;
+            samples++;
+            lastAvailable = reading == null ? null : reading.availableBytes; lastTotal = reading == null ? null : reading.totalBytes;
+            lastLow = reading == null ? null : reading.androidLowMemory; lastLevel = level;
             incomplete = snapshot.incomplete;
             Map<Integer, ProcessSnapshot.Entry> byPid = new HashMap<>();
             Map<Integer, List<ProcessSnapshot.Entry>> children = new HashMap<>();
@@ -314,6 +342,17 @@ public final class JobResourceSupervisor implements AutoCloseable {
                 List<ProcessSnapshot.Entry> kids = children.get(entry.pid);
                 if (kids != null) for (ProcessSnapshot.Entry kid : kids) pending.addLast(kid);
             }
+            // Members seen earlier that still exist (same start time) but fell out of the tree are possibly detached.
+            for (Iterator<Map.Entry<Integer, Long>> it = known.entrySet().iterator(); it.hasNext();) {
+                Map.Entry<Integer, Long> member = it.next();
+                ProcessSnapshot.Entry now2 = byPid.get(member.getKey());
+                if (now2 == null || now2.startTicks != member.getValue()) it.remove(); // exited, or the PID was recycled
+            }
+            for (ProcessSnapshot.Entry entry : snapshot.visibleEntries)
+                if (seen.contains(entry.pid) && known.size() < MAX_KNOWN) known.put(entry.pid, entry.startTicks);
+            List<Integer> detached = new ArrayList<>();
+            for (Integer pidKey : known.keySet()) if (!seen.contains(pidKey) && detached.size() < MAX_KNOWN) detached.add(pidKey);
+            orphans = detached;
             Long bytes = pages < 0 || pages > Long.MAX_VALUE / sampler.pageSizeBytes() ? null : pages * sampler.pageSizeBytes();
             rss = bytes == null ? -1 : bytes;
             if (bytes != null && bytes > peakRss) peakRss = bytes;
@@ -327,7 +366,8 @@ public final class JobResourceSupervisor implements AutoCloseable {
 
         Metrics metrics() {
             return new Metrics(rss < 0 ? null : rss, peakRss < 0 ? null : peakRss, cpu, count, incomplete,
-                policy.memorySoftBytes() != 0 && peakRss >= policy.memorySoftBytes(), identityLost);
+                policy.memorySoftBytes() != 0 && peakRss >= policy.memorySoftBytes(), identityLost,
+                lastAvailable, lastTotal, lastLow, lastLevel, samples, orphans);
         }
     }
 }

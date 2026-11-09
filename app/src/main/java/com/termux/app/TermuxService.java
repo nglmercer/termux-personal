@@ -106,6 +106,8 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
     private final com.termux.app.control.jobs.JobAuthority mJobAuthority = new com.termux.app.control.jobs.JobAuthority();
     private final Object mJobLock = new Object();
     private com.termux.app.control.jobs.JobCoordinator mJobCoordinator;
+    private com.termux.app.control.jobs.JobHistoryStore mJobHistory;
+    private com.termux.app.control.jobs.JobResourceSupervisor mJobSupervisor;
     /** Process listing and workspace store are created once per service on the start worker, under their own lock. */
     private final Object mDomainLock = new Object();
     private com.termux.app.control.process.ProcessService mProcessService;
@@ -971,7 +973,7 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
 
     /**
      * Owned processes are the session shells. Their PIDs are read under the service lock for a moment; the sample
-     * itself is read from /proc on the worker. No task roots exist yet, so task and owned views report session shells.
+     * itself is read from /proc on the worker. Task roots are the running managed-job children.
      */
     private com.termux.app.control.process.ProcessService processServiceForWorker() {
         synchronized (mDomainLock) {
@@ -990,7 +992,11 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
                         }
                         return pids;
                     }
-                    @Override public java.util.Set<Integer> taskRoots() { return java.util.Collections.emptySet(); }
+                    /** Trusted roots: children this service's own launcher created for managed jobs. */
+                    @Override public java.util.Set<Integer> taskRoots() {
+                        com.termux.app.control.jobs.JobCoordinator jobs = getJobCoordinatorIfCreated();
+                        return jobs == null ? java.util.Collections.<Integer>emptySet() : jobs.ownedRootPids();
+                    }
                 });
             return mProcessService;
         }
@@ -1059,8 +1065,13 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
             com.termux.app.control.jobs.ResourceAdmissionController admission = new com.termux.app.control.jobs.ResourceAdmissionController();
             com.termux.app.control.jobs.JobResourceSupervisor supervisor =
                 com.termux.app.control.jobs.JobResourceSupervisor.forAndroid(this, admission);
+            // Persistent, bounded history in app-private storage. Opening it recovers jobs that were unfinished when the
+            // previous service died as LOST; nothing is reattached or signalled.
+            com.termux.app.control.jobs.JobHistoryStore history = jobHistoryLocked();
             mJobCoordinator = new com.termux.app.control.jobs.JobCoordinator(registry,
-                new com.termux.app.control.jobs.AppShellJobAdapter(this), policy, mJobAuthority, admission, supervisor);
+                new com.termux.app.control.jobs.AppShellJobAdapter(this), policy, mJobAuthority, admission, supervisor,
+                new com.termux.app.control.jobs.JobDiagnostics(history, supervisor, android.os.Build.VERSION.SDK_INT));
+            mJobSupervisor = supervisor;
             return mJobCoordinator;
         }
     }
@@ -1070,6 +1081,37 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
             throw new IllegalStateException("Workspace store must load off the main thread");
         return workspaceRepositoryForWorker();
+    }
+
+    /** Opens the history once per service lifetime; the caller holds {@code mJobLock} and is off the main thread (file I/O). */
+    private com.termux.app.control.jobs.JobHistoryStore jobHistoryLocked() {
+        if (mJobHistory == null) {
+            com.termux.app.control.jobs.JobHistoryStore history = new com.termux.app.control.jobs.JobHistoryStore(
+                new java.io.File(getFilesDir(), "resource-jobs"));
+            // Recovery marks unfinished records LOST: correct here because no job of this service lifetime exists yet.
+            history.open();
+            mJobHistory = history;
+        }
+        return mJobHistory;
+    }
+
+    /** The persistent history for the app's own UI, opening it if needed. File I/O: call off the main thread. */
+    public com.termux.app.control.jobs.JobHistoryStore jobHistoryForUi() {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
+            throw new IllegalStateException("Job history must load off the main thread");
+        synchronized (mJobLock) { return jobHistoryLocked(); }
+    }
+
+    /** Persistent job history if the job service was created in this service lifetime; null otherwise. Reads are file I/O. */
+    @androidx.annotation.Nullable
+    public com.termux.app.control.jobs.JobHistoryStore getJobHistoryIfCreated() {
+        synchronized (mJobLock) { return mJobHistory; }
+    }
+
+    /** Resource supervisor if the job service was created in this service lifetime; null otherwise. */
+    @androidx.annotation.Nullable
+    public com.termux.app.control.jobs.JobResourceSupervisor getJobSupervisorIfCreated() {
+        synchronized (mJobLock) { return mJobSupervisor; }
     }
 
     /** The job coordinator if local control ever created one in this service lifetime, for the app's own UI. */

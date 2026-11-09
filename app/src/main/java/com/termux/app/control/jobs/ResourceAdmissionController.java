@@ -88,7 +88,7 @@ public final class ResourceAdmissionController {
 
     /**
      * Admits immediately (GRANTED: the caller proceeds), queues the job and runs {@code onGrant} later (QUEUED), or
-     * refuses. A ticket is submitted at most once.
+     * refuses. A ticket is admitted or queued at most once; one refused with QUEUE_FULL may be submitted again.
      */
     public Result submit(Ticket ticket, Runnable onGrant) {
         if (ticket == null || onGrant == null) throw new IllegalArgumentException("Invalid submission");
@@ -96,7 +96,7 @@ public final class ResourceAdmissionController {
         synchronized (this) {
             if (ticket.mState != Ticket.State.NEW) throw new IllegalStateException("Ticket already submitted");
             if (mQueue.isEmpty() && canAdmit(ticket)) { activate(ticket); result = Result.GRANTED; }
-            else if (mQueue.size() >= mConfig.maxQueued) { ticket.mState = Ticket.State.RELEASED; result = Result.QUEUE_FULL; }
+            else if (mQueue.size() >= mConfig.maxQueued) result = Result.QUEUE_FULL; // the ticket stays NEW: a later retry is allowed
             else { ticket.mState = Ticket.State.QUEUED; ticket.mOnGrant = onGrant; mQueue.addLast(ticket); result = Result.QUEUED; }
         }
         return result;
