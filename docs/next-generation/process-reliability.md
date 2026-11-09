@@ -57,6 +57,10 @@ Verified on the host: `SessionExitStatusTest` (0, 7, 130, 137, 139, −9, −11,
 | activity in the background (home screen), `sleep 8; exit 5` | `exit code 5` |
 | activity destroyed (developer option *Don't keep activities*, the activity record showed `app=null`), `sleep 8; exit 3` | `exit code 3`, recorded through the service client |
 | *Copy*, pasted into `cat` | only the fixed header lines, `android api: 36` and one `UTC time  status` line per result |
+| controlled child (a C program built on the phone) run as `./crash segv` from a shell | the shell printed `139` (its own 128+11 report) and stayed alive; **no entry** |
+| the same child as the session's root, `exec ~/tc-walk/crash segv` in a dedicated session | `signal 11 (SIGSEGV)` from a real null dereference |
+| `exec ~/tc-walk/crash abort` | `signal 6 (SIGABRT)` |
+| `exec ~/tc-walk/crash 137` | `exit code 137`, not reported as `SIGKILL` |
 
 The developer option and the preference were restored afterwards. Not in scope: observing each command inside a shell, a persistent session history, and attributing a signal to its sender.
 
