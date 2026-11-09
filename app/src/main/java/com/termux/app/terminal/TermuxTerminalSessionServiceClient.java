@@ -21,6 +21,12 @@ public class TermuxTerminalSessionServiceClient extends TermuxTerminalSessionCli
         this.mService = service;
     }
 
+    /** No activity is bound: only record the result (when enabled); removal and plugin results are unchanged. */
+    @Override
+    public void onSessionFinished(@NonNull TerminalSession finishedSession) {
+        mService.recordSessionExit(finishedSession);
+    }
+
     @Override
     public void setTerminalShellPid(@NonNull TerminalSession terminalSession, int pid) {
         TermuxSession termuxSession = mService.getTermuxSessionForTerminalSession(terminalSession);

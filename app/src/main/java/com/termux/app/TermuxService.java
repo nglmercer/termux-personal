@@ -20,6 +20,7 @@ import androidx.annotation.Nullable;
 
 import com.termux.R;
 import com.termux.app.event.SystemEventReceiver;
+import com.termux.app.terminal.SessionExitRegistry;
 import com.termux.app.terminal.TermuxTerminalSessionActivityClient;
 import com.termux.app.terminal.TermuxTerminalSessionServiceClient;
 import com.termux.shared.termux.plugins.TermuxPluginUtils;
@@ -87,6 +88,9 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
      * that does not hold activity references and only a service reference.
      */
     private final TermuxTerminalSessionServiceClient mTermuxTerminalSessionServiceClient = new TermuxTerminalSessionServiceClient(this);
+
+    /** Opt-in, in-memory results of finished sessions; shared by both session clients and lost with the service. */
+    private final SessionExitRegistry mSessionExitRegistry = new SessionExitRegistry();
 
     /**
      * Termux app shared properties manager, loaded from termux.properties
@@ -722,6 +726,19 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
 
         return index;
     }
+
+    /**
+     * Called by either session client when a session's root process has ended, before the session may be removed.
+     * Records only the decoded exit status, and only when the user enabled session exit results.
+     */
+    public void recordSessionExit(@NonNull TerminalSession finishedSession) {
+        if (finishedSession.isRunning()) return; // only the root process ending is a session exit
+        TermuxAppSharedPreferences preferences = TermuxAppSharedPreferences.build(this);
+        if (preferences == null || !preferences.areSessionExitDiagnosticsEnabled()) return;
+        mSessionExitRegistry.record(finishedSession.mHandle, finishedSession.getExitStatus(), System.currentTimeMillis());
+    }
+
+    @NonNull public SessionExitRegistry getSessionExitRegistry() { return mSessionExitRegistry; }
 
     /** Callback received when a {@link TermuxSession} finishes. */
     @Override

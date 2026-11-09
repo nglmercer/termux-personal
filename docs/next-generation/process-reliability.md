@@ -40,6 +40,34 @@ See [resource-policy.md](resource-policy.md) for semantics.
 
 Device-aware resource policy, workspace profiles and per-task resources, managed workspace services with restart policies, workspace backup and restore, port observation and loopback proxies, and the `resource.*`, `job.resource/history/diagnostics/processes` and `workspace.service/backup.*` methods with CLI, Python and TypeScript support. See [resource-policy.md](resource-policy.md).
 
+## Interactive session exit results (issue #10, partial)
+
+Settings → Debugging → *Session Exit Results* (off by default) keeps, in the service's memory, how the **root process** of each terminal session ended, usually the shell. Both session clients (with and without a bound activity) hand the finished session to one bounded registry in `TermuxService` before any automatic close, so a session that closes itself on exit 0 or 130 still leaves its result. The context menu then offers *Session exit results*, newest first, with an explicit *Copy* button.
+
+* The status comes from the existing `waitpid` path (`JNI.waitFor`, `TerminalSession.getExitStatus()`); the JNI ABI is unchanged. `SessionExitStatus` decodes it: the unavailable sentinel first (so it is never negated), a value `>= 0` as an exit code, any other negative value as a signal with its Linux name when it has one (`signal 9 (SIGKILL)`) and only the number otherwise. Exit code 137 stays exit code 137 and 139 stays 139: they are never turned into `SIGKILL` or `SIGSEGV`. No cause is inferred; out-of-memory, the phantom-process killer or any sender is never claimed.
+* Only a session exit is recorded. A command that ends, even by a signal, while its shell keeps running produces no entry, because no session ended. To observe a particular program, either run it as a managed job (its own exit code, signal and termination evidence; see the walkthrough in [tools/termux-control/README.md](../../tools/termux-control/README.md)) or reproduce it deliberately in a dedicated session with `exec PROGRAM ARGS`, so the program becomes the session's root process. With `exec` the session ends when the program ends.
+* At most 32 results, deduplicated by the session's random handle, with no reference to a session or an Activity. Nothing is persisted: results are lost when the service stops or is killed, and nothing is recorded while the option is off. The copied text has only the UTC time and status of each result, fixed explanation lines and the Android API level: no session title or name, command, arguments, environment, directory, input or transcript. No job IDs are created; the job history is not used.
+* The visible `[Process completed (signal N) - press Enter]` line, automatic close, plugin result processing and cleanup are unchanged.
+
+Verified on the host: `SessionExitStatusTest` (0, 7, 130, 137, 139, −9, −11, −15, unknown signals and the sentinel), `SessionExitRegistryTest` (capacity, deduplication, contents of the copied text) and `scripts/test-headless-pty.sh`, which now also runs real PTY root processes that `exit 137`, are killed by `SIGKILL` and `SIGSEGV`, and a shell whose child is killed while the shell exits 0 (reported as exit code 0). Verified by hand on 2026-11-09 over ADB on the POCO X3 Pro (`vayu`, Android 16 / API 36, ROM `BP4A.251205.006`, `arm64-v8a`), debug build of this branch installed with `adb install -r`:
+
+| Case | Observed |
+|---|---|
+| option off, a session ends with `exit 7` | no *Session exit results* entry in the context menu |
+| option on, foreground, `exit 7` | `exit code 7`; the session stays with `[Process completed (code 7) - press Enter]` as before |
+| foreground, `kill -9 $$` | `signal 9 (SIGKILL)` |
+| foreground, `exit` (closes itself on exit 0) | `exit code 0` kept after the session was removed |
+| `sleep 100` interrupted with Ctrl+C, shell still alive | no entry |
+| activity in the background (home screen), `sleep 8; exit 5` | `exit code 5` |
+| activity destroyed (developer option *Don't keep activities*, the activity record showed `app=null`), `sleep 8; exit 3` | `exit code 3`, recorded through the service client |
+| *Copy*, pasted into `cat` | only the fixed header lines, `android api: 36` and one `UTC time  status` line per result |
+| controlled child (a C program built on the phone) run as `./crash segv` from a shell | the shell printed `139` (its own 128+11 report) and stayed alive; **no entry** |
+| the same child as the session's root, `exec ~/tc-walk/crash segv` in a dedicated session | `signal 11 (SIGSEGV)` from a real null dereference |
+| `exec ~/tc-walk/crash abort` | `signal 6 (SIGABRT)` |
+| `exec ~/tc-walk/crash 137` | `exit code 137`, not reported as `SIGKILL` |
+
+The developer option and the preference were restored afterwards. Not in scope: observing each command inside a shell, a persistent session history, and attributing a signal to its sender.
+
 ## Not implemented yet
 
 A working isolated execution backend: only the abstraction and capability detection exist, and the VM is reported as unsupported (see [execution-backend.md](execution-backend.md)). The jobs dialog was exercised by hand on one device (see below); it has no automated UI test, and other devices were not tried.

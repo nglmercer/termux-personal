@@ -180,6 +180,13 @@ public final class TermuxPreferenceConstants {
         public static final String KEY_CRASH_REPORT_NOTIFICATIONS_ENABLED = "crash_report_notifications_enabled";
         public static final boolean DEFAULT_VALUE_CRASH_REPORT_NOTIFICATIONS_ENABLED = true;
 
+        /**
+         * Defines the key for whether the exit code or signal of the root process of finished terminal sessions is kept
+         * in memory for the service lifetime and offered for viewing and copying. Off by default.
+         */
+        public static final String KEY_SESSION_EXIT_DIAGNOSTICS_ENABLED = "session_exit_diagnostics_enabled";
+        public static final boolean DEFAULT_VALUE_SESSION_EXIT_DIAGNOSTICS_ENABLED = false;
+
     }
 
 

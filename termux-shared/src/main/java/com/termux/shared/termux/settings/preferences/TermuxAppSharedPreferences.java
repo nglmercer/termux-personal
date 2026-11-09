@@ -258,4 +258,14 @@ public class TermuxAppSharedPreferences extends AppSharedPreferences {
         SharedPreferenceUtils.setBoolean(mSharedPreferences, TERMUX_APP.KEY_CRASH_REPORT_NOTIFICATIONS_ENABLED, value, false);
     }
 
+
+
+    public boolean areSessionExitDiagnosticsEnabled() {
+        return SharedPreferenceUtils.getBoolean(mSharedPreferences, TERMUX_APP.KEY_SESSION_EXIT_DIAGNOSTICS_ENABLED, TERMUX_APP.DEFAULT_VALUE_SESSION_EXIT_DIAGNOSTICS_ENABLED);
+    }
+
+    public void setSessionExitDiagnosticsEnabled(boolean value) {
+        SharedPreferenceUtils.setBoolean(mSharedPreferences, TERMUX_APP.KEY_SESSION_EXIT_DIAGNOSTICS_ENABLED, value, false);
+    }
+
 }

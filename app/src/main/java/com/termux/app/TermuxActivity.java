@@ -220,6 +220,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private static final int CONTEXT_MENU_JOBS = 16;
     private static final int CONTEXT_MENU_FILES = 17;
     private static final int CONTEXT_MENU_WORKSPACES = 18;
+    private static final int CONTEXT_MENU_SESSION_EXITS = 19;
     private static final java.util.concurrent.atomic.AtomicBoolean COMPAT_BROWSER_TEST_BUSY = new java.util.concurrent.atomic.AtomicBoolean();
     private static final java.util.concurrent.atomic.AtomicReference<String> COMPAT_BROWSER_TEST_RESULT = new java.util.concurrent.atomic.AtomicReference<>();
     private static final java.util.concurrent.atomic.AtomicBoolean COMPAT_LOOPBACK_BUSY = new java.util.concurrent.atomic.AtomicBoolean();
@@ -806,6 +807,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         menu.add(Menu.NONE, CONTEXT_MENU_IMPORT_IMAGE, Menu.NONE, R.string.action_import_image).setEnabled(currentSession.isRunning());
         menu.add(Menu.NONE, CONTEXT_MENU_PROCESS_SNAPSHOT, Menu.NONE, R.string.action_process_snapshot);
         menu.add(Menu.NONE, CONTEXT_MENU_JOBS, Menu.NONE, R.string.action_jobs);
+        if (mPreferences.areSessionExitDiagnosticsEnabled())
+            menu.add(Menu.NONE, CONTEXT_MENU_SESSION_EXITS, Menu.NONE, R.string.action_session_exits);
         menu.add(Menu.NONE, CONTEXT_MENU_FILES, Menu.NONE, R.string.action_files);
         menu.add(Menu.NONE, CONTEXT_MENU_WORKSPACES, Menu.NONE, R.string.action_workspaces);
         menu.add(Menu.NONE, CONTEXT_MENU_SELECT_URL_ID, Menu.NONE, R.string.action_select_url);
@@ -851,6 +854,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                 return true;
             case CONTEXT_MENU_JOBS:
                 showJobs();
+                return true;
+            case CONTEXT_MENU_SESSION_EXITS:
+                showSessionExits();
                 return true;
             case CONTEXT_MENU_FILES:
                 showFiles("home", "");
@@ -1391,6 +1397,28 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         new AlertDialog.Builder(this).setTitle(R.string.action_diagnostics).setMessage(info.toString())
             .setNeutralButton(R.string.compat_title, (d, w) -> showCompatibilityMenu())
             .setPositiveButton(android.R.string.ok, null).show();
+    }
+
+    /** Opt-in results of sessions whose root process ended; copying is an explicit action and carries only minimal data. */
+    private void showSessionExits() {
+        TermuxService service = getTermuxService();
+        if (service == null) return;
+        java.util.List<com.termux.app.terminal.SessionExitRegistry.Entry> entries = service.getSessionExitRegistry().recent();
+        StringBuilder message = new StringBuilder(getString(R.string.session_exits_note));
+        if (entries.isEmpty()) message.append("\n\n").append(getString(R.string.session_exits_empty));
+        else {
+            message.append("\n");
+            for (com.termux.app.terminal.SessionExitRegistry.Entry entry : entries)
+                message.append("\n").append(com.termux.app.terminal.SessionExitRegistry.summary(entry));
+        }
+        AlertDialog.Builder builder = new AlertDialog.Builder(this).setTitle(R.string.action_session_exits).setMessage(message.toString())
+            .setPositiveButton(android.R.string.ok, null);
+        if (!entries.isEmpty()) {
+            String report = com.termux.app.terminal.SessionExitRegistry.report(entries, Build.VERSION.SDK_INT);
+            builder.setNeutralButton(R.string.session_exits_copy, (dialog, which) ->
+                com.termux.shared.interact.ShareUtils.copyTextToClipboard(this, report, getString(R.string.session_exits_copied)));
+        }
+        builder.show();
     }
 
     private void showCompatibilityMenu() {
