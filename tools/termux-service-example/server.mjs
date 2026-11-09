@@ -73,7 +73,7 @@ server.on("upgrade", (req, socket) => {
     socket.end(`HTTP/1.1 ${refused || 400} Refused\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
     return;
   }
-  const accept = createHash("sha1").update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC11B65").digest("base64");
+  const accept = createHash("sha1").update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
   const proto = (req.headers["sec-websocket-protocol"] || "").split(",").map(s => s.trim()).find(p => p.startsWith("termux.bearer."));
   socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
     `Sec-WebSocket-Accept: ${accept}\r\n` + (proto ? `Sec-WebSocket-Protocol: ${proto}\r\n` : "") + "\r\n");

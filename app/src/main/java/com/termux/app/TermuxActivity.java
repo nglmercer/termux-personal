@@ -1258,7 +1258,30 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         if (workspace.available) builder.setPositiveButton(R.string.workspaces_open_terminal, (dialog, which) ->
             loadInBackground(() -> service.workspaceRepositoryForUi().directory(workspace.id).getPath(),
                 directory -> mTermuxTerminalSessionActivityClient.addNewSessionIn(directory, workspace.name)));
+        java.util.List<com.termux.app.control.workspace.WorkspaceRepository.ServiceDefinition> web = new java.util.ArrayList<>();
+        for (com.termux.app.control.workspace.WorkspaceRepository.ServiceDefinition definition : workspace.services)
+            if (!definition.ports.isEmpty()) web.add(definition);
+        if (!web.isEmpty()) builder.setNeutralButton(R.string.workspaces_services, (dialog, which) -> showServiceOpeners(workspace, web));
         builder.show();
+    }
+
+    /** An explicit choice per service: the in-app viewer, or the user's browser with the plain loopback address. */
+    private void showServiceOpeners(com.termux.app.control.workspace.WorkspaceRepository.Workspace workspace,
+                                    java.util.List<com.termux.app.control.workspace.WorkspaceRepository.ServiceDefinition> web) {
+        String[] rows = new String[web.size()];
+        for (int i = 0; i < rows.length; i++) rows[i] = web.get(i).id + "  127.0.0.1:" + web.get(i).ports.get(0);
+        new AlertDialog.Builder(this).setTitle(R.string.workspaces_services).setItems(rows, (d, which) -> {
+            com.termux.app.control.workspace.WorkspaceRepository.ServiceDefinition definition = web.get(which);
+            String address = "http://127.0.0.1:" + definition.ports.get(0) + "/";
+            CharSequence[] actions = {getString(R.string.workspaces_service_open_viewer), getString(R.string.workspaces_service_open_browser)};
+            new AlertDialog.Builder(this).setTitle(definition.id).setItems(actions, (d2, action) -> {
+                if (action == 0) startActivity(com.termux.app.viewer.ServiceViewerActivity.intent(this, workspace.id, definition.id));
+                else {
+                    showToast(getString(R.string.workspaces_service_browser_note), true);
+                    ActivityUtils.startActivity(this, new Intent(Intent.ACTION_VIEW, Uri.parse(address)).addCategory(Intent.CATEGORY_BROWSABLE));
+                }
+            }).setNegativeButton(android.R.string.cancel, null).show();
+        }).setNegativeButton(android.R.string.cancel, null).show();
     }
 
     private void showKillSessionDialog(TerminalSession session) {
