@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -93,6 +94,76 @@ int main(void) {
     require(result.signaled && result.signal_number == SIGTERM, "leader reports the terminating signal");
     read_all(child.stdout_read, out, sizeof(out));
     close_child(&child);
+
+    /* Resource limits are applied in the child only. */
+    {
+        struct termux_owned_limits limits = {0};
+        struct rlimit before, after;
+        require(getrlimit(RLIMIT_AS, &before) == 0, "read own address-space limit");
+        limits.address_space_bytes = 512ull * 1024 * 1024; limits.cpu_seconds = 3; limits.nice_level = -1;
+        limits.required = TERMUX_LIMIT_ADDRESS_SPACE | TERMUX_LIMIT_CPU_TIME;
+        char *const show[] = {"sh", "-c", "printf \"%s %s %s\" \"$(ulimit -v)\" \"$(ulimit -t)\" \"$(ulimit -Ht)\"", NULL};
+        require(termux_owned_launch_limited("/bin/sh", "/", show, env, &limits, &child) == 0, "launch with limits");
+        read_all(child.stdout_read, out, sizeof(out));
+        require(termux_owned_wait_exit(child.pid) == 0 && termux_owned_reap(child.pid, &result) == 0, "reap limited child");
+        close_child(&child);
+        require(strcmp(out, "524288 3 8") == 0, "limits are applied in the child (AS in KiB, CPU soft 3 and hard 8)");
+        require(getrlimit(RLIMIT_AS, &after) == 0 && after.rlim_cur == before.rlim_cur && after.rlim_max == before.rlim_max,
+            "the parent's own limits are untouched");
+    }
+    {
+        struct termux_owned_limits limits = {0};
+        limits.nice_level = 7; limits.required = TERMUX_LIMIT_NICE;
+        char *const show[] = {"sh", "-c", "ps -o ni= -p $$ | tr -d ' '", NULL};
+        require(termux_owned_launch_limited("/bin/sh", "/", show, env, &limits, &child) == 0, "launch with nice");
+        read_all(child.stdout_read, out, sizeof(out));
+        require(termux_owned_wait_exit(child.pid) == 0 && termux_owned_reap(child.pid, &result) == 0, "reap nice child");
+        close_child(&child);
+        require(atoi(out) >= 7, "nice level is lowered priority in the child");
+    }
+    {
+        /* RLIMIT_CPU is CPU time: a busy loop gets SIGXCPU, not a wall-clock timeout. */
+        struct termux_owned_limits limits = {0};
+        limits.cpu_seconds = 1; limits.nice_level = -1;
+        char *const spin[] = {"sh", "-c", "while :; do :; done", NULL};
+        require(termux_owned_launch_limited("/bin/sh", "/", spin, env, &limits, &child) == 0, "launch busy loop");
+        require(termux_owned_wait_exit(child.pid) == 0 && termux_owned_reap(child.pid, &result) == 0, "reap busy loop");
+        close_child(&child);
+        require(result.signaled && (result.signal_number == SIGXCPU || result.signal_number == SIGKILL), "CPU limit ends the loop");
+    }
+    {
+        /* A required limit that cannot be applied must stop the job before exec. An unprivileged
+         * process cannot lower its nice value, so ask for a lower one than the caller already has. */
+        if (geteuid() != 0) {
+            /* Hosts differ in RLIMIT_NICE, so pin it: without it, lowering the nice value may be permitted. */
+            struct rlimit nice_limit;
+            require(getrlimit(RLIMIT_NICE, &nice_limit) == 0, "read RLIMIT_NICE");
+            nice_limit.rlim_cur = 0;
+            require(setrlimit(RLIMIT_NICE, &nice_limit) == 0, "forbid raising priority in the test process");
+            errno = 0;
+            require(nice(10) != -1 || errno == 0, "raise the test's own nice value");
+            struct termux_owned_limits limits = {0};
+            limits.nice_level = 2; limits.required = TERMUX_LIMIT_NICE;
+            errno = 0;
+            require(termux_owned_launch_limited("/bin/sh", "/", (char *const[]){"sh", "-c", "exit 0", NULL}, env, &limits, &child) == -1 &&
+                    (errno & TERMUX_LIMIT_FAILURE_FLAG) && ((errno & ~TERMUX_LIMIT_FAILURE_FLAG) == EACCES || (errno & ~TERMUX_LIMIT_FAILURE_FLAG) == EPERM),
+                "a required limit that cannot be applied aborts the launch and is marked as a limit failure");
+            require(child.pid == -1 && child.stdin_write == -1, "failed limit leaves no ownership");
+            limits.required = 0; /* the same limit as best-effort does not block the job */
+            require(termux_owned_launch_limited("/bin/sh", "/", (char *const[]){"sh", "-c", "exit 3", NULL}, env, &limits, &child) == 0,
+                "best-effort limit failure does not block the launch");
+            require(termux_owned_wait_exit(child.pid) == 0 && termux_owned_reap(child.pid, &result) == 0 && result.exit_code == 3,
+                "best-effort child still runs");
+            close_child(&child);
+        }
+        struct termux_owned_limits bad = {0};
+        bad.nice_level = 25; errno = 0;
+        require(termux_owned_launch_limited("/bin/sh", "/", (char *const[]){"sh", NULL}, env, &bad, &child) == -1 && errno == EINVAL,
+            "an out-of-range nice level is rejected before fork");
+        bad.nice_level = -1; bad.required = 64; errno = 0;
+        require(termux_owned_launch_limited("/bin/sh", "/", (char *const[]){"sh", NULL}, env, &bad, &child) == -1 && errno == EINVAL,
+            "unknown required bits are rejected");
+    }
 
     require(termux_owned_signal(child.pid, SIGHUP) == -1 && errno == EINVAL, "only TERM, KILL and INT are accepted");
     printf("managed child launch, wait and group signal passed\n");

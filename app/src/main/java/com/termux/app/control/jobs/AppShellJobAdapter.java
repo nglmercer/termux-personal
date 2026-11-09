@@ -20,6 +20,11 @@ public final class AppShellJobAdapter {
     }
     interface Completion { void finished(Integer exitCode, boolean captureFailed); }
 
+    /** A required resource limit could not be applied, so the job was not started. */
+    static final class LimitApplyFailedException extends IllegalStateException {
+        LimitApplyFailedException() { super("A required resource limit could not be applied"); }
+    }
+
     private final Backend mBackend;
 
     public AppShellJobAdapter(Context context) {
@@ -61,7 +66,7 @@ public final class AppShellJobAdapter {
             if (!completed.compareAndSet(false, true)) return;
             // An accepted stop request decides the outcome even if the child exited first.
             JobRecord.StopReason reason = record.snapshot().stopReason;
-            if (reason == JobRecord.StopReason.CANCEL)
+            if (reason == JobRecord.StopReason.CANCEL || reason == JobRecord.StopReason.RESOURCE_GUARD)
                 record.complete(JobRecord.State.CANCELLED, null, null, System.currentTimeMillis());
             else if (reason == JobRecord.StopReason.TIMEOUT)
                 record.complete(JobRecord.State.TIMED_OUT, null, null, System.currentTimeMillis());
@@ -85,7 +90,9 @@ public final class AppShellJobAdapter {
         } catch (RuntimeException | Error e) {
             entry.capture().discardIfUnstarted();
             if (completed.compareAndSet(false, true))
-                record.complete(JobRecord.State.FAILED, null, JobRecord.Failure.START_FAILED, System.currentTimeMillis());
+                record.complete(JobRecord.State.FAILED, null,
+                    e instanceof LimitApplyFailedException ? JobRecord.Failure.LIMIT_APPLY_FAILED : JobRecord.Failure.START_FAILED,
+                    System.currentTimeMillis());
             if (control != null) control.completed();
             throw e;
         }
@@ -134,8 +141,15 @@ public final class AppShellJobAdapter {
                     return base;
                 }
             };
+            // Limits are resolved against what this device can enforce and applied in the child only.
+            final JobResourcePolicy policy = spec.resources();
+            final ManagedNative.NativeLimits limits = policy == null ? ManagedNative.NativeLimits.NONE :
+                policy.resolve(new JobResourcePolicy.Capabilities(ownsChildIdentity())).nativeLimits;
+            final java.util.concurrent.atomic.AtomicBoolean limitFailure = new java.util.concurrent.atomic.AtomicBoolean();
             AppShell.ManagedLauncher launcher = !ownsChildIdentity() ? null : (argv, environ, directory) -> {
-                OwnedChildProcess process = OwnedChildProcess.launch(argv, environ, directory);
+                final OwnedChildProcess process;
+                try { process = OwnedChildProcess.launch(argv, environ, directory, limits); }
+                catch (OwnedChildProcess.LaunchException e) { if (e.limitFailure()) limitFailure.set(true); throw e; }
                 if (process == null) throw new java.io.IOException("Managed launcher unavailable");
                 return process;
             };
@@ -143,6 +157,7 @@ public final class AppShellJobAdapter {
                 ExecutionCommand result = finished.getExecutionCommand();
                 completion.finished(result.resultData.exitCode, result.isStateFailed());
             }, environment, new HashMap<>(spec.environment()), capture, launcher);
+            if (shell == null && limitFailure.get()) throw new LimitApplyFailedException();
             return shell == null ? null : shell.getProcess();
         }
 

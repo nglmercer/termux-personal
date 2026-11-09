@@ -15,7 +15,9 @@ import java.util.concurrent.TimeUnit;
 
 /** Internal admission and worker orchestration; not an authorization or IPC entry point. */
 public final class JobCoordinator {
-    public enum StartStatus { ACCEPTED, REPLAY, CONFLICT, DENIED, LIMIT_REACHED, UNSUPPORTED, UNAVAILABLE }
+    public enum StartStatus { ACCEPTED, REPLAY, CONFLICT, DENIED, LIMIT_REACHED, UNSUPPORTED, UNAVAILABLE,
+        /** The resource admission queue is full; retry later. Distinct from the fixed record limit. */
+        RESOURCE_LIMITED }
     public enum CancelStatus { ACCEPTED, DENIED, NOT_FOUND, INVALID_REQUEST, FINISHED, ALREADY_REQUESTED, UNSUPPORTED }
     public enum SignalStatus { SENT, DENIED, NOT_FOUND, INVALID_REQUEST, NOT_STARTED, FINISHED, UNSUPPORTED, FAILED }
     public enum ReadStatus { OK, DENIED, NOT_FOUND, INVALID_REQUEST, UNAVAILABLE }
@@ -73,13 +75,28 @@ public final class JobCoordinator {
     private final ThreadPoolExecutor mLaunchers;
     private final ScheduledThreadPoolExecutor mTimers;
     private final Map<String, Work> mWork = new HashMap<>();
+    /** Both optional: without them every job launches as before and nothing is supervised. */
+    private final ResourceAdmissionController mAdmission;
+    private final JobResourceSupervisor mSupervisor;
     private boolean mStopping, mClosed;
 
     public JobCoordinator(JobRegistry registry, AppShellJobAdapter adapter, Policy policy, JobAuthority authority) {
-        this(registry, adapter, new WorkerJobPolicy(policy), authority, JobIoPool.MAX_JOBS);
+        this(registry, adapter, new WorkerJobPolicy(policy), authority, JobIoPool.MAX_JOBS, null, null);
+    }
+
+    /** Jobs that carry a resource policy (other than UNRESTRICTED) go through {@code admission} and are watched by {@code supervisor}. */
+    public JobCoordinator(JobRegistry registry, AppShellJobAdapter adapter, Policy policy, JobAuthority authority,
+                          ResourceAdmissionController admission, JobResourceSupervisor supervisor) {
+        this(registry, adapter, new WorkerJobPolicy(policy), authority, JobIoPool.MAX_JOBS, admission, supervisor);
     }
 
     JobCoordinator(JobRegistry registry, AppShellJobAdapter adapter, Policy policy, JobAuthority authority, int launchWorkers) {
+        this(registry, adapter, policy, authority, launchWorkers, null, null);
+    }
+
+    JobCoordinator(JobRegistry registry, AppShellJobAdapter adapter, Policy policy, JobAuthority authority, int launchWorkers,
+                   ResourceAdmissionController admission, JobResourceSupervisor supervisor) {
+        mAdmission = admission; mSupervisor = supervisor;
         if (registry == null || adapter == null || policy == null || authority == null) throw new IllegalArgumentException("Missing job service dependency");
         if (launchWorkers < 1 || launchWorkers > JobIoPool.MAX_JOBS) throw new IllegalArgumentException("Invalid launcher count");
         mRegistry = registry; mAdapter = adapter; mPolicy = policy; mAuthority = authority;
@@ -120,9 +137,15 @@ public final class JobCoordinator {
         if (resolution == null) return new StartResult(StartStatus.DENIED, null);
         // Never accept a wall timeout that cannot terminate a live Android child safely.
         if (spec.timeoutMillis() != 0 && !mAdapter.ownsChildIdentity()) return new StartResult(StartStatus.UNSUPPORTED, null);
+        // A hard limit that this device cannot enforce is refused up front, never dropped silently.
+        final JobResourcePolicy resources = spec.resources();
+        if (resources != null && resources.resolve(new JobResourcePolicy.Capabilities(mAdapter.ownsChildIdentity())).blocked)
+            return new StartResult(StartStatus.UNSUPPORTED, null);
+        final boolean heavy = mAdmission != null && resources != null && resources.profile() != JobResourcePolicy.Profile.UNRESTRICTED;
         synchronized (this) {
             if (mStopping) return new StartResult(StartStatus.UNAVAILABLE, null);
             if (!mAuthority.allows(lease, JobAuthority.Permission.EXECUTE)) return new StartResult(StartStatus.DENIED, null);
+            if (heavy && !mAdmission.hasRoom()) return new StartResult(StartStatus.RESOURCE_LIMITED, null);
             JobRegistry.Admission admission = mRegistry.admit(spec, authorizationEpoch, 5000);
             if (admission.status != JobRegistry.Status.ACCEPTED) {
                 if (admission.status == JobRegistry.Status.REPLAY) {
@@ -135,14 +158,33 @@ public final class JobCoordinator {
                 return admission.entry == null ? new StartResult(status, null) :
                     new StartResult(status, admission.entry.record().snapshot(), admission.entry.output().offsets());
             }
-            Work work = new Work(admission.entry, spec, resolution, lease);
+            Work work = new Work(admission.entry, spec, resolution, lease, heavy ? mAdmission.newTicket(resources) : null);
             mWork.put(admission.entry.record().snapshot().id, work);
-            try { mLaunchers.execute(work); }
-            catch (RejectedExecutionException e) {
-                work.failQueued();
+            if (work.ticket == null) launch(work);
+            else {
+                ResourceAdmissionController.Result placed = mAdmission.submit(work.ticket, () -> launch(work));
+                if (placed == ResourceAdmissionController.Result.GRANTED) launch(work);
+                else if (placed == ResourceAdmissionController.Result.QUEUED) { if (mSupervisor != null) mSupervisor.wake(); }
+                else if (placed == ResourceAdmissionController.Result.QUEUE_FULL) {
+                    work.failQueued(); // unreachable while the lock orders hasRoom and submit, but never leave a record dangling
+                    return new StartResult(StartStatus.RESOURCE_LIMITED, null);
+                }
             }
             return new StartResult(StartStatus.ACCEPTED, admission.entry.record().snapshot(), admission.entry.output().offsets());
         }
+    }
+
+    /** Hands an admitted job to the bounded launch workers; a job cancelled while it waited is skipped. */
+    private synchronized void launch(Work work) {
+        if (work.done || work.claimed) return;
+        try { mLaunchers.execute(work); }
+        catch (RejectedExecutionException e) { work.failQueued(); }
+    }
+
+    /** One-based place in the resource admission queue, or 0 when the job is not waiting for resources. */
+    public synchronized int queuePosition(String id) {
+        Work work = id == null ? null : mWork.get(id);
+        return work == null || work.ticket == null || mAdmission == null ? 0 : mAdmission.queuePosition(work.ticket);
     }
 
     /** True when running jobs can be cancelled and wall timeouts are accepted. */
@@ -292,6 +334,7 @@ public final class JobCoordinator {
         for (Work work : mWork.values())
             if (!work.done || !JobRecord.isTerminal(work.entry.record().snapshot().state) || !work.entry.capture().isReleased()) return false;
         mClosed = true; mTimers.shutdown(); mRegistry.close(); mWork.clear();
+        if (mSupervisor != null) mSupervisor.close();
         return true;
     }
 
@@ -299,12 +342,16 @@ public final class JobCoordinator {
         final JobRegistry.Entry entry;
         final OwnedProcessControl control;
         final JobAuthority.Lease lease;
+        final ResourceAdmissionController.Ticket ticket;
         JobSpec spec;
         Resolution resolution;
         boolean claimed, done;
-        Work(JobRegistry.Entry entry, JobSpec spec, Resolution resolution, JobAuthority.Lease lease) {
-            this.entry = entry; this.spec = spec; this.resolution = resolution; this.lease = lease;
+        Work(JobRegistry.Entry entry, JobSpec spec, Resolution resolution, JobAuthority.Lease lease,
+             ResourceAdmissionController.Ticket ticket) {
+            this.entry = entry; this.spec = spec; this.resolution = resolution; this.lease = lease; this.ticket = ticket;
             this.control = OwnedProcessControl.forAndroid(entry.record(), mTimers, CANCEL_GRACE_MILLIS, mAdapter.ownsChildIdentity());
+            // The reservation is released by whichever path completes the job, and only once.
+            if (ticket != null) control.onCompleted(() -> mAdmission.release(ticket));
         }
         @Override public void run() {
             synchronized (JobCoordinator.this) {
@@ -325,7 +372,9 @@ public final class JobCoordinator {
                 // Armed before launch so the wall time includes startup; a pending stop applies on attach.
                 if (spec.timeoutMillis() != 0 && !control.scheduleTimeout(spec.timeoutMillis()))
                     throw new IllegalStateException("Job timeout unavailable");
-                mAdapter.launchBegun(entry, spec, current.executable, current.cwd, control);
+                Process process = mAdapter.launchBegun(entry, spec, current.executable, current.cwd, control);
+                if (mSupervisor != null && ticket != null && process instanceof OwnedChildProcess)
+                    mSupervisor.track(entry.record(), control, (OwnedChildProcess) process, spec.resources());
             }
             catch (RuntimeException | Error e) {
                 entry.capture().discardIfUnstarted();

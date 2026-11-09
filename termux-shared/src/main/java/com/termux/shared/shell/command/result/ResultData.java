@@ -19,6 +19,11 @@ public class ResultData implements Serializable {
     public final StringBuilder stdout = new StringBuilder();
     /** The stderr of command. */
     public final StringBuilder stderr = new StringBuilder();
+    /**
+     * Bytes of stdout and stderr that were read from the process but not retained in {@link #stdout}
+     * and {@link #stderr} because the capture bound was reached. Zero for output that was kept whole.
+     */
+    public volatile long stdoutDroppedBytes, stderrDroppedBytes;
     /** The exit code of command. */
     public Integer exitCode;
 
@@ -30,8 +35,14 @@ public class ResultData implements Serializable {
     }
 
 
+    /** Whether any captured output was discarded because it exceeded the capture bound. */
+    public boolean isOutputTruncated() {
+        return stdoutDroppedBytes > 0 || stderrDroppedBytes > 0;
+    }
+
     public void clearStdout() {
         stdout.setLength(0);
+        stdoutDroppedBytes = 0;
     }
 
     public StringBuilder prependStdout(String message) {
@@ -53,6 +64,7 @@ public class ResultData implements Serializable {
 
     public void clearStderr() {
         stderr.setLength(0);
+        stderrDroppedBytes = 0;
     }
 
     public StringBuilder prependStderr(String message) {

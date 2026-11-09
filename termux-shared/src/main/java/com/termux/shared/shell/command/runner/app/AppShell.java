@@ -276,6 +276,8 @@ public final class AppShell {
         }
         STDOUT.join();
         STDERR.join();
+        mExecutionCommand.resultData.stdoutDroppedBytes = STDOUT.getDroppedBytes();
+        mExecutionCommand.resultData.stderrDroppedBytes = STDERR.getDroppedBytes();
         mProcess.destroy();
 
         // Process result

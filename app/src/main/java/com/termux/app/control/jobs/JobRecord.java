@@ -3,8 +3,8 @@ package com.termux.app.control.jobs;
 /** Thread-safe, service-lifetime lifecycle metadata. A PID is observational only. */
 public final class JobRecord {
     public enum State { QUEUED, STARTING, RUNNING, CANCELLING, EXITED, FAILED, CANCELLED, TIMED_OUT, LOST }
-    public enum StopReason { CANCEL, TIMEOUT, SHUTDOWN }
-    public enum Failure { START_FAILED, CAPTURE_FAILED, SERVICE_STOPPED }
+    public enum StopReason { CANCEL, TIMEOUT, SHUTDOWN, RESOURCE_GUARD }
+    public enum Failure { START_FAILED, CAPTURE_FAILED, SERVICE_STOPPED, LIMIT_APPLY_FAILED }
 
     private final String mId, mWorkspaceId;
     private final long mAuthorizationEpoch;
@@ -51,7 +51,7 @@ public final class JobRecord {
             outcome == State.FAILED && exitCode != null && failure != Failure.CAPTURE_FAILED)
             throw new IllegalArgumentException("Invalid terminal metadata");
         if (isTerminal(mState)) return false;
-        if ((outcome == State.CANCELLED && mStopReason != StopReason.CANCEL) ||
+        if ((outcome == State.CANCELLED && mStopReason != StopReason.CANCEL && mStopReason != StopReason.RESOURCE_GUARD) ||
             (outcome == State.TIMED_OUT && mStopReason != StopReason.TIMEOUT))
             throw new IllegalStateException("No matching stop request");
         mState = outcome; mExitCode = exitCode; mFailure = failure; mEndedAt = at;

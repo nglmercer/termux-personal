@@ -32,6 +32,21 @@
     "session.output.resume": {"type": "object", "properties": {"id": {"$ref": "#/$defs/id"}, "token": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}, "required": ["id", "token"], "additionalProperties": false},
     "session.output.read": {"type": "object", "properties": {"id": {"$ref": "#/$defs/id"}, "offset": {"type": "integer", "minimum": 0}, "limit": {"type": "integer", "minimum": 1, "maximum": 65536}}, "required": ["id", "offset", "limit"], "additionalProperties": false},
     "jobId": {"type": "string", "minLength": 1, "maxLength": 128},
+    "jobResources": {
+      "type": "object", "properties": {
+        "profile": {"enum": ["unrestricted", "protected", "balanced", "performance", "custom", null]},
+        "memorySoftBytes": {"type": ["integer", "null"], "minimum": 16777216, "maximum": 1099511627776},
+        "addressSpaceBytes": {"type": ["integer", "null"], "minimum": 67108864, "maximum": 1099511627776},
+        "cpuTimeSeconds": {"type": ["integer", "null"], "minimum": 1, "maximum": 2592000},
+        "maxOutputBytes": {"type": ["integer", "null"], "minimum": 1024, "maximum": 262144},
+        "processConcurrencyHint": {"type": ["integer", "null"], "minimum": 1, "maximum": 16},
+        "niceLevel": {"type": ["integer", "null"], "minimum": 0, "maximum": 19},
+        "onPressure": {"enum": ["warn", "pause_admission", "stop_job", null]},
+        "requireNice": {"type": "boolean"},
+        "applyBuildPreset": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
     "requestId": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$"},
     "job.start": {
       "type": "object", "properties": {
@@ -43,7 +58,8 @@
         "stdin": {"type": "string", "maxLength": 65536},
         "timeoutMs": {"type": "integer", "minimum": 0, "maximum": 86400000},
         "presentation": {"enum": ["foreground", "background"]},
-        "clientRequestId": {"$ref": "#/$defs/requestId"}
+        "clientRequestId": {"$ref": "#/$defs/requestId"},
+        "resources": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/jobResources"}]}
       },
       "required": ["executable", "args"], "additionalProperties": false
     },

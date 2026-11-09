@@ -154,6 +154,55 @@ public class RpcJobDispatcherTest {
         } finally { h.stop(); }
     }
 
+    private static String startWithResources(String resources, String clientRequestId) {
+        return "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"job.start\",\"params\":{\"executable\":\"/bin/echo\",\"args\":[\"hello\"],"
+            + "\"clientRequestId\":\"" + clientRequestId + "\",\"resources\":" + resources + "}}";
+    }
+
+    @Test public void resourcesAreOptionalValidatedAndPartOfTheIdempotencyKey() throws Exception {
+        Harness h = new Harness(new byte[0], false);
+        try {
+            // Absent, null and a best-effort profile all start normally. The harness has two I/O slots, so each job
+            // must finish before the next starts.
+            String id = h.rpc(START, EXECUTE_ONLY).getAsJsonObject("result").getAsJsonObject("job").get("id").getAsString();
+            h.waitTerminal(id);
+            id = h.rpc(startWithResources("null", "r-null"), EXECUTE_ONLY).getAsJsonObject("result").getAsJsonObject("job").get("id").getAsString();
+            h.waitTerminal(id);
+            JsonObject ok = h.rpc(startWithResources("{\"profile\":\"balanced\",\"memorySoftBytes\":1073741824,\"onPressure\":\"warn\","
+                + "\"addressSpaceBytes\":null,\"cpuTimeSeconds\":null}", "r-ok"), EXECUTE_ONLY);
+            assertNotNull(ok.toString(), ok.getAsJsonObject("result"));
+            h.waitTerminal(ok.getAsJsonObject("result").getAsJsonObject("job").get("id").getAsString());
+            // Replay with the same resources returns the same job; different resources under the same key conflict.
+            String same = startWithResources("{\"profile\":\"balanced\"}", "r-same");
+            String first = h.rpc(same, EXECUTE_ONLY).getAsJsonObject("result").getAsJsonObject("job").get("id").getAsString();
+            assertEquals(first, h.rpc(same, EXECUTE_ONLY).getAsJsonObject("result").getAsJsonObject("job").get("id").getAsString());
+            assertEquals("CONFLICT", h.rpc(startWithResources("{\"profile\":\"protected\"}", "r-same"), EXECUTE_ONLY)
+                .getAsJsonObject("error").get("message").getAsString());
+            // Semantic range errors are INVALID_REQUEST; wrong shapes are invalid params.
+            for (String bad : new String[] {"{\"memorySoftBytes\":1}", "{\"memorySoftBytes\":-5}", "{\"memorySoftBytes\":0}",
+                "{\"niceLevel\":20}", "{\"niceLevel\":-1}", "{\"profile\":\"turbo\"}", "{\"onPressure\":\"explode\"}",
+                "{\"maxOutputBytes\":524288}", "{\"processConcurrencyHint\":9999}",
+                "{\"profile\":\"unrestricted\",\"onPressure\":\"stop_job\"}"}) {
+                assertEquals(bad, "INVALID_REQUEST", h.rpc(startWithResources(bad, "r-bad"), EXECUTE_ONLY).getAsJsonObject("error").get("message").getAsString());
+            }
+            for (String shape : new String[] {"\"balanced\"", "[]", "{\"memorySoftBytes\":\"1073741824\"}", "{\"unknown\":1}", "{\"requireNice\":\"yes\"}"}) {
+                assertEquals(shape, -32602, h.rpc(startWithResources(shape, "r-shape"), EXECUTE_ONLY).getAsJsonObject("error").get("code").getAsInt());
+            }
+        } finally { h.stop(); }
+    }
+
+    @Test public void aHardLimitIsRefusedAsUnsupportedWhenChildIdentityIsNotOwned() throws Exception {
+        Harness h = new Harness(new byte[0], false);
+        try {
+            int before = h.launches.get();
+            assertEquals("UNSUPPORTED", h.rpc(startWithResources("{\"addressSpaceBytes\":4294967296}", "r-hard"), EXECUTE_ONLY)
+                .getAsJsonObject("error").get("message").getAsString());
+            assertEquals("UNSUPPORTED", h.rpc(startWithResources("{\"cpuTimeSeconds\":60}", "r-cpu"), EXECUTE_ONLY)
+                .getAsJsonObject("error").get("message").getAsString());
+            assertEquals("nothing was launched without the requested limit", before, h.launches.get());
+        } finally { h.stop(); }
+    }
+
     @Test public void startRequiresExecuteScopeValidParametersAndCurrentConsent() throws Exception {
         Harness h = new Harness(new byte[0], false);
         try {

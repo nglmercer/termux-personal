@@ -2,9 +2,11 @@ package com.termux.app.control.ipc;
 
 import com.google.gson.stream.JsonWriter;
 import com.termux.app.control.ControlCore;
+import com.termux.app.control.jobs.BuildPresets;
 import com.termux.app.control.jobs.JobAuthority;
 import com.termux.app.control.jobs.JobCoordinator;
 import com.termux.app.control.jobs.JobOutputStore;
+import com.termux.app.control.jobs.JobResourcePolicy;
 import com.termux.app.control.jobs.JobRecord;
 import com.termux.app.control.jobs.JobSpec;
 import com.termux.app.control.files.FileService;
@@ -283,12 +285,22 @@ public final class RpcDispatcher {
         JobCoordinator jobs = requireJobs();
         JobAuthority.Lease lease = jobLease(scopes, ControlCore.Scope.JOBS_EXECUTE);
         Map<?, ?> p = parameters(params, "executable", "args", "cwd", "workspaceId", "env", "stdin", "timeoutMs",
-            "presentation", "clientRequestId");
+            "presentation", "clientRequestId", "resources");
         JobSpec spec;
         try {
-            spec = new JobSpec(string(p, "executable"), stringList(p, "args"), optionalString(p, "cwd"),
-                optionalString(p, "workspaceId"), stringMap(p, "env"), optionalStdin(p), longNumberOrDefault(p, "timeoutMs", 0),
-                presentation(p), optionalString(p, "clientRequestId"));
+            JobResourcePolicy resources = resourcePolicy(p);
+            String executable = string(p, "executable");
+            List<String> args = stringList(p, "args");
+            Map<String, String> env = stringMap(p, "env");
+            // Opt-in only: a known build tool gets a worker-count recommendation, and nothing the caller set is overridden.
+            if (resources != null && presetRequested(p)) {
+                BuildPresets.Preview preview = BuildPresets.apply(executable, args, new ArrayList<>(env.keySet()),
+                    resources.effectiveConcurrencyHint(), Runtime.getRuntime().availableProcessors(), 0);
+                args = preview.arguments;
+            }
+            spec = new JobSpec(executable, args, optionalString(p, "cwd"),
+                optionalString(p, "workspaceId"), env, optionalStdin(p), longNumberOrDefault(p, "timeoutMs", 0),
+                presentation(p), optionalString(p, "clientRequestId"), resources);
         } catch (IllegalArgumentException e) {
             throw new DomainError("INVALID_REQUEST");
         }
@@ -305,8 +317,49 @@ public final class RpcDispatcher {
             case DENIED: throw new DomainError("DENIED");
             case LIMIT_REACHED: throw new DomainError("LIMIT_REACHED");
             case UNSUPPORTED: throw new DomainError("UNSUPPORTED");
+            // The reserved v1 code for "a managed resource is exhausted, retry later": the admission queue is full.
+            case RESOURCE_LIMITED: throw new DomainError("RESOURCE_LIMITED");
             default: throw new DomainError("UNAVAILABLE");
         }
+    }
+
+    /**
+     * Optional {@code resources} object of job.start. Absent or null means the historical behavior. Values that are
+     * out of range are rejected as an invalid request, never clamped. A null member means "unset".
+     */
+    private static JobResourcePolicy resourcePolicy(Map<?, ?> p) throws BadParameters {
+        if (!p.containsKey("resources") || p.get("resources") == null) return null;
+        Map<?, ?> r = parameters(p.get("resources"), "profile", "memorySoftBytes", "addressSpaceBytes", "cpuTimeSeconds",
+            "maxOutputBytes", "processConcurrencyHint", "niceLevel", "onPressure", "requireNice", "applyBuildPreset");
+        JobResourcePolicy.Builder builder = JobResourcePolicy.builder();
+        try {
+            if (r.get("profile") != null) builder.profile(JobResourcePolicy.Profile.parse(string(r, "profile")));
+            if (r.get("onPressure") != null) builder.onPressure(JobResourcePolicy.PressureAction.parse(string(r, "onPressure")));
+            builder.memorySoftBytes(optionalLong(r, "memorySoftBytes")).addressSpaceBytes(optionalLong(r, "addressSpaceBytes"))
+                .cpuTimeSeconds(optionalLong(r, "cpuTimeSeconds")).maxOutputBytes(optionalLong(r, "maxOutputBytes"))
+                .processConcurrencyHint(optionalLong(r, "processConcurrencyHint")).niceLevel(optionalLong(r, "niceLevel"));
+            if (r.get("requireNice") != null) {
+                if (!(r.get("requireNice") instanceof Boolean)) throw new BadParameters();
+                builder.requireNice((Boolean) r.get("requireNice"));
+            }
+            // Out-of-range or inconsistent values are an IllegalArgumentException, which job.start reports as INVALID_REQUEST.
+            return builder.build();
+        } finally { /* nothing to release */ }
+    }
+
+    /** {@code resources.applyBuildPreset}: explicit opt-in to the build-tool concurrency recommendation. */
+    private static boolean presetRequested(Map<?, ?> p) throws BadParameters {
+        Object resources = p.get("resources");
+        if (!(resources instanceof Map)) return false;
+        Object flag = ((Map<?, ?>) resources).get("applyBuildPreset");
+        if (flag == null) return false;
+        if (!(flag instanceof Boolean)) throw new BadParameters();
+        return (Boolean) flag;
+    }
+
+    /** A JSON integer that fits a long, or null when absent or null. Anything else is a bad parameter. */
+    private static Long optionalLong(Map<?, ?> p, String key) throws BadParameters {
+        return p.get(key) == null ? null : longNumber(p, key);
     }
 
     /**

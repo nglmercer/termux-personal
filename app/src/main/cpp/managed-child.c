@@ -8,6 +8,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <sys/resource.h>
+#include <sys/time.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -56,9 +57,51 @@ scan:
     return 0;
 }
 
+/* Lowers one resource limit, never raising an existing hard limit. Child-only, async-signal-safe.
+ * A tighter limit that is already in place counts as applied. Returns 0 or an errno. */
+static int lower_rlimit(int resource, unsigned long long value) {
+    struct rlimit current, wanted;
+    if (getrlimit(resource, &current) < 0) return errno;
+    rlim_t cap = (rlim_t)value;
+    if ((unsigned long long)cap != value) cap = RLIM_INFINITY - 1; /* value exceeds rlim_t: clamp, still a real limit */
+    wanted.rlim_cur = cap;
+    wanted.rlim_max = cap;
+    if (resource == RLIMIT_CPU) wanted.rlim_max = cap > RLIM_INFINITY - 6 ? cap : cap + 5; /* SIGXCPU first, SIGKILL later */
+    if (current.rlim_max != RLIM_INFINITY && wanted.rlim_max > current.rlim_max) wanted.rlim_max = current.rlim_max;
+    if (current.rlim_max != RLIM_INFINITY && wanted.rlim_cur > current.rlim_max) wanted.rlim_cur = current.rlim_max;
+    if (current.rlim_cur != RLIM_INFINITY && current.rlim_cur < wanted.rlim_cur && current.rlim_max <= wanted.rlim_max)
+        return 0; /* already tighter */
+    return setrlimit(resource, &wanted) < 0 ? errno : 0;
+}
+
+/* Child-only, async-signal-safe. Returns 0 or the errno of the first failing required limit. */
+static int apply_limits(const struct termux_owned_limits *limits) {
+    if (limits == NULL) return 0;
+    int error;
+    if (limits->address_space_bytes != 0) {
+        error = lower_rlimit(RLIMIT_AS, limits->address_space_bytes);
+        if (error && (limits->required & TERMUX_LIMIT_ADDRESS_SPACE)) return error;
+    }
+    if (limits->cpu_seconds != 0) {
+        error = lower_rlimit(RLIMIT_CPU, limits->cpu_seconds);
+        if (error && (limits->required & TERMUX_LIMIT_CPU_TIME)) return error;
+    }
+    if (limits->nice_level >= 0) {
+        error = setpriority(PRIO_PROCESS, 0, limits->nice_level) < 0 ? errno : 0;
+        if (error && (limits->required & TERMUX_LIMIT_NICE)) return error;
+    }
+    return 0;
+}
+
+/* Parent-side validation so a bad value fails before fork. */
+static int limits_valid(const struct termux_owned_limits *limits) {
+    if (limits == NULL) return 1;
+    return (limits->required & ~TERMUX_LIMIT_ALL) == 0 && limits->nice_level <= 19;
+}
+
 /* Child-only and async-signal-safe: never returns. */
 static void exec_child(const char *path, const char *cwd, char *const argv[], char *const envp[],
-                       const struct termux_managed_pipes *pipes, int max_fd) {
+                       const struct termux_managed_pipes *pipes, int max_fd, const struct termux_owned_limits *limits) {
     int failure = 0;
     if (setpgid(0, 0) < 0 || dup2(pipes->input[0], STDIN_FILENO) < 0 || dup2(pipes->output[1], STDOUT_FILENO) < 0 ||
         dup2(pipes->error[1], STDERR_FILENO) < 0 || chdir(cwd) < 0) failure = errno;
@@ -72,6 +115,9 @@ static void exec_child(const char *path, const char *cwd, char *const argv[], ch
         for (int signal_number = 1; signal_number < NSIG; signal_number++) sigaction(signal_number, &action, NULL);
         if (sigemptyset(&mask) < 0 || sigprocmask(SIG_SETMASK, &mask, NULL) < 0) failure = errno;
     }
+    /* Limits come last so the setup above is not constrained by them, and before the descriptor scan
+     * and exec so a required limit that cannot be applied stops the job before it runs. */
+    if (!failure) { failure = apply_limits(limits); if (failure) failure |= TERMUX_LIMIT_FAILURE_FLAG; }
     if (!failure) {
         /* close_range is unavailable on older kernels, and seccomp may trap it. */
         if (cloexec_inherited(max_fd) < 0) failure = EMFILE;
@@ -90,11 +136,17 @@ static void exec_child(const char *path, const char *cwd, char *const argv[], ch
 
 int termux_owned_launch(const char *path, const char *cwd, char *const argv[], char *const envp[],
                         struct termux_owned_child *child) {
+    return termux_owned_launch_limited(path, cwd, argv, envp, NULL, child);
+}
+
+int termux_owned_launch_limited(const char *path, const char *cwd, char *const argv[], char *const envp[],
+                                const struct termux_owned_limits *limits, struct termux_owned_child *child) {
     if (child == NULL) { errno = EINVAL; return -1; }
     child->pid = -1; child->stdin_write = child->stdout_read = child->stderr_read = -1;
     if (path == NULL || path[0] != '/' || cwd == NULL || cwd[0] != '/' || argv == NULL || argv[0] == NULL || envp == NULL) {
         errno = EINVAL; return -1;
     }
+    if (!limits_valid(limits)) { errno = EINVAL; return -1; }
     struct rlimit limit;
     if (getrlimit(RLIMIT_NOFILE, &limit) < 0) return -1;
     /* -1 makes the child refuse to exec if it cannot list descriptors and the limit is too large to scan. */
@@ -103,7 +155,7 @@ int termux_owned_launch(const char *path, const char *cwd, char *const argv[], c
     if (termux_managed_pipes_open(&pipes) < 0) return -1;
     pid_t pid = fork();
     if (pid < 0) { int saved = errno; termux_managed_pipes_close(&pipes); errno = saved; return -1; }
-    if (pid == 0) exec_child(path, cwd, argv, envp, &pipes, max_fd);
+    if (pid == 0) exec_child(path, cwd, argv, envp, &pipes, max_fd, limits);
     close(pipes.input[0]); close(pipes.output[1]); close(pipes.error[1]); close(pipes.status[1]);
     pipes.input[0] = pipes.output[1] = pipes.error[1] = pipes.status[1] = -1;
     int child_error = 0;
