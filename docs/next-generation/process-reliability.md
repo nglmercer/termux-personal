@@ -38,7 +38,7 @@ Device-aware resource policy, workspace profiles and per-task resources, managed
 
 ## Not implemented yet
 
-The optional isolated execution backend (see `execution-backend.md`). A preview API for the effective command of a build preset, Node heap limits through `job.start`, and progress or cancellation of backups over RPC. The UI and everything native have not been run on a device.
+A working isolated execution backend: only the abstraction and capability detection exist, and the VM is reported as unsupported (see [execution-backend.md](execution-backend.md)). A preview API for the effective command of a build preset, Node heap limits through `job.start`, and progress or cancellation of backups over RPC. The UI and everything native have not been run on a device.
 
 ## Known limits
 
