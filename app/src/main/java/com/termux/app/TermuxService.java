@@ -108,6 +108,9 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
     private com.termux.app.control.jobs.JobCoordinator mJobCoordinator;
     private com.termux.app.control.jobs.JobHistoryStore mJobHistory;
     private com.termux.app.control.jobs.JobResourceSupervisor mJobSupervisor;
+    private com.termux.app.control.jobs.ResourceAdmissionController mJobAdmission;
+    private com.termux.app.control.workspace.WorkspaceServiceController mServiceController;
+    private com.termux.app.control.workspace.WorkspacePortService mPortService;
     /** Process listing and workspace store are created once per service on the start worker, under their own lock. */
     private final Object mDomainLock = new Object();
     private com.termux.app.control.process.ProcessService mProcessService;
@@ -241,7 +244,12 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
         Logger.logVerbose(LOG_TAG, "onDestroy");
         stopLocalControl();
         mJobAuthority.revoke();
-        synchronized (mJobLock) { if (mJobCoordinator != null) mJobCoordinator.stopAccepting(); }
+        synchronized (mJobLock) {
+            // Services first: closing it prevents any restart from racing with the coordinator shutting down.
+            if (mServiceController != null) mServiceController.close();
+            if (mPortService != null) mPortService.close();
+            if (mJobCoordinator != null) mJobCoordinator.stopAccepting();
+        }
         if (mOutputSubscriptions != null) mOutputSubscriptions.close();
         if (mControlAvailable) setSafeControlCloseEnabled(false);
         else TerminalSession.setProcessHandlesEnabled(false);
@@ -1072,8 +1080,56 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
                 new com.termux.app.control.jobs.AppShellJobAdapter(this), policy, mJobAuthority, admission, supervisor,
                 new com.termux.app.control.jobs.JobDiagnostics(history, supervisor, android.os.Build.VERSION.SDK_INT));
             mJobSupervisor = supervisor;
+            mJobAdmission = admission;
             return mJobCoordinator;
         }
+    }
+
+    /**
+     * Resource, service, backup and port services. Each is optional and hides its own methods when it cannot exist:
+     * backups need java.nio.file (API 26), and everything that starts work needs the job coordinator. Runs on a worker.
+     */
+    private void configureControlExtras(com.termux.app.control.ipc.LocalControlServer server, com.termux.app.control.jobs.JobCoordinator jobs,
+                                        boolean workspaces) throws java.io.IOException {
+        com.termux.app.control.resource.ResourceService resource = null;
+        com.termux.app.control.workspace.WorkspaceServiceController services = null;
+        com.termux.app.control.workspace.WorkspaceBackupService backup = null;
+        com.termux.app.control.workspace.WorkspacePortService ports = null;
+        com.termux.app.control.workspace.WorkspaceRepository repository = workspaces ? workspaceRepositoryForWorker() : null;
+        synchronized (mJobLock) {
+            if (jobs != null && mJobSupervisor != null && mJobAdmission != null) {
+                com.termux.app.control.jobs.JobHistoryStore history = jobHistoryLocked();
+                resource = new com.termux.app.control.resource.ResourceService(jobs, mJobSupervisor, mJobAdmission, history,
+                    new com.termux.app.control.resource.AndroidResourceDevice(this));
+                if (repository != null) {
+                    if (mServiceController == null) {
+                        final com.termux.app.control.workspace.WorkspaceRepository repo = repository;
+                        mServiceController = new com.termux.app.control.workspace.WorkspaceServiceController(
+                            new com.termux.app.control.workspace.WorkspaceServiceController.Definitions() {
+                                @Override public Resolved resolve(String workspaceId, String serviceId) throws com.termux.app.control.workspace.WorkspaceRepository.WorkspaceException {
+                                    com.termux.app.control.workspace.WorkspaceRepository.Workspace w = repo.get(workspaceId);
+                                    return new Resolved(repo.service(workspaceId, serviceId), w.resourceProfile, w.available);
+                                }
+                                @Override public java.util.List<com.termux.app.control.workspace.WorkspaceRepository.ServiceDefinition> list(String workspaceId) throws com.termux.app.control.workspace.WorkspaceRepository.WorkspaceException {
+                                    return repo.get(workspaceId).services;
+                                }
+                            },
+                            com.termux.app.control.workspace.WorkspaceServiceController.jobsOf(jobs),
+                            jobId -> { com.termux.app.control.jobs.JobHistoryStore.Record r = history.get(jobId); return r == null ? null : r.evidence; },
+                            com.termux.app.control.workspace.WorkspaceServiceController.Config.defaults(), android.os.SystemClock::elapsedRealtime);
+                    }
+                    services = mServiceController;
+                }
+            }
+            if (workspaces) {
+                if (mPortService == null) mPortService = new com.termux.app.control.workspace.WorkspacePortService();
+                ports = mPortService;
+                if (android.os.Build.VERSION.SDK_INT >= 26)
+                    backup = new com.termux.app.control.workspace.WorkspaceBackupService(new java.io.File(getFilesDir(), "workspace-backups"),
+                        com.termux.app.control.workspace.WorkspaceBackupService.Limits.defaults());
+            }
+        }
+        server.configureExtras(resource, services, backup, ports);
     }
 
     /** The workspace store for the app's own UI. Loads from disk on first use, so call it off the main thread. */
@@ -1157,6 +1213,7 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
                     requestsProcesses ? processServiceForWorker() : null,
                     requestsFiles ? fileServiceForWorker(writesFiles) : null,
                     requestsWorkspaces ? workspaceRepositoryForWorker() : null);
+                configureControlExtras(server, jobs, requestsWorkspaces);
                 server.start();
                 new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
                     if (mLocalControlServer == server && callback != null) callback.onResult(server.isRunning());

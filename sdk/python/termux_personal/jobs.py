@@ -75,12 +75,14 @@ class Jobs:
 
     def start(self, executable: str, args, *, cwd: Optional[str] = None, workspace_id: Optional[str] = None,
               env: Optional[Mapping[str, str]] = None, stdin: Optional[str] = None, timeout_ms: Optional[int] = None,
-              presentation: Optional[str] = None, client_request_id: Optional[str] = None) -> JobRecord:
+              presentation: Optional[str] = None, client_request_id: Optional[str] = None,
+              resources: Optional[Mapping[str, object]] = None) -> JobRecord:
         if not isinstance(executable, str) or not isinstance(args, (list, tuple)) or not all(isinstance(item, str) for item in args):
             raise ValueError("executable must be a string and args a list of strings")
         params: dict = {"executable": executable, "args": list(args)}
         optional = {"cwd": cwd, "workspaceId": workspace_id, "env": None if env is None else dict(env), "stdin": stdin,
-                    "timeoutMs": timeout_ms, "presentation": presentation, "clientRequestId": client_request_id}
+                    "timeoutMs": timeout_ms, "presentation": presentation, "clientRequestId": client_request_id,
+                    "resources": None if resources is None else dict(resources)}
         params.update({key: value for key, value in optional.items() if value is not None})
         result, _ = self._call("job.start", params)
         try:

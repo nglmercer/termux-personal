@@ -68,6 +68,15 @@ public final class LocalControlServer implements AutoCloseable {
             com.termux.app.compat.network.AndroidNetworkObservations::current);
     }
 
+    /** Optional resource, service, backup and port services; call after {@link #configureDomains} and before start. */
+    public synchronized void configureExtras(com.termux.app.control.resource.ResourceService resource,
+                                             com.termux.app.control.workspace.WorkspaceServiceController services,
+                                             com.termux.app.control.workspace.WorkspaceBackupService backup,
+                                             com.termux.app.control.workspace.WorkspacePortService ports) {
+        if (mState.get() != NEW) throw new IllegalStateException("Domains must be configured before start");
+        mServices = mServices.withExtras(new DomainServices.Extras(resource, services, backup, ports));
+    }
+
     /** Scopes must come from an explicit trusted local configuration, not a client request. */
     public LocalControlServer(Context context, ControlCore core, ServiceThreadDispatch dispatch,
                               Set<ControlCore.Scope> scopes, StopListener stopListener,

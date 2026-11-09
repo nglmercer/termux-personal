@@ -178,6 +178,42 @@ public final class JobResourcePolicy {
         out.writeUTF(mOnPressure.wireName()); out.writeBoolean(mRequireNice);
     }
 
+    /** Only what differs from "unset", so a stored or returned policy stays small and round-trips exactly. */
+    public com.google.gson.JsonObject toJson() {
+        com.google.gson.JsonObject o = new com.google.gson.JsonObject();
+        o.addProperty("profile", mProfile.wireName());
+        if (mMemorySoftBytes != 0) o.addProperty("memorySoftBytes", mMemorySoftBytes);
+        if (mAddressSpaceBytes != 0) o.addProperty("addressSpaceBytes", mAddressSpaceBytes);
+        if (mCpuTimeSeconds != 0) o.addProperty("cpuTimeSeconds", mCpuTimeSeconds);
+        if (mMaxOutputBytes != 0) o.addProperty("maxOutputBytes", mMaxOutputBytes);
+        if (mConcurrencyHint != 0) o.addProperty("processConcurrencyHint", mConcurrencyHint);
+        if (mNiceLevel >= 0) o.addProperty("niceLevel", mNiceLevel);
+        o.addProperty("onPressure", mOnPressure.wireName());
+        if (mRequireNice) o.addProperty("requireNice", true);
+        return o;
+    }
+
+    /** Strict reader with the same validation as the builder; throws IllegalArgumentException on anything invalid. */
+    public static JobResourcePolicy fromJson(com.google.gson.JsonObject o) {
+        if (o == null) throw new IllegalArgumentException("Missing resources");
+        Builder b = builder();
+        try {
+            if (has(o, "profile")) b.profile(Profile.parse(o.get("profile").getAsString()));
+            if (has(o, "onPressure")) b.onPressure(PressureAction.parse(o.get("onPressure").getAsString()));
+            b.memorySoftBytes(optLong(o, "memorySoftBytes")).addressSpaceBytes(optLong(o, "addressSpaceBytes"))
+                .cpuTimeSeconds(optLong(o, "cpuTimeSeconds")).maxOutputBytes(optLong(o, "maxOutputBytes"))
+                .processConcurrencyHint(optLong(o, "processConcurrencyHint")).niceLevel(optLong(o, "niceLevel"));
+            if (has(o, "requireNice")) b.requireNice(o.get("requireNice").getAsBoolean());
+        } catch (RuntimeException e) {
+            if (e instanceof IllegalArgumentException) throw e;
+            throw new IllegalArgumentException("Invalid resources", e);
+        }
+        return b.build();
+    }
+
+    private static boolean has(com.google.gson.JsonObject o, String key) { return o.has(key) && !o.get(key).isJsonNull(); }
+    private static Long optLong(com.google.gson.JsonObject o, String key) { return has(o, key) ? Long.valueOf(o.get(key).getAsLong()) : null; }
+
     @Override public boolean equals(Object other) {
         if (this == other) return true;
         if (!(other instanceof JobResourcePolicy)) return false;

@@ -83,7 +83,7 @@ public final class DeviceCompatibilityAdvisor {
         if (in == null) throw new IllegalArgumentException("Missing inputs");
         List<Item> items = new ArrayList<>();
         items.add(new Item("platform", Status.INFO, "Android " + orUnknown(in.release) + " (API " + orUnknown(in.sdkInt) + "), kernel " + orUnknown(in.kernelVersion)
-            + ", ABI " + (in.abis.isEmpty() ? "unknown" : String.join(",", in.abis)), ""));
+            + ", ABI " + (in.abis.isEmpty() ? "unknown" : joinAbis(in.abis)), ""));
         items.add(flag("native_launcher", in.nativeLauncherAvailable, "owned-child launcher (stop, RLIMIT_AS/CPU, nice)",
             "Without it managed jobs cannot be stopped or limited; they still run."));
         items.add(flag("memory_api", in.memoryApiAvailable, "device memory from ActivityManager", "Pressure-based admission falls back to conservative defaults."));
@@ -161,6 +161,13 @@ public final class DeviceCompatibilityAdvisor {
         return Arrays.asList(
             "adb shell device_config put activity_manager max_phantom_processes 2147483647   # changes system behavior; reverts on reboot or by Android; support varies",
             "adb shell settings put global settings_enable_monitor_phantom_procs false      # disables a platform safeguard; support varies");
+    }
+
+    /** String.join needs API 26, and the app supports API 21. */
+    private static String joinAbis(List<String> abis) {
+        StringBuilder out = new StringBuilder();
+        for (String abi : abis) { if (out.length() > 0) out.append(','); out.append(abi); }
+        return out.toString();
     }
 
     private static String orUnknown(Object value) { return value == null ? "unknown" : String.valueOf(value); }

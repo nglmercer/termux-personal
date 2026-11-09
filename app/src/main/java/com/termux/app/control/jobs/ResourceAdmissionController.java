@@ -144,14 +144,9 @@ public final class ResourceAdmissionController {
     /** Number of heavy jobs this device may run at once right now; always at least one. */
     public synchronized int slots() { return slotsFor(mTotalBytes, mLevel, mHardSlotCap); }
 
+    /** Delegates to the one device policy so admission and recommendations never disagree. */
     static int slotsFor(Long totalBytes, PressureTracker.Level level, int hardCap) {
-        int base;
-        if (totalBytes == null || level == PressureTracker.Level.UNKNOWN) base = 1; // no data: be conservative
-        else if (totalBytes < (3L << 30)) base = 1;
-        else if (totalBytes < (6L << 30)) base = 2;
-        else if (totalBytes < (10L << 30)) base = 3;
-        else base = 4;
-        return Math.max(1, Math.min(base, hardCap));
+        return com.termux.app.monitor.DeviceResourcePolicy.heavySlots(totalBytes, level, hardCap);
     }
 
     // ---- internals; the monitor is held ----
@@ -163,10 +158,9 @@ public final class ResourceAdmissionController {
         if (mLevel == PressureTracker.Level.NORMAL && mCalmSince != Long.MIN_VALUE && now - mCalmSince < mConfig.cooldownMillis) return false;
         int running = mActive.size();
         int limit = slots();
-        if (mLevel == PressureTracker.Level.ELEVATED) {
+        // slots() already halves under elevated pressure (never below one, so a lone build is not starved).
+        if (mLevel == PressureTracker.Level.ELEVATED)
             for (Ticket active : mActive) if (active.mPausesAdmission) return false;
-            limit = Math.max(1, limit / 2); // reduced concurrency, but a lone build is never starved
-        }
         if (running >= limit || running >= ticket.mMaxActive) return false;
         for (Ticket active : mActive) if (active.mMaxActive == 1) return false; // a PROTECTED job runs alone
         if (mAvailableBytes != null && running > 0) {

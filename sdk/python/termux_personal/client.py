@@ -8,10 +8,14 @@ from .transport import AdbTransport, FrameTransport, MAX_MESSAGE, SocketTranspor
 from .sessions import Sessions
 from .jobs import Jobs
 from .domains import Files, Processes, Workspaces
+from .resources import Backups, Resources, Services
 
 _READ_ONLY = frozenset({"system.hello", "system.capabilities", "system.describe", "session.list", "session.snapshot", "session.output.read",
                         "job.list", "job.get", "job.output.read", "process.list", "file.roots", "file.list", "file.stat", "file.read",
-                        "workspace.list", "workspace.get", "workspace.tasks"})
+                        "workspace.list", "workspace.get", "workspace.tasks",
+                        "resource.capabilities", "resource.snapshot", "job.resource.get", "job.history.list", "job.history.get",
+                        "job.diagnostics.export", "job.processes", "workspace.service.list", "workspace.service.status",
+                        "workspace.service.health", "workspace.service.ports", "workspace.service.logs"})
 
 
 def _object(pairs):
@@ -38,6 +42,9 @@ class TermuxClient:
         self.processes = Processes(self)
         self.files = Files(self)
         self.workspaces = Workspaces(self)
+        self.resources = Resources(self)
+        self.services = Services(self)
+        self.backups = Backups(self)
         try:
             hello, _ = self.request("system.hello", {"version": 1})
             if hello != {"version": 1}:
@@ -111,7 +118,7 @@ class TermuxClient:
                     raise RpcError(error["code"], error["message"], error.get("data"))
                 result = response["result"]
                 payload = b""
-                if method in ("session.output.read", "job.output.read", "file.read"):
+                if method in ("session.output.read", "job.output.read", "file.read", "workspace.service.logs"):
                     if not isinstance(result, dict) or type(result.get("length")) is not int or not 0 <= result["length"] <= MAX_MESSAGE:
                         raise ProtocolError("Invalid binary response metadata")
                     if result["length"]:

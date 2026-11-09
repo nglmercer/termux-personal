@@ -13,6 +13,7 @@ PROCESS_SCOPES = frozenset({"owned", "session", "task", "all-visible"})
 FILE_TYPES = frozenset({"file", "directory", "symlink", "other"})
 _WS_ID = re.compile(r"^ws_[0-9a-f]{16}$")
 _PRESET_ID = re.compile(r"^[a-z0-9_-]{1,64}$")
+_UNSET = object()
 
 
 def _nonnegative(value) -> bool:
@@ -232,6 +233,7 @@ class TaskPreset:
     executable: str
     args: List[str]
     timeout_ms: int
+    resources: Optional[dict] = None
 
     @classmethod
     def parse(cls, value):
@@ -240,10 +242,16 @@ class TaskPreset:
                 not isinstance(value.get("executable"), str) or not isinstance(value.get("args"), list) or
                 not all(isinstance(arg, str) for arg in value["args"]) or not _nonnegative(value.get("timeoutMs"))):
             raise ProtocolError("Invalid task preset")
-        return cls(value["id"], value["label"], value["executable"], list(value["args"]), value["timeoutMs"])
+        resources = value.get("resources")
+        if resources is not None and not isinstance(resources, dict):
+            raise ProtocolError("Invalid task preset")
+        return cls(value["id"], value["label"], value["executable"], list(value["args"]), value["timeoutMs"], resources)
 
     def to_wire(self) -> dict:
-        return {"id": self.id, "label": self.label, "executable": self.executable, "args": list(self.args), "timeoutMs": self.timeout_ms}
+        wire = {"id": self.id, "label": self.label, "executable": self.executable, "args": list(self.args), "timeoutMs": self.timeout_ms}
+        if self.resources is not None:
+            wire["resources"] = dict(self.resources)
+        return wire
 
 
 @dataclass(frozen=True)
@@ -256,6 +264,8 @@ class Workspace:
     updated_at: int
     available: bool
     task_presets: List[TaskPreset]
+    resource_profile: Optional[str] = None
+    services: Optional[list] = None
 
     @classmethod
     def parse(cls, value):
@@ -264,8 +274,13 @@ class Workspace:
                 not isinstance(value.get("rootId"), str) or not isinstance(value.get("path"), str) or not _nonnegative(value.get("createdAt")) or
                 not _nonnegative(value.get("updatedAt")) or not isinstance(value.get("available"), bool) or not isinstance(value.get("taskPresets"), list)):
             raise ProtocolError("Invalid workspace metadata")
+        profile = value.get("resourceProfile")
+        services = value.get("services")
+        if (profile is not None and profile not in ("unrestricted", "protected", "balanced", "performance", "custom")) or \
+                (services is not None and (not isinstance(services, list) or not all(isinstance(item, dict) for item in services))):
+            raise ProtocolError("Invalid workspace metadata")
         return cls(value["id"], value["name"], value["rootId"], value["path"], value["createdAt"], value["updatedAt"], value["available"],
-                   [TaskPreset.parse(item) for item in value["taskPresets"]])
+                   [TaskPreset.parse(item) for item in value["taskPresets"]], profile, services)
 
 
 class Workspaces:
@@ -291,8 +306,13 @@ class Workspaces:
         result, _ = self._call("workspace.get", {"id": workspace_id})
         return Workspace.parse(_require_object(result, "Invalid workspace response").get("workspace"))
 
-    def create(self, name: str, root_id: str, path: str, task_presets=None) -> Workspace:
+    def create(self, name: str, root_id: str, path: str, task_presets=None, *, resource_profile: Optional[str] = None,
+               services=None) -> Workspace:
         params: dict = {"name": name, "rootId": root_id, "path": path}
+        if resource_profile is not None:
+            params["resourceProfile"] = resource_profile
+        if services is not None:
+            params["services"] = [dict(service) for service in services]
         if task_presets is not None:
             params["taskPresets"] = [preset.to_wire() if isinstance(preset, TaskPreset) else preset for preset in task_presets]
         result, _ = self._call("workspace.create", params)
@@ -302,8 +322,13 @@ class Workspaces:
             raise ProtocolError("Invalid workspace create response", outcome_unknown=True) from exc
 
     def update(self, workspace_id: str, *, name: Optional[str] = None, root_id: Optional[str] = None, path: Optional[str] = None,
-               task_presets=None) -> Workspace:
+               task_presets=None, resource_profile=_UNSET, services=None) -> Workspace:
+        """``resource_profile=None`` clears the profile; leaving it out keeps the current one."""
         params: dict = {"id": workspace_id}
+        if resource_profile is not _UNSET:
+            params["resourceProfile"] = resource_profile
+        if services is not None:
+            params["services"] = [dict(service) for service in services]
         if name is not None:
             params["name"] = name
         if root_id is not None:

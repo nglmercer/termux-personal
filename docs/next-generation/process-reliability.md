@@ -32,9 +32,13 @@ See [resource-policy.md](resource-policy.md) for semantics.
 * `DiagnosticBundleExporter` builds a bounded, redacted bundle. Output is included only on explicit consent. The UI shares the text report through the Android share sheet.
 * The existing jobs dialog shows queue position, live resources, the termination reason and its uncertainty, the persistent history and a stop button that uses the owned handle.
 
+## Developer experience (PR 3)
+
+Device-aware resource policy, workspace profiles and per-task resources, managed workspace services with restart policies, workspace backup and restore, port observation and loopback proxies, and the `resource.*`, `job.resource/history/diagnostics/processes` and `workspace.service/backup.*` methods with CLI, Python and TypeScript support. See [resource-policy.md](resource-policy.md).
+
 ## Not implemented yet
 
-Workspace profiles and services, backup, port tools, `resource.*`/`job.history.*` methods and CLI/SDK helpers, the optional VM backend. The UI has not been run on a device.
+The optional isolated execution backend (see `execution-backend.md`). A preview API for the effective command of a build preset, Node heap limits through `job.start`, and progress or cancellation of backups over RPC. The UI and everything native have not been run on a device.
 
 ## Known limits
 

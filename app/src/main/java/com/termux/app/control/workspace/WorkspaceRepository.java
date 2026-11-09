@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.termux.app.control.files.FileService;
+import com.termux.app.control.jobs.JobResourcePolicy;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -21,7 +22,8 @@ import java.util.List;
  * Operations perform file I/O and must run on a worker thread.
  */
 public final class WorkspaceRepository {
-    public static final int MAX_WORKSPACES = 64, MAX_PRESETS = 16, MAX_ARGS = 32, MAX_NAME = 80, MAX_LABEL = 80;
+    public static final int MAX_WORKSPACES = 64, MAX_PRESETS = 16, MAX_ARGS = 32, MAX_NAME = 80, MAX_LABEL = 80,
+        MAX_SERVICES = 8, MAX_PORTS = 8;
     public static final long MAX_TIMEOUT_MILLIS = 24L * 60 * 60 * 1000;
     private static final int VERSION = 1;
 
@@ -36,12 +38,49 @@ public final class WorkspaceRepository {
         public final String id, label, executable;
         public final List<String> args;
         public final long timeoutMillis;
+        /** Optional resource policy for jobs run from this preset; null keeps the historical behavior. */
+        public final JobResourcePolicy resources;
         public TaskPreset(String id, String label, String executable, List<String> args, long timeoutMillis) throws WorkspaceException {
+            this(id, label, executable, args, timeoutMillis, null);
+        }
+        public TaskPreset(String id, String label, String executable, List<String> args, long timeoutMillis, JobResourcePolicy resources) throws WorkspaceException {
             if (!validPresetId(id) || !validText(label, MAX_LABEL, false) || !validExecutable(executable) || args == null ||
                 args.size() > MAX_ARGS || timeoutMillis < 0 || timeoutMillis > MAX_TIMEOUT_MILLIS) throw new WorkspaceException("INVALID_REQUEST");
             for (String arg : args) if (!validText(arg, 4096, true)) throw new WorkspaceException("INVALID_REQUEST");
             this.id = id; this.label = label; this.executable = executable;
-            this.args = Collections.unmodifiableList(new ArrayList<>(args)); this.timeoutMillis = timeoutMillis;
+            this.args = Collections.unmodifiableList(new ArrayList<>(args)); this.timeoutMillis = timeoutMillis; this.resources = resources;
+        }
+    }
+
+    public enum RestartPolicy {
+        NEVER("never"), ON_FAILURE("on-failure"), ALWAYS("always");
+        public final String wireName;
+        RestartPolicy(String wireName) { this.wireName = wireName; }
+        public static RestartPolicy parse(String value) throws WorkspaceException {
+            for (RestartPolicy policy : values()) if (policy.wireName.equals(value)) return policy;
+            throw new WorkspaceException("INVALID_REQUEST");
+        }
+    }
+
+    /**
+     * An approved long-running development service. Data only: nothing runs until a client starts it, and nothing is ever
+     * started automatically after a restart. The default restart policy is never.
+     */
+    public static final class ServiceDefinition {
+        public final String id, executable;
+        public final List<String> args;
+        public final List<Integer> ports;
+        public final RestartPolicy restartPolicy;
+        public final JobResourcePolicy resources;
+        public ServiceDefinition(String id, String executable, List<String> args, RestartPolicy restartPolicy,
+                                 JobResourcePolicy resources, List<Integer> ports) throws WorkspaceException {
+            if (!validPresetId(id) || !validExecutable(executable) || args == null || args.size() > MAX_ARGS || restartPolicy == null ||
+                ports == null || ports.size() > MAX_PORTS) throw new WorkspaceException("INVALID_REQUEST");
+            for (String arg : args) if (!validText(arg, 4096, true)) throw new WorkspaceException("INVALID_REQUEST");
+            for (Integer port : ports) if (port == null || port < 1 || port > 65535) throw new WorkspaceException("INVALID_REQUEST");
+            if (new java.util.HashSet<>(ports).size() != ports.size()) throw new WorkspaceException("INVALID_REQUEST");
+            this.id = id; this.executable = executable; this.args = Collections.unmodifiableList(new ArrayList<>(args));
+            this.restartPolicy = restartPolicy; this.resources = resources; this.ports = Collections.unmodifiableList(new ArrayList<>(ports));
         }
     }
 
@@ -49,9 +88,17 @@ public final class WorkspaceRepository {
         public final String id, name, rootId, path;
         public final long createdAt, updatedAt;
         public final List<TaskPreset> taskPresets;
+        /** Optional default profile for this workspace; null means none, which keeps the historical behavior. */
+        public final JobResourcePolicy.Profile resourceProfile;
+        public final List<ServiceDefinition> services;
         /** False when the root or directory no longer resolves. Writes and selection refuse such a workspace. */
         public final boolean available;
         Workspace(String id, String name, String rootId, String path, long createdAt, long updatedAt, List<TaskPreset> presets, boolean available) {
+            this(id, name, rootId, path, createdAt, updatedAt, presets, available, null, Collections.<ServiceDefinition>emptyList());
+        }
+        Workspace(String id, String name, String rootId, String path, long createdAt, long updatedAt, List<TaskPreset> presets, boolean available,
+                  JobResourcePolicy.Profile resourceProfile, List<ServiceDefinition> services) {
+            this.resourceProfile = resourceProfile; this.services = Collections.unmodifiableList(new ArrayList<>(services));
             this.id = id; this.name = name; this.rootId = rootId; this.path = path;
             this.createdAt = createdAt; this.updatedAt = updatedAt; this.taskPresets = Collections.unmodifiableList(new ArrayList<>(presets));
             this.available = available;
@@ -87,11 +134,17 @@ public final class WorkspaceRepository {
     }
 
     public synchronized Workspace create(String name, String rootId, String path, List<TaskPreset> presets) throws WorkspaceException {
+        return create(name, rootId, path, presets, null, Collections.<ServiceDefinition>emptyList());
+    }
+
+    public synchronized Workspace create(String name, String rootId, String path, List<TaskPreset> presets,
+                                         JobResourcePolicy.Profile profile, List<ServiceDefinition> services) throws WorkspaceException {
+        if (services == null || services.size() > MAX_SERVICES || hasDuplicateIds(services)) throw new WorkspaceException("INVALID_REQUEST");
         if (!validText(name, MAX_NAME, false) || presets == null || presets.size() > MAX_PRESETS) throw new WorkspaceException("INVALID_REQUEST");
         if (mWorkspaces.size() >= MAX_WORKSPACES) throw new WorkspaceException("LIMIT_REACHED");
         requireDirectory(rootId, path);
         long now = System.currentTimeMillis();
-        Workspace created = new Workspace(newId(), name, rootId, path, now, now, presets, true);
+        Workspace created = new Workspace(newId(), name, rootId, path, now, now, presets, true, profile, services);
         mWorkspaces.add(created);
         persist();
         return created;
@@ -99,6 +152,12 @@ public final class WorkspaceRepository {
 
     /** Null arguments keep the current value. A changed location is validated again before it is stored. */
     public synchronized Workspace update(String id, String name, String rootId, String path, List<TaskPreset> presets) throws WorkspaceException {
+        return update(id, name, rootId, path, presets, false, null, null);
+    }
+
+    /** {@code setProfile} distinguishes "leave the profile" from "clear it" (profile null). Null services keep the current ones. */
+    public synchronized Workspace update(String id, String name, String rootId, String path, List<TaskPreset> presets,
+                                         boolean setProfile, JobResourcePolicy.Profile profile, List<ServiceDefinition> services) throws WorkspaceException {
         int index = indexOf(id);
         Workspace current = mWorkspaces.get(index);
         String newName = name == null ? current.name : name;
@@ -107,7 +166,10 @@ public final class WorkspaceRepository {
         List<TaskPreset> newPresets = presets == null ? current.taskPresets : presets;
         if (!validText(newName, MAX_NAME, false) || newPresets.size() > MAX_PRESETS) throw new WorkspaceException("INVALID_REQUEST");
         if (!newRoot.equals(current.rootId) || !newPath.equals(current.path)) requireDirectory(newRoot, newPath);
-        Workspace updated = new Workspace(current.id, newName, newRoot, newPath, current.createdAt, System.currentTimeMillis(), newPresets, true);
+        List<ServiceDefinition> newServices = services == null ? current.services : services;
+        if (newServices.size() > MAX_SERVICES || hasDuplicateIds(newServices)) throw new WorkspaceException("INVALID_REQUEST");
+        Workspace updated = new Workspace(current.id, newName, newRoot, newPath, current.createdAt, System.currentTimeMillis(), newPresets, true,
+            setProfile ? profile : current.resourceProfile, newServices);
         mWorkspaces.set(index, updated);
         persist();
         return updated;
@@ -150,12 +212,51 @@ public final class WorkspaceRepository {
         throw new WorkspaceException("NOT_FOUND");
     }
 
+    private static boolean hasDuplicateIds(List<ServiceDefinition> services) {
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        for (ServiceDefinition service : services) if (!ids.add(service.id)) return true;
+        return false;
+    }
+
+    /** The portable definition of a workspace (name, tasks, services, profile). No path, root or timestamp: it moves between devices. */
+    public synchronized byte[] exportConfig(String id) throws WorkspaceException {
+        JsonObject item = toJson(find(id));
+        item.remove("id"); item.remove("rootId"); item.remove("path"); item.remove("createdAt"); item.remove("updatedAt");
+        return item.toString().getBytes(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Applies a definition produced by {@link #exportConfig}: tasks, services and profile are replaced; name, location and
+     * identity are kept. Invalid content is refused as a whole and nothing changes.
+     */
+    public synchronized Workspace applyConfig(String id, byte[] config) throws WorkspaceException {
+        if (config == null || config.length > 1024 * 1024) throw new WorkspaceException("INVALID_REQUEST");
+        Workspace current = find(id);
+        final Workspace parsed;
+        try {
+            JsonObject item = JsonParser.parseString(new String(config, StandardCharsets.UTF_8)).getAsJsonObject();
+            item.addProperty("id", current.id); item.addProperty("rootId", current.rootId); item.addProperty("path", current.path);
+            item.addProperty("createdAt", current.createdAt); item.addProperty("updatedAt", current.updatedAt);
+            if (!item.has("name")) item.addProperty("name", current.name);
+            parsed = parseWorkspace(item);
+        } catch (WorkspaceException e) { throw e;
+        } catch (RuntimeException e) { throw new WorkspaceException("INVALID_REQUEST"); }
+        if (parsed.taskPresets.size() > MAX_PRESETS || parsed.services.size() > MAX_SERVICES || hasDuplicateIds(parsed.services)) throw new WorkspaceException("INVALID_REQUEST");
+        return update(id, null, null, null, parsed.taskPresets, true, parsed.resourceProfile, parsed.services);
+    }
+
+    /** One approved service of a workspace. */
+    public synchronized ServiceDefinition service(String workspaceId, String serviceId) throws WorkspaceException {
+        for (ServiceDefinition service : find(workspaceId).services) if (service.id.equals(serviceId)) return service;
+        throw new WorkspaceException("NOT_FOUND");
+    }
+
     private Workspace withAvailability(Workspace workspace) {
         boolean available;
         try { requireDirectory(workspace.rootId, workspace.path); available = true; }
         catch (WorkspaceException e) { available = false; }
         return new Workspace(workspace.id, workspace.name, workspace.rootId, workspace.path, workspace.createdAt,
-            workspace.updatedAt, workspace.taskPresets, available);
+            workspace.updatedAt, workspace.taskPresets, available, workspace.resourceProfile, workspace.services);
     }
 
     /** Validates the location through the file service, so the same path rules apply everywhere. */
@@ -220,12 +321,36 @@ public final class WorkspaceRepository {
             List<String> args = new ArrayList<>();
             for (JsonElement arg : p.getAsJsonArray("args")) args.add(arg.getAsString());
             presets.add(new TaskPreset(p.get("id").getAsString(), p.get("label").getAsString(), p.get("executable").getAsString(),
-                args, p.get("timeoutMs").getAsLong()));
+                args, p.get("timeoutMs").getAsLong(), readResources(p)));
+        }
+        // Optional fields added after v1 shipped. Their absence is the historical behavior, so v1 files load unchanged.
+        JobResourcePolicy.Profile profile = null;
+        try {
+            if (item.has("resourceProfile") && !item.get("resourceProfile").isJsonNull()) profile = JobResourcePolicy.Profile.parse(item.get("resourceProfile").getAsString());
+        } catch (RuntimeException e) { profile = null; } // an unknown profile must not make the workspace unreadable
+        List<ServiceDefinition> services = new ArrayList<>();
+        if (item.has("services") && item.get("services").isJsonArray()) for (JsonElement element : item.getAsJsonArray("services")) {
+            try {
+                JsonObject sv = element.getAsJsonObject();
+                List<String> sargs = new ArrayList<>();
+                for (JsonElement arg : sv.getAsJsonArray("args")) sargs.add(arg.getAsString());
+                List<Integer> ports = new ArrayList<>();
+                if (sv.has("ports")) for (JsonElement port : sv.getAsJsonArray("ports")) ports.add(port.getAsInt());
+                services.add(new ServiceDefinition(sv.get("id").getAsString(), sv.get("executable").getAsString(), sargs,
+                    RestartPolicy.parse(sv.has("restartPolicy") ? sv.get("restartPolicy").getAsString() : "never"), readResources(sv), ports));
+            } catch (WorkspaceException | RuntimeException e) { /* skip only the unreadable service; the workspace and its tasks survive */ }
+            if (services.size() >= MAX_SERVICES) break;
         }
         String id = item.get("id").getAsString();
         if (!validId(id)) throw new WorkspaceException("INVALID_REQUEST");
         return new Workspace(id, item.get("name").getAsString(), item.get("rootId").getAsString(), item.get("path").getAsString(),
-            item.get("createdAt").getAsLong(), item.get("updatedAt").getAsLong(), presets, true);
+            item.get("createdAt").getAsLong(), item.get("updatedAt").getAsLong(), presets, true, profile, services);
+    }
+
+    private static JobResourcePolicy readResources(JsonObject owner) {
+        try {
+            return owner.has("resources") && owner.get("resources").isJsonObject() ? JobResourcePolicy.fromJson(owner.getAsJsonObject("resources")) : null;
+        } catch (RuntimeException e) { return null; } // an invalid stored policy means "no policy", never a lost workspace
     }
 
     private void persist() throws WorkspaceException {
@@ -265,9 +390,26 @@ public final class WorkspaceRepository {
             for (String arg : preset.args) args.add(arg);
             p.add("args", args);
             p.addProperty("timeoutMs", preset.timeoutMillis);
+            if (preset.resources != null) p.add("resources", preset.resources.toJson());
             presets.add(p);
         }
         item.add("taskPresets", presets);
+        if (workspace.resourceProfile != null) item.addProperty("resourceProfile", workspace.resourceProfile.wireName());
+        if (!workspace.services.isEmpty()) {
+            JsonArray services = new JsonArray();
+            for (ServiceDefinition service : workspace.services) {
+                JsonObject sv = new JsonObject();
+                sv.addProperty("id", service.id); sv.addProperty("executable", service.executable);
+                JsonArray sargs = new JsonArray(); for (String arg : service.args) sargs.add(arg);
+                sv.add("args", sargs);
+                sv.addProperty("restartPolicy", service.restartPolicy.wireName);
+                JsonArray ports = new JsonArray(); for (Integer port : service.ports) ports.add(port);
+                sv.add("ports", ports);
+                if (service.resources != null) sv.add("resources", service.resources.toJson());
+                services.add(sv);
+            }
+            item.add("services", services);
+        }
         return item;
     }
 

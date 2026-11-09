@@ -137,4 +137,75 @@ public class WorkspaceRepositoryTest {
             repository.create("app" + i, "home", "projects/app", Collections.<WorkspaceRepository.TaskPreset>emptyList());
         assertCode("LIMIT_REACHED", () -> repository.create("one-more", "home", "projects/app", Collections.<WorkspaceRepository.TaskPreset>emptyList()));
     }
+
+    private static final String V1_FILE = "{\"version\":1,\"active\":null,\"workspaces\":[{\"id\":\"ws_00000000000000aa\",\"name\":\"old\","
+        + "\"rootId\":\"home\",\"path\":\"projects/app\",\"createdAt\":1,\"updatedAt\":2,\"taskPresets\":[{\"id\":\"build\","
+        + "\"label\":\"Build\",\"executable\":\"cargo\",\"args\":[\"build\"],\"timeoutMs\":0}]}]}";
+
+    @Test public void aV1FileWrittenBeforeResourceFieldsLoadsUnchangedWithHistoricalBehavior() throws Exception {
+        Files.write(new File(store, "v1.json").toPath(), V1_FILE.getBytes(StandardCharsets.UTF_8));
+        WorkspaceRepository repository = open();
+        assertFalse(repository.recoveredFromCorruption());
+        WorkspaceRepository.Workspace w = repository.get("ws_00000000000000aa");
+        assertNull("no profile means the historical behavior", w.resourceProfile);
+        assertTrue(w.services.isEmpty());
+        assertNull(w.taskPresets.get(0).resources);
+        // Saving does not add the new members to data that never had them.
+        repository.update(w.id, "renamed", null, null, null);
+        String raw = new String(Files.readAllBytes(new File(store, "v1.json").toPath()), StandardCharsets.UTF_8);
+        assertFalse(raw.contains("resourceProfile")); assertFalse(raw.contains("services")); assertFalse(raw.contains("\"resources\""));
+        assertEquals("renamed", open().get(w.id).name);
+    }
+
+    @Test public void profilePresetResourcesAndServicesPersistAndRoundTrip() throws Exception {
+        WorkspaceRepository repository = open();
+        com.termux.app.control.jobs.JobResourcePolicy protectedPolicy = com.termux.app.control.jobs.JobResourcePolicy.builder()
+            .profile(com.termux.app.control.jobs.JobResourcePolicy.Profile.PROTECTED).processConcurrencyHint(2L).memorySoftBytes(1L << 30).build();
+        WorkspaceRepository.TaskPreset build = new WorkspaceRepository.TaskPreset("build", "Build", "cargo", Collections.singletonList("build"), 0, protectedPolicy);
+        WorkspaceRepository.ServiceDefinition service = new WorkspaceRepository.ServiceDefinition("dev-server", "node", java.util.Arrays.asList("server.js"),
+            WorkspaceRepository.RestartPolicy.ON_FAILURE, com.termux.app.control.jobs.JobResourcePolicy.ofProfile(com.termux.app.control.jobs.JobResourcePolicy.Profile.BALANCED),
+            java.util.Arrays.asList(3000, 3001));
+        WorkspaceRepository.Workspace created = repository.create("rust", "home", "projects/app", Collections.singletonList(build),
+            com.termux.app.control.jobs.JobResourcePolicy.Profile.BALANCED, Collections.singletonList(service));
+        WorkspaceRepository.Workspace loaded = open().get(created.id);
+        assertEquals(com.termux.app.control.jobs.JobResourcePolicy.Profile.BALANCED, loaded.resourceProfile);
+        assertEquals(protectedPolicy, loaded.taskPresets.get(0).resources);
+        WorkspaceRepository.ServiceDefinition back = loaded.services.get(0);
+        assertEquals("dev-server", back.id); assertEquals(WorkspaceRepository.RestartPolicy.ON_FAILURE, back.restartPolicy);
+        assertEquals(java.util.Arrays.asList(3000, 3001), back.ports);
+        // Clearing the profile is distinct from leaving it.
+        repository.update(created.id, null, null, null, null);
+        assertNotNull(open().get(created.id).resourceProfile);
+        repository.update(created.id, null, null, null, null, true, null, null);
+        assertNull(open().get(created.id).resourceProfile);
+        assertEquals("services untouched when not given", 1, open().get(created.id).services.size());
+    }
+
+    @Test public void invalidOptionalFieldsNeverCostTheUserTheirWorkspaces() throws Exception {
+        String damaged = V1_FILE.replace("\"taskPresets\":[{", "\"resourceProfile\":\"turbo\",\"services\":[{\"id\":\"BAD ID\"},{\"id\":\"ok\",\"executable\":\"node\",\"args\":[],\"restartPolicy\":\"sometimes\"}],\"taskPresets\":[{\"resources\":{\"memorySoftBytes\":1},")
+            ;
+        Files.write(new File(store, "v1.json").toPath(), damaged.getBytes(StandardCharsets.UTF_8));
+        WorkspaceRepository repository = open();
+        assertFalse("not treated as corruption", repository.recoveredFromCorruption());
+        WorkspaceRepository.Workspace w = repository.get("ws_00000000000000aa");
+        assertEquals("old", w.name);
+        assertEquals("the task survives", "build", w.taskPresets.get(0).id);
+        assertNull(w.resourceProfile); assertNull(w.taskPresets.get(0).resources); assertTrue(w.services.isEmpty());
+    }
+
+    @Test public void serviceDefinitionsAreValidated() throws Exception {
+        assertCode("INVALID_REQUEST", () -> new WorkspaceRepository.ServiceDefinition("Bad Id", "node", Collections.<String>emptyList(), WorkspaceRepository.RestartPolicy.NEVER, null, Collections.<Integer>emptyList()));
+        assertCode("INVALID_REQUEST", () -> new WorkspaceRepository.ServiceDefinition("s", "node", Collections.<String>emptyList(), WorkspaceRepository.RestartPolicy.NEVER, null, java.util.Arrays.asList(0)));
+        assertCode("INVALID_REQUEST", () -> new WorkspaceRepository.ServiceDefinition("s", "node", Collections.<String>emptyList(), WorkspaceRepository.RestartPolicy.NEVER, null, java.util.Arrays.asList(70000)));
+        assertCode("INVALID_REQUEST", () -> new WorkspaceRepository.ServiceDefinition("s", "node", Collections.<String>emptyList(), WorkspaceRepository.RestartPolicy.NEVER, null, java.util.Arrays.asList(80, 80)));
+        assertCode("INVALID_REQUEST", () -> new WorkspaceRepository.ServiceDefinition("s", "../../bin/sh", Collections.<String>emptyList(), WorkspaceRepository.RestartPolicy.NEVER, null, Collections.<Integer>emptyList()));
+        assertCode("INVALID_REQUEST", () -> WorkspaceRepository.RestartPolicy.parse("maybe"));
+        WorkspaceRepository repository = open();
+        WorkspaceRepository.ServiceDefinition a = new WorkspaceRepository.ServiceDefinition("s", "node", Collections.<String>emptyList(), WorkspaceRepository.RestartPolicy.NEVER, null, Collections.<Integer>emptyList());
+        assertCode("INVALID_REQUEST", () -> repository.create("dup", "home", "projects/app", Collections.<WorkspaceRepository.TaskPreset>emptyList(), null, java.util.Arrays.asList(a, a)));
+        List<WorkspaceRepository.ServiceDefinition> tooMany = new ArrayList<>();
+        for (int i = 0; i <= WorkspaceRepository.MAX_SERVICES; i++)
+            tooMany.add(new WorkspaceRepository.ServiceDefinition("s" + i, "node", Collections.<String>emptyList(), WorkspaceRepository.RestartPolicy.NEVER, null, Collections.<Integer>emptyList()));
+        assertCode("INVALID_REQUEST", () -> repository.create("many", "home", "projects/app", Collections.<WorkspaceRepository.TaskPreset>emptyList(), null, tooMany));
+    }
 }

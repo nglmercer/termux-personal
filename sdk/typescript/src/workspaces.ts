@@ -2,14 +2,19 @@ import type { TermuxClient } from "./client.ts";
 import { ProtocolError, UnavailableError } from "./errors.ts";
 import { type JobRecord, jobRecord } from "./jobs.ts";
 
-export interface TaskPreset { id: string; label: string; executable: string; args: string[]; timeoutMs: number }
+export interface TaskPreset { id: string; label: string; executable: string; args: string[]; timeoutMs: number; resources?: Record<string, unknown> }
+export type WorkspaceProfile = "unrestricted" | "protected" | "balanced" | "performance" | "custom";
+export interface ServiceDefinition { id: string; executable: string; args: string[]; restartPolicy?: "never" | "on-failure" | "always"; resources?: Record<string, unknown>; ports?: number[] }
 export interface Workspace {
   id: string; name: string; rootId: string; path: string; createdAt: number; updatedAt: number;
   /** False when the root or directory no longer resolves. Writes and selection are refused for such a workspace. */
   available: boolean; taskPresets: TaskPreset[];
+  /** Present only when set. Absent means the historical behavior. */
+  resourceProfile?: WorkspaceProfile; services?: ServiceDefinition[];
 }
-export interface WorkspaceSpec { name: string; rootId: string; path: string; taskPresets?: TaskPreset[] }
-export interface WorkspaceChanges { name?: string; rootId?: string; path?: string; taskPresets?: TaskPreset[] }
+export interface WorkspaceSpec { name: string; rootId: string; path: string; taskPresets?: TaskPreset[]; resourceProfile?: WorkspaceProfile; services?: ServiceDefinition[] }
+/** resourceProfile: null clears the profile; leaving it out keeps the current one. */
+export interface WorkspaceChanges { name?: string; rootId?: string; path?: string; taskPresets?: TaskPreset[]; resourceProfile?: WorkspaceProfile | null; services?: ServiceDefinition[] }
 
 type Params = Record<string, unknown>;
 const isObject = (value: unknown): value is Params => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -19,7 +24,7 @@ const WS_ID = /^ws_[0-9a-f]{16}$/;
 function preset(value: unknown): TaskPreset {
   if (!isObject(value) || typeof value.id !== "string" || !/^[a-z0-9_-]{1,64}$/.test(value.id) || typeof value.label !== "string" ||
       typeof value.executable !== "string" || !Array.isArray(value.args) || !value.args.every(arg => typeof arg === "string") ||
-      !nonNegative(value.timeoutMs))
+      !nonNegative(value.timeoutMs) || !(value.resources === undefined || isObject(value.resources)))
     throw new ProtocolError("Invalid task preset");
   return value as unknown as TaskPreset;
 }
@@ -27,7 +32,9 @@ function preset(value: unknown): TaskPreset {
 function workspace(value: unknown): Workspace {
   if (!isObject(value) || typeof value.id !== "string" || !WS_ID.test(value.id) || typeof value.name !== "string" ||
       typeof value.rootId !== "string" || typeof value.path !== "string" || !nonNegative(value.createdAt) || !nonNegative(value.updatedAt) ||
-      typeof value.available !== "boolean" || !Array.isArray(value.taskPresets))
+      typeof value.available !== "boolean" || !Array.isArray(value.taskPresets) ||
+      !(value.resourceProfile === undefined || ["unrestricted", "protected", "balanced", "performance", "custom"].includes(value.resourceProfile as string)) ||
+      !(value.services === undefined || (Array.isArray(value.services) && value.services.every(isObject))))
     throw new ProtocolError("Invalid workspace metadata");
   return { ...(value as unknown as Workspace), taskPresets: value.taskPresets.map(item => preset(item)) };
 }
@@ -65,6 +72,8 @@ export class Workspaces {
   async create(spec: WorkspaceSpec, signal?: AbortSignal): Promise<Workspace> {
     const params: Params = { name: spec.name, rootId: spec.rootId, path: spec.path };
     if (spec.taskPresets !== undefined) params.taskPresets = spec.taskPresets;
+    if (spec.resourceProfile !== undefined) params.resourceProfile = spec.resourceProfile;
+    if (spec.services !== undefined) params.services = spec.services;
     const { result } = await this.call("workspace.create", params, signal);
     try {
       if (!isObject(result)) throw new ProtocolError("Invalid workspace create response");

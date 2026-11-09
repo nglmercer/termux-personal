@@ -171,6 +171,7 @@ public final class JobCoordinator {
                 return admission.snapshot() == null ? new StartResult(status, null) :
                     new StartResult(status, admission.snapshot(), admission.offsets());
             }
+            pruneWork();
             Work work = new Work(admission.entry, spec, resolution, lease, heavy ? mAdmission.newTicket(resources) : null);
             mWork.put(admission.entry.record().snapshot().id, work);
             if (work.ticket == null) launch(work);
@@ -185,6 +186,20 @@ public final class JobCoordinator {
             }
             return new StartResult(StartStatus.ACCEPTED, admission.entry.record().snapshot(), admission.entry.output().offsets());
         }
+    }
+
+    /** Drops bookkeeping for jobs the registry has evicted, so it stays as bounded as the registry. Monitor held. */
+    private void pruneWork() {
+        for (java.util.Iterator<Map.Entry<String, Work>> it = mWork.entrySet().iterator(); it.hasNext();) {
+            Map.Entry<String, Work> item = it.next();
+            if (item.getValue().done && mRegistry.getRetained(item.getKey()) == null) it.remove();
+        }
+    }
+
+    /** The resource policy a retained job was started with; null when it had none or the job is unknown. */
+    public synchronized JobResourcePolicy resourcePolicy(String id) {
+        Work work = id == null ? null : mWork.get(id);
+        return work == null ? null : work.policy;
     }
 
     /** Hands an admitted job to the bounded launch workers; a job cancelled while it waited is skipped. */
@@ -205,6 +220,32 @@ public final class JobCoordinator {
             if (pid != null) pids.add(pid);
         }
         return pids;
+    }
+
+    /** Metadata of one retained job for in-process owners (services, UI); null when unknown. Never call with a client value. */
+    public synchronized JobRecord.Snapshot localSnapshot(String id) {
+        if (mClosed || !validId(id)) return null;
+        JobRegistry.Entry entry = mRegistry.getRetained(id);
+        return entry == null ? null : entry.record().snapshot();
+    }
+
+    /**
+     * Runs {@code callback} once when the job reaches a terminal state, on the thread that completed it (immediately if it
+     * already did). False when the job is unknown. Used by owners that react to an exit, for example a service restart policy.
+     */
+    public boolean onJobFinished(String id, Runnable callback) {
+        if (callback == null) throw new IllegalArgumentException("Missing callback");
+        Work work;
+        synchronized (this) { work = validId(id) ? mWork.get(id) : null; }
+        if (work == null) return false;
+        work.control.onCompleted(callback);
+        return true;
+    }
+
+    /** Observation-only PID of one running owned job, or null. Never use it to signal; there is no PID-based signalling. */
+    public synchronized Integer ownedPid(String id) {
+        Work work = id == null ? null : mWork.get(id);
+        return work == null ? null : work.control.ownedPid();
     }
 
     /** One-based place in the resource admission queue, or 0 when the job is not waiting for resources. */
@@ -369,16 +410,18 @@ public final class JobCoordinator {
         final OwnedProcessControl control;
         final JobAuthority.Lease lease;
         final ResourceAdmissionController.Ticket ticket;
+        /** What the job asked for; kept after launch (the spec itself is dropped) so resource views can report it. */
+        final JobResourcePolicy policy;
         JobSpec spec;
         Resolution resolution;
         boolean claimed, done;
         Work(JobRegistry.Entry entry, JobSpec spec, Resolution resolution, JobAuthority.Lease lease,
              ResourceAdmissionController.Ticket ticket) {
             this.entry = entry; this.spec = spec; this.resolution = resolution; this.lease = lease; this.ticket = ticket;
+            this.policy = spec.resources();
             this.control = OwnedProcessControl.forAndroid(entry.record(), mTimers, CANCEL_GRACE_MILLIS, mAdapter.ownsChildIdentity());
             // Evidence first, while the supervisor still holds the job's last samples; then the reservation, whichever path
             // completes the job, and each only once.
-            final JobResourcePolicy policy = spec.resources();
             if (mDiagnostics != null) control.onCompleted(() -> mDiagnostics.finished(entry.record(), policy));
             if (ticket != null) control.onCompleted(() -> mAdmission.release(ticket));
         }
