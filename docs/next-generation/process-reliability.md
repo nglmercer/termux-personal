@@ -40,7 +40,7 @@ See [resource-policy.md](resource-policy.md) for semantics.
 
 Device-aware resource policy, workspace profiles and per-task resources, managed workspace services with restart policies, workspace backup and restore, port observation and loopback proxies, and the `resource.*`, `job.resource/history/diagnostics/processes` and `workspace.service/backup.*` methods with CLI, Python and TypeScript support. See [resource-policy.md](resource-policy.md).
 
-## Interactive session exit results (issue #10, partial)
+## Interactive session exit results (issue #10)
 
 Settings → Debugging → *Session Exit Results* (off by default) keeps, in the service's memory, how the **root process** of each terminal session ended, usually the shell. Both session clients (with and without a bound activity) hand the finished session to one bounded registry in `TermuxService` before any automatic close, so a session that closes itself on exit 0 or 130 still leaves its result. The context menu then offers *Session exit results*, newest first, with an explicit *Copy* button.
 
@@ -66,7 +66,7 @@ Verified on the host: `SessionExitStatusTest` (0, 7, 130, 137, 139, −9, −11,
 | `exec ~/tc-walk/crash abort` | `signal 6 (SIGABRT)` |
 | `exec ~/tc-walk/crash 137` | `exit code 137`, not reported as `SIGKILL` |
 
-The developer option and the preference were restored afterwards. Not in scope: observing each command inside a shell, a persistent session history, and attributing a signal to its sender.
+The developer option and the preference were restored afterwards. Issue #10 asked for the code or signal observed when an interactive session ends, a minimal diagnostic aid and its validation with a controlled child; that is what is implemented. Deliberately not done: observing each command inside a running shell (it would need shell hooks or prompt changes in every shell), a persistent session history, and attributing a signal to its sender.
 
 ## Not implemented yet
 
