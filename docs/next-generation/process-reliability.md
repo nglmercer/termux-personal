@@ -40,6 +40,12 @@ Device-aware resource policy, workspace profiles and per-task resources, managed
 
 A working isolated execution backend: only the abstraction and capability detection exist, and the VM is reported as unsupported (see [execution-backend.md](execution-backend.md)). The UI and everything native have not been run on a physical Android device.
 
+## Verification on Android
+
+Everything above was verified with host unit tests, native host tests, cross-compilation and the packaged APK, but not on Android. An attempt to run the instrumented tests on an x86_64 emulator failed for host reasons: the machine has no KVM and two CPUs, so Android 15 either lost `system_server` to the watchdog (Google APIs image) or never brought up `adbd` (default image). Nothing about the code was learned from that attempt.
+
+`ManagedLimitsInstrumentedTest` is ready for a real device or an emulator with hardware acceleration: `./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.termux.app.control.jobs.ManagedLimitsInstrumentedTest`. It checks, on bionic and the app's seccomp policy, that `RLIMIT_AS`, `RLIMIT_CPU` and `nice` are applied to the child only and the app is untouched, that a CPU-bound child ends by `SIGXCPU`/`SIGKILL`, that a required limit that cannot be applied fails the launch as a limit failure, and that the supervisor and `ProcessSnapshot` measure a real child through `/proc` as the app UID. Until it has been run, device behaviour (including whether Android restricts these calls) remains unverified. The `ManagedNativeInstrumentedTest` and `OwnedChildProcessInstrumentedTest` that already existed are in the same state.
+
 ## Test environment
 
 The unit suite passes in full (0 failures) on JDK 21. On JDK 27 the 35 Robolectric tests fail to start (`ClassReader`), identically with and without these changes, because Robolectric 4.10 cannot instrument classes with that JDK. Run Gradle with `-Dorg.gradle.java.home=<JDK 21>` to run them.
