@@ -1054,8 +1054,13 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
                 new com.termux.app.control.jobs.JobIoPool(com.termux.app.control.jobs.JobIoPool.MAX_JOBS),
                 new com.termux.app.control.jobs.JobOutputStore(),
                 com.termux.app.control.jobs.JobOutputStore.DEFAULT_RECORD_LIMIT);
+            // Resource admission and supervision apply only to jobs that carry a resource policy; every other job,
+            // and every interactive session, behaves exactly as before. The supervisor samples only while such jobs exist.
+            com.termux.app.control.jobs.ResourceAdmissionController admission = new com.termux.app.control.jobs.ResourceAdmissionController();
+            com.termux.app.control.jobs.JobResourceSupervisor supervisor =
+                com.termux.app.control.jobs.JobResourceSupervisor.forAndroid(this, admission);
             mJobCoordinator = new com.termux.app.control.jobs.JobCoordinator(registry,
-                new com.termux.app.control.jobs.AppShellJobAdapter(this), policy, mJobAuthority);
+                new com.termux.app.control.jobs.AppShellJobAdapter(this), policy, mJobAuthority, admission, supervisor);
             return mJobCoordinator;
         }
     }

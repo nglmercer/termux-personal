@@ -43,14 +43,33 @@ public final class OwnedChildProcess extends Process {
 
     /** Worker-only. Returns null when the native launcher is unavailable; throws on a launch failure. */
     public static OwnedChildProcess launch(String[] command, String[] environment, String cwd) throws IOException {
+        return launch(command, environment, cwd, ManagedNative.NativeLimits.NONE);
+    }
+
+    /** As above, with limits applied to the child before it executes. */
+    static OwnedChildProcess launch(String[] command, String[] environment, String cwd,
+                                    ManagedNative.NativeLimits limits) throws IOException {
         if (!ManagedNative.isLibraryAvailable()) return null;
         int[] out = new int[4];
-        int result = ManagedNative.launch(command[0], cwd, command, environment, out);
-        if (result != 0) throw new IOException("Managed launch failed: errno " + -result);
+        int result = ManagedNative.launch(command[0], cwd, command, environment, out, limits);
+        if (result != 0) throw new LaunchException(result);
         return new OwnedChildProcess(out[0], NATIVE,
             new ParcelFileDescriptor.AutoCloseOutputStream(ParcelFileDescriptor.adoptFd(out[1])),
             new ParcelFileDescriptor.AutoCloseInputStream(ParcelFileDescriptor.adoptFd(out[2])),
             new ParcelFileDescriptor.AutoCloseInputStream(ParcelFileDescriptor.adoptFd(out[3])));
+    }
+
+    /** A launch failure; {@link #limitFailure()} is true when a required resource limit, not the exec, failed. */
+    public static final class LaunchException extends IOException {
+        private static final int LIMIT_FAILURE_FLAG = 0x10000;
+        public final int errno;
+        private final boolean mLimitFailure;
+        LaunchException(int nativeResult) {
+            super("Managed launch failed: errno " + ((-nativeResult) & 0xFFFF) + ((-nativeResult & LIMIT_FAILURE_FLAG) != 0 ? " (resource limit)" : ""));
+            errno = (-nativeResult) & 0xFFFF;
+            mLimitFailure = (-nativeResult & LIMIT_FAILURE_FLAG) != 0;
+        }
+        public boolean limitFailure() { return mLimitFailure; }
     }
 
     /** Observational only; never use it to signal. */

@@ -36,7 +36,7 @@
         "startedAt": {"type": ["integer", "null"], "minimum": 0},
         "endedAt": {"type": ["integer", "null"], "minimum": 0},
         "exitCode": {"type": ["integer", "null"]},
-        "failureCode": {"enum": ["start_failed", "capture_failed", "service_stopped", null]},
+        "failureCode": {"enum": ["start_failed", "capture_failed", "service_stopped", "limit_apply_failed", null]},
         "pid": {"type": ["integer", "null"], "minimum": 1},
         "workspaceId": {"type": ["string", "null"]},
         "output": {"type": "object", "properties": {"stdoutEndOffset": {"type": "integer", "minimum": 0}, "stderrEndOffset": {"type": "integer", "minimum": 0}}, "required": ["stdoutEndOffset", "stderrEndOffset"], "additionalProperties": false}

@@ -6,7 +6,7 @@
 JNIEXPORT jint JNICALL
 Java_com_termux_app_control_jobs_ManagedNative_nativeAbi(JNIEnv *env, jclass type) {
     (void)env; (void)type;
-    return 2;
+    return 3; /* 3: nativeLaunch takes resource limits */
 }
 
 /* Worker-only probe: a pipe keeps the disposable child alive until signaled. */
@@ -48,12 +48,23 @@ static char **copy_strings(JNIEnv *env, jobjectArray array, jsize *count) {
     return strings;
 }
 
-/* Worker-only. out receives {pid, stdin, stdout, stderr}; returns 0 or a negative errno. */
+/* Worker-only. out receives {pid, stdin, stdout, stderr}; returns 0 or a negative errno.
+ * Limits apply to the child only; zero (or a negative nice level) means unlimited and `required` is a
+ * TERMUX_LIMIT_* mask of limits whose failure must abort the launch. */
 JNIEXPORT jint JNICALL
 Java_com_termux_app_control_jobs_ManagedNative_nativeLaunch(JNIEnv *env, jclass type, jstring path, jstring cwd,
-                                                             jobjectArray argv, jobjectArray envp, jintArray out) {
+                                                             jobjectArray argv, jobjectArray envp, jintArray out,
+                                                             jlong address_space_bytes, jlong cpu_seconds,
+                                                             jint nice_level, jint required) {
     (void)type;
-    if (path == NULL || cwd == NULL || out == NULL || (*env)->GetArrayLength(env, out) != 4) return -EINVAL;
+    if (path == NULL || cwd == NULL || out == NULL || (*env)->GetArrayLength(env, out) != 4 ||
+        address_space_bytes < 0 || cpu_seconds < 0 || required < 0) return -EINVAL;
+    struct termux_owned_limits limits;
+    memset(&limits, 0, sizeof(limits));
+    limits.address_space_bytes = (unsigned long long)address_space_bytes;
+    limits.cpu_seconds = (unsigned long long)cpu_seconds;
+    limits.nice_level = nice_level;
+    limits.required = (unsigned int)required;
     jsize argc, envc;
     char **c_argv = copy_strings(env, argv, &argc);
     char **c_envp = copy_strings(env, envp, &envc);
@@ -62,7 +73,7 @@ Java_com_termux_app_control_jobs_ManagedNative_nativeLaunch(JNIEnv *env, jclass 
     int result = -EINVAL;
     if (c_argv != NULL && argc > 0 && c_envp != NULL && c_path != NULL && c_cwd != NULL) {
         struct termux_owned_child child;
-        if (termux_owned_launch(c_path, c_cwd, c_argv, c_envp, &child) == 0) {
+        if (termux_owned_launch_limited(c_path, c_cwd, c_argv, c_envp, &limits, &child) == 0) {
             jint values[4] = { child.pid, child.stdin_write, child.stdout_read, child.stderr_read };
             (*env)->SetIntArrayRegion(env, out, 0, 4, values);
             result = 0;

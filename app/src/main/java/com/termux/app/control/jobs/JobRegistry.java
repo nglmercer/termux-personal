@@ -54,7 +54,10 @@ public final class JobRegistry implements AutoCloseable {
             String id = null;
             try {
                 do { id = newId(); } while (mEntries.containsKey(id));
-                output = mOutputStore.reserve(id);
+                // A job asks for less retention than the store default, never more; no request means the store default.
+                JobResourcePolicy resources = spec.resources();
+                output = resources == null || resources.maxOutputBytes() == 0 ? mOutputStore.reserve(id) :
+                    mOutputStore.reserve(id, resources.maxOutputBytes());
                 if (output == null) { lease.close(); return new Admission(Status.LIMIT_REACHED, null); }
                 byte[] stdin = spec.stdin();
                 try { capture = new AppShellJobCapture(lease, output, stdin, drainTimeoutMillis); }

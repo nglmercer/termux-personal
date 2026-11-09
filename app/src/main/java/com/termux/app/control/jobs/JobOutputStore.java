@@ -13,6 +13,7 @@ public final class JobOutputStore implements AutoCloseable {
 
     private final int mStreamBytes, mRecordLimit, mTotalBytes;
     private final Map<String, Output> mOutputs = new HashMap<>();
+    private long mReservedBytes;
     private boolean mClosed;
 
     public JobOutputStore() { this(DEFAULT_STREAM_BYTES, DEFAULT_RECORD_LIMIT, DEFAULT_TOTAL_BYTES); }
@@ -25,13 +26,18 @@ public final class JobOutputStore implements AutoCloseable {
     }
 
     /** Reserve both stream rings before publishing a job. Returns null when quota is exhausted. */
-    public synchronized Output reserve(String jobId) {
+    public synchronized Output reserve(String jobId) { return reserve(jobId, mStreamBytes); }
+
+    /** A job may ask for less per-stream retention than the default, never more. Quota counts what is reserved. */
+    public synchronized Output reserve(String jobId, int streamBytes) {
+        if (streamBytes < 1 || streamBytes > mStreamBytes) throw new IllegalArgumentException("Invalid stream capacity");
         if (mClosed) throw new IllegalStateException("Output store closed");
         if (jobId == null || jobId.isEmpty() || jobId.length() > 128) throw new IllegalArgumentException("Invalid job ID");
         if (mOutputs.containsKey(jobId)) throw new IllegalArgumentException("Duplicate job ID");
-        if (mOutputs.size() >= mRecordLimit || (long)(mOutputs.size() + 1) * 2 * mStreamBytes > mTotalBytes) return null;
-        Output output = new Output(mStreamBytes);
+        if (mOutputs.size() >= mRecordLimit || mReservedBytes + 2L * streamBytes > mTotalBytes) return null;
+        Output output = new Output(streamBytes);
         mOutputs.put(jobId, output);
+        mReservedBytes += 2L * streamBytes;
         return output;
     }
 
@@ -41,6 +47,7 @@ public final class JobOutputStore implements AutoCloseable {
     public synchronized boolean remove(String jobId) {
         Output output = mOutputs.remove(jobId);
         if (output == null) return false;
+        mReservedBytes -= 2L * output.mCapacity;
         output.close();
         return true;
     }
@@ -49,7 +56,7 @@ public final class JobOutputStore implements AutoCloseable {
         if (mClosed) return;
         mClosed = true;
         for (Output output : mOutputs.values()) output.close();
-        mOutputs.clear();
+        mOutputs.clear(); mReservedBytes = 0;
     }
 
     /** Each stream has independent monotonic offsets; finished logs remain readable until removal. */
@@ -57,7 +64,9 @@ public final class JobOutputStore implements AutoCloseable {
         private final OutputReplayBuffer mStdout, mStderr;
         private boolean mFinished, mComplete, mClosed;
 
+        private final int mCapacity;
         private Output(int capacity) {
+            mCapacity = capacity;
             mStdout = new OutputReplayBuffer(capacity);
             mStderr = new OutputReplayBuffer(capacity);
         }

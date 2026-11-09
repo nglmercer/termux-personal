@@ -80,8 +80,8 @@ public class ResultSender {
         String truncatedStdout = null;
         String truncatedStderr = null;
 
-        String stdoutOriginalLength = String.valueOf(resultDataStdout.length());
-        String stderrOriginalLength = String.valueOf(resultDataStderr.length());
+        String stdoutOriginalLength = String.valueOf(resultDataStdout.length() + resultData.stdoutDroppedBytes);
+        String stderrOriginalLength = String.valueOf(resultDataStderr.length() + resultData.stderrDroppedBytes);
 
         // Truncate stdout and stdout to max TRANSACTION_SIZE_LIMIT_IN_BYTES
         if (resultDataStderr.isEmpty()) {

@@ -25,10 +25,19 @@ public final class JobSpec {
     private final byte[] mStdin, mFingerprint;
     private final long mTimeoutMillis;
     private final Presentation mPresentation;
+    private final JobResourcePolicy mResources;
 
     public JobSpec(String executable, List<String> arguments, String workingDirectory, String workspaceId,
                    Map<String, String> environment, byte[] stdin, long timeoutMillis,
                    Presentation presentation, String clientRequestId) {
+        this(executable, arguments, workingDirectory, workspaceId, environment, stdin, timeoutMillis, presentation,
+            clientRequestId, null);
+    }
+
+    /** {@code resources} is optional; null keeps the historical, unrestricted behavior and the historical fingerprint. */
+    public JobSpec(String executable, List<String> arguments, String workingDirectory, String workspaceId,
+                   Map<String, String> environment, byte[] stdin, long timeoutMillis,
+                   Presentation presentation, String clientRequestId, JobResourcePolicy resources) {
         requireText(executable, MAX_FIELD_BYTES, false);
         if (executable.startsWith("/")) requireAbsolutePath(executable);
         else if (!executable.matches("[A-Za-z0-9_+.-]+") || executable.equals(".") || executable.equals(".."))
@@ -54,7 +63,7 @@ public final class JobSpec {
         mExecutable = executable; mArguments = Collections.unmodifiableList(argsCopy); mWorkingDirectory = workingDirectory;
         mWorkspaceId = workspaceId; mEnvironment = Collections.unmodifiableMap(envCopy);
         mStdin = stdin == null ? new byte[0] : stdin.clone(); mTimeoutMillis = timeoutMillis;
-        mPresentation = presentation; mClientRequestId = clientRequestId;
+        mPresentation = presentation; mClientRequestId = clientRequestId; mResources = resources;
         mFingerprint = fingerprint();
     }
 
@@ -67,6 +76,8 @@ public final class JobSpec {
     public long timeoutMillis() { return mTimeoutMillis; }
     public Presentation presentation() { return mPresentation; }
     public String clientRequestId() { return mClientRequestId; }
+    /** Null when the request carried no resource configuration. */
+    public JobResourcePolicy resources() { return mResources; }
     public boolean sameExecution(JobSpec other) { return other != null && MessageDigest.isEqual(mFingerprint, other.mFingerprint); }
     byte[] fingerprintCopy() { return mFingerprint.clone(); }
 
@@ -107,7 +118,10 @@ public final class JobSpec {
             field(data, mExecutable); field(data, mWorkingDirectory); field(data, mWorkspaceId);
             data.writeInt(mArguments.size()); for (String arg : mArguments) field(data, arg);
             data.writeInt(mEnvironment.size()); for (Map.Entry<String, String> entry : mEnvironment.entrySet()) { field(data, entry.getKey()); field(data, entry.getValue()); }
-            data.writeInt(mStdin.length); data.write(mStdin); data.writeLong(mTimeoutMillis); field(data, mPresentation.name()); data.flush();
+            data.writeInt(mStdin.length); data.write(mStdin); data.writeLong(mTimeoutMillis); field(data, mPresentation.name());
+            // Only written when present, so a request without resources keeps the fingerprint it always had.
+            if (mResources != null) mResources.writeFingerprint(data);
+            data.flush();
             return digest.digest();
         } catch (IOException | NoSuchAlgorithmException e) { throw new IllegalStateException("Cannot fingerprint job specification", e); }
     }

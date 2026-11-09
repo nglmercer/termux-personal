@@ -19,6 +19,7 @@ public final class OwnedProcessControl {
     private Process mProcess;
     private ScheduledFuture<?> mEscalation, mTimeout;
     private boolean mDone, mAttached;
+    private Runnable mCompletionHook;
     private Status mStatus = Status.NOT_REQUESTED;
 
     /** The owner must provide a bounded, service-owned scheduler and invoke stop off the main thread. */
@@ -94,11 +95,33 @@ public final class OwnedProcessControl {
         if (mRecord.snapshot().stopReason != null) requestTermination();
     }
 
+    /**
+     * Registers work to run exactly once when this job completes, whichever path completes it (exit, failed launch,
+     * cancellation while queued). Runs on the completing thread with no lock held. Runs immediately if already complete.
+     */
+    void onCompleted(Runnable hook) {
+        if (hook == null) throw new IllegalArgumentException("Missing hook");
+        boolean runNow;
+        synchronized (this) {
+            runNow = mDone;
+            if (!runNow) {
+                if (mCompletionHook != null) throw new IllegalStateException("Completion hook already set");
+                mCompletionHook = hook;
+            }
+        }
+        if (runNow) hook.run();
+    }
+
     /** Called after the process result is observed; an already queued escalation becomes a no-op. */
-    synchronized void completed() {
-        mDone = true; mProcess = null;
-        if (mEscalation != null) { mEscalation.cancel(false); mEscalation = null; }
-        if (mTimeout != null) { mTimeout.cancel(false); mTimeout = null; }
+    void completed() {
+        Runnable hook;
+        synchronized (this) {
+            mDone = true; mProcess = null;
+            if (mEscalation != null) { mEscalation.cancel(false); mEscalation = null; }
+            if (mTimeout != null) { mTimeout.cancel(false); mTimeout = null; }
+            hook = mCompletionHook; mCompletionHook = null;
+        }
+        if (hook != null) hook.run();
     }
 
     public synchronized Status status() { return mStatus; }
