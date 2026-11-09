@@ -10,7 +10,6 @@ cd "$project_dir"
 adb_cmd() { adb ${ANDROID_SERIAL:+-s "$ANDROID_SERIAL"} "$@"; }
 out=build/control-resources-device
 mkdir -p "$out"
-prefix=/data/data/com.termux/files/usr
 {
     echo "commit: $(git rev-parse HEAD)$(git diff --quiet || echo ' (dirty)')"
     echo "android: $(adb_cmd shell getprop ro.build.version.release | tr -d '\r') / API $(adb_cmd shell getprop ro.build.version.sdk | tr -d '\r')"
@@ -18,16 +17,20 @@ prefix=/data/data/com.termux/files/usr
     echo "rom: $(adb_cmd shell getprop ro.build.display.id | tr -d '\r')"
     echo "abi: $(adb_cmd shell getprop ro.product.cpu.abi | tr -d '\r')"
     echo "kernel: $(adb_cmd shell uname -r | tr -d '\r')"
-    # Versions are read here, by the validation step, never by job.preview.
-    echo "rustc: $(adb_cmd shell run-as com.termux $prefix/bin/rustc --version 2>/dev/null | tr -d '\r' || true)"
-    echo "node: $(adb_cmd shell run-as com.termux $prefix/bin/node --version 2>/dev/null | tr -d '\r' || true)"
 } | tee "$out/device.txt"
+# Install over the existing app (keeps the Termux home and prefix) instead of connectedDebugAndroidTest, which
+# uninstalls the app when it finishes. The signing key must match the installed build.
+./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
+abi=$(adb_cmd shell getprop ro.product.cpu.abi | tr -d '\r')
+adb_cmd install -r "app/build/outputs/apk/debug/termux-app_apt-android-7-debug_$abi.apk"
+adb_cmd install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
 classes=com.termux.app.control.jobs.ResourcePressureInstrumentedTest
 classes=$classes,com.termux.app.control.jobs.RpcOnDeviceInstrumentedTest
 classes=$classes,com.termux.app.control.jobs.ManagedLimitsInstrumentedTest
 classes=$classes,com.termux.app.control.jobs.WorkspaceExtrasInstrumentedTest
-status=0
-./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class="$classes" || status=$?
-results=app/build/outputs/androidTest-results/connected
-echo "Gradle exit: $status. Per-test results (passed, failed, skipped = NOT_TESTED) are under $results" | tee -a "$out/device.txt"
-exit "$status"
+adb_cmd logcat -c
+adb_cmd shell am instrument -w -r -e class "$classes" com.termux.test/androidx.test.runner.AndroidJUnitRunner | tee "$out/instrument.txt"
+# Tool versions are read by the test itself (run as a job, never by job.preview), since run-as is blocked on some ROMs.
+adb_cmd logcat -d -s ResourcePressureTest:I | tee -a "$out/device.txt"
+# A skipped Rust/Node case (tool not installed) is an assumption failure: record it as NOT_TESTED.
+grep -q '^OK (' "$out/instrument.txt"

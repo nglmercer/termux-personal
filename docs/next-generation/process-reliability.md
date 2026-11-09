@@ -67,25 +67,27 @@ Not covered on the device: the thermal and low-memory pressure paths of the supe
 
 ## Device validation of resource profiles and pressure (issue #11)
 
-Status: **NOT_TESTED** for the additions below. No phone was connected when they were written, so the device evidence above remains the only on-device result; host tests do not replace it.
+Run on 2026-11-09 with `scripts/test-control-resources-device.sh` from branch `feature/protected-builds-test-concurrency` (base commit `ab2e7b00` plus the harness changes committed with this table) on a Xiaomi POCO X3 Pro (`M2102J20SG`, `vayu`), Android 16 / API 36, ROM `BP4A.251205.006`, kernel `4.14.356-Helios`, `arm64-v8a`, debug build installed over the existing app with `adb install -r`. Toolchains in the Termux prefix: Node `v24.18.0`, Cargo `1.99.1`, rustc `1.99.1`. Result: `OK (28 tests)`, the 9 cases of `ResourcePressureInstrumentedTest` plus the existing `RpcOnDeviceInstrumentedTest`, `ManagedLimitsInstrumentedTest` and `WorkspaceExtrasInstrumentedTest`.
 
-`scripts/test-control-resources-device.sh` records the commit, Android version and API, device and ROM, ABI, kernel and the Rust/Node versions installed in the Termux prefix, then runs `ResourcePressureInstrumentedTest` together with the existing `RpcOnDeviceInstrumentedTest`, `ManagedLimitsInstrumentedTest` and `WorkspaceExtrasInstrumentedTest`. The new class uses the production launcher, AppShell, real child processes and the real `/proc`. Only the device reading (available/total RAM, the low-memory flag and the thermal status) is **injected** through the supervisor's `Sampler`, a test-only seam: there is no production endpoint that fakes sensors. Nothing exhausts memory or heats the phone.
+The new class uses the production launcher, AppShell, real child processes and the real `/proc`. Only the device reading (available/total RAM, the low-memory flag and the thermal status) is **injected** through the supervisor's `Sampler`, a test-only seam: no production endpoint fakes sensors. Nothing exhausted memory or heated the phone.
 
 | Case | Kind | Expected | Observed |
 |---|---|---|---|
-| `protected` job running, `balanced` job started | instrumentation, real processes | the second waits in `queued` | NOT_TESTED |
-| cancel while queued | instrumentation | `cancelled`, never had a PID or start time | NOT_TESTED |
-| cancel while running | instrumentation | `cancelled`, slot released, next job runs | NOT_TESTED |
-| process table unreadable (`/proc` replaced by a missing directory) | instrumentation, injected | metrics `incomplete`, RSS and CPU `null`, never zero | NOT_TESTED |
-| critical memory pressure, then normal | instrumentation, injected | `critical` after two samples, nothing admitted, `normal` after three, admission resumes after the cooldown | NOT_TESTED |
-| `warn` / `stop_job` under critical | instrumentation, injected | only the `stop_job` job ends, as `RESOURCE_GUARD_STOP`; the `warn` job keeps running | NOT_TESTED |
-| `pause_admission` under severe thermal status | instrumentation, injected | `elevated`; the next job waits while the pausing job runs and is admitted once it is cancelled; the pausing job is never stopped | NOT_TESTED |
-| no supervised jobs | instrumentation | no device sample at all; sampling stops after the last supervised job | NOT_TESTED |
-| preview, then injected pressure, then start with `expectedPreviewFingerprint` | instrumentation, injected | `CONFLICT`, no job added | NOT_TESTED |
-| `node --test` with `testConcurrency: 1` | instrumentation, real Node | `--test-concurrency=1` after `--test`, exit 0 (an old Node fails with its own error) | NOT_TESTED (skipped when Node is absent) |
-| `cargo test` with `testConcurrency: 1` on a two-test crate | instrumentation, real Cargo | `test -j 1 … -- --test-threads=1`, exit 0 | NOT_TESTED (skipped when Cargo is absent) |
+| `protected` job running, `balanced` job started | instrumentation, real processes | the second waits in `queued` | as expected |
+| cancel while queued | instrumentation | `cancelled`, never had a PID or start time | as expected |
+| cancel while running | instrumentation | `cancelled`, slot released, next job runs | as expected (next job exited 0) |
+| process table unreadable (`/proc` replaced by a missing directory) | instrumentation, injected | metrics `incomplete`, RSS and CPU `null`, never zero | as expected |
+| critical memory pressure, then normal | instrumentation, injected | `critical` after two samples, nothing admitted, `normal` after three, admission resumes after the cooldown | as expected |
+| `warn` / `stop_job` under critical | instrumentation, injected | only the `stop_job` job ends, as `RESOURCE_GUARD_STOP`; the `warn` job keeps running | as expected |
+| `pause_admission` under severe thermal status | instrumentation, injected | `elevated`; the next job waits while the pausing job runs and is admitted once it is cancelled; the pausing job is never stopped | as expected |
+| no supervised jobs | instrumentation | no device sample at all, also during an unmanaged job; sampling stops after the last supervised job | as expected |
+| preview, then injected pressure, then start with `expectedPreviewFingerprint` | instrumentation, injected | `CONFLICT`, no job added | as expected |
+| `node --test` on two files with `testConcurrency: 1` | instrumentation, real Node 24.18.0 | `--test-concurrency=1` right after `--test`, exit 0 | as expected |
+| `cargo test --offline` on a two-test crate with `testConcurrency: 1` | instrumentation, real Cargo 1.99.1 | `test -j 1 --offline -- --test-threads=1`, exit 0 | as expected |
 
-Hysteresis, queue ordering, the admission rules, missing data and the sampler's stop are already covered by `PressureTrackerTest`, `ResourceAdmissionControllerTest` and `JobResourceSupervisorTest` on the host; the device class only adds what needs a real launcher and `/proc`. Still not covered by any of this: real thermal or low-memory sensor transitions (deliberately not provoked), the sampling cost on a device (not yet measured), interaction with interactive sessions under load, and devices, ROMs and ABIs other than the one listed above. Issue #11 stays open until this table is filled from a phone.
+Notes from the run: `run-as com.termux` is refused by SELinux on this ROM, so the harness installs over the app and reads the tool versions from a job inside the test instead; `connectedDebugAndroidTest` is avoided because it uninstalls the app (and the Termux home) when it finishes.
+
+Hysteresis, queue ordering, the admission rules, missing data and the sampler's stop are also covered by `PressureTrackerTest`, `ResourceAdmissionControllerTest` and `JobResourceSupervisorTest` on the host; the device class only adds what needs a real launcher and `/proc`. **Not covered:** real thermal or low-memory sensor transitions (deliberately not provoked), the sampling cost on the device (not measured), interaction with busy interactive sessions, the CLI walkthrough over the real socket (the client cannot be installed through `run-as` on this ROM), the effect of the test limits on memory or build time (not measured; no improvement is claimed), and other devices, ROMs and ABIs.
 
 ## Test environment
 

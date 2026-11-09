@@ -251,6 +251,7 @@ public class ResourcePressureInstrumentedTest {
     @Test public void nodeTestRunnerReceivesTheRequestedConcurrency() throws Exception {
         File node = new File(PREFIX_BIN, "node");
         assumeTrue("node is not installed in the Termux prefix: NOT_TESTED", node.canExecute());
+        logVersion(node);
         File dir = new File(base, "home/projects/node"); assertTrue(dir.mkdirs());
         write(new File(dir, "a.test.js"), "const t=require('node:test');t('a',()=>{});\n");
         write(new File(dir, "b.test.js"), "const t=require('node:test');t('b',()=>{});\n");
@@ -268,6 +269,7 @@ public class ResourcePressureInstrumentedTest {
     @Test public void cargoTestReceivesBuildJobsAndHarnessThreads() throws Exception {
         File cargo = new File(PREFIX_BIN, "cargo");
         assumeTrue("cargo is not installed in the Termux prefix: NOT_TESTED", cargo.canExecute());
+        logVersion(cargo); logVersion(new File(PREFIX_BIN, "rustc"));
         File dir = new File(base, "home/projects/crate"); assertTrue(new File(dir, "src").mkdirs());
         write(new File(dir, "Cargo.toml"), "[package]\nname = \"tiny\"\nversion = \"0.1.0\"\nedition = \"2021\"\n");
         write(new File(dir, "src/lib.rs"), "#[test] fn one() {}\n#[test] fn two() {}\n");
@@ -282,6 +284,16 @@ public class ResourcePressureInstrumentedTest {
     }
 
     // ---- helpers ----
+
+    /** Records the tool version for the device report; run as a job by this validation, never by job.preview. */
+    private void logVersion(File tool) throws Exception {
+        File out = new File(base, tool.getName() + ".version");
+        String id = ok(rpc("job.start", "{\"executable\":\"/system/bin/sh\",\"args\":[\"-c\",\"'" + tool + "' --version > '" + out + "' 2>&1\"]}"))
+            .getAsJsonObject("job").get("id").getAsString();
+        assertTrue(until(() -> isTerminal(stateq(id)), 600));
+        String text = out.exists() ? new String(java.nio.file.Files.readAllBytes(out.toPath()), StandardCharsets.UTF_8).trim() : "unavailable";
+        android.util.Log.i("ResourcePressureTest", "version " + tool.getName() + ": " + text);
+    }
 
     private String start(String profile, String onPressure, String script) throws Exception {
         String resources = "{\"profile\":\"" + profile + "\"" + (onPressure == null ? "" : ",\"onPressure\":\"" + onPressure + "\"") + "}";
