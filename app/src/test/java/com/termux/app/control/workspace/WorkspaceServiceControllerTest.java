@@ -108,6 +108,58 @@ public class WorkspaceServiceControllerTest {
         catch (WorkspaceRepository.WorkspaceException e) { throw new AssertionError(e); }
     }
 
+    // ---- local endpoint contract (issue #16) ----
+
+    @Test public void withoutTheOptInTheEnvironmentIsUnchangedButEachRunStillHasAnIdentity() throws Exception {
+        controller(20, 3); def("dev", WorkspaceRepository.RestartPolicy.NEVER);
+        controller.start(WS, "dev", lease);
+        assertTrue("historical environment", jobs.specs.get(0).environment().isEmpty());
+        Map<String, Object> e = controller.endpoint(WS, "dev", 50);
+        assertTrue(((String) e.get("instanceId")).matches("[0-9a-f]{32}"));
+        assertNull("no credential was requested", e.get("credential"));
+        assertEquals(false, e.get("credentialRequired"));
+        assertEquals("http://127.0.0.1:3000/", e.get("url"));
+        assertEquals("http://127.0.0.1:3000", e.get("origin"));
+    }
+
+    @Test public void anOptedInServiceGetsAFreshCredentialPerRunThatDiesWithTheRun() throws Exception {
+        controller(20, 3);
+        defs.services.put("api", new WorkspaceRepository.ServiceDefinition("api", "node", Arrays.asList("server.js"),
+            WorkspaceRepository.RestartPolicy.ON_FAILURE, null, Arrays.asList(3000, 3001), true));
+        controller.start(WS, "api", lease);
+        Map<String, String> env = jobs.specs.get(0).environment();
+        Map<String, Object> first = controller.endpoint(WS, "api", 50);
+        assertEquals(first.get("instanceId"), env.get(WorkspaceServiceController.ENV_INSTANCE_ID));
+        assertEquals(first.get("credential"), env.get(WorkspaceServiceController.ENV_TOKEN));
+        assertTrue(((String) first.get("credential")).matches("[0-9a-f]{64}"));
+        assertEquals("3000", env.get(WorkspaceServiceController.ENV_PORT));
+        assertEquals("http://127.0.0.1:3000", env.get(WorkspaceServiceController.ENV_ORIGIN));
+
+        // A crash: while it waits to restart, nothing hands out the old credential.
+        jobs.finish(jobs.lastId(), JobRecord.State.EXITED, 1, null, null);
+        Map<String, Object> between = controller.endpoint(WS, "api", 50);
+        assertEquals("backoff", between.get("state"));
+        assertNull(between.get("instanceId")); assertNull(between.get("credential")); assertEquals(false, between.get("listening"));
+
+        assertTrue(until(() -> "running".equals(state("api"))));
+        Map<String, Object> second = controller.endpoint(WS, "api", 50);
+        assertNotEquals("a restart is a different run", first.get("instanceId"), second.get("instanceId"));
+        assertNotEquals("and gets a new credential", first.get("credential"), second.get("credential"));
+        assertEquals(second.get("credential"), jobs.specs.get(1).environment().get(WorkspaceServiceController.ENV_TOKEN));
+
+        controller.stop(WS, "api");
+        jobs.finish(jobs.lastId(), JobRecord.State.CANCELLED, null, 15, JobRecord.StopReason.CANCEL);
+        assertNull(controller.endpoint(WS, "api", 50).get("credential"));
+    }
+
+    @Test public void aCredentialNeedsAPort() {
+        try {
+            new WorkspaceRepository.ServiceDefinition("api", "node", Arrays.asList("s.js"), WorkspaceRepository.RestartPolicy.NEVER, null,
+                Collections.<Integer>emptyList(), true);
+            fail("a credential without an endpoint port is refused");
+        } catch (WorkspaceRepository.WorkspaceException expected) { assertEquals("INVALID_REQUEST", expected.code); }
+    }
+
     @Test public void startUsesTheStoredDefinitionAndNeverClientSuppliedCommands() throws Exception {
         controller(20, 3); def("dev", WorkspaceRepository.RestartPolicy.NEVER);
         assertEquals(Outcome.STARTED, controller.start(WS, "dev", lease));

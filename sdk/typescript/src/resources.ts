@@ -162,6 +162,23 @@ export class Services extends Domain {
     return serviceStatus(isObject(result) ? result.service : undefined);
   }
 
+  /**
+   * How to reach the current run: loopback URL, instanceId and, for a service that opted in, its credential. A changed
+   * instanceId is a different run whose previous credential is invalid. Nothing is retried here.
+   */
+  async endpoint(workspaceId: string, serviceId: string, signal?: AbortSignal): Promise<ServiceEndpoint> {
+    checkWorkspace(workspaceId); checkService(serviceId);
+    const { result } = await this.call("workspace.service.endpoint", { workspaceId, serviceId }, signal);
+    const e = isObject(result) ? result.endpoint : undefined;
+    const hex = (v: unknown, n: number) => v === null || (typeof v === "string" && new RegExp(`^[0-9a-f]{${n}}$`).test(v));
+    const port = isObject(e) ? e.port : undefined;
+    if (!isObject(e) || typeof e.state !== "string" || !hex(e.instanceId, 32) || !hex(e.credential, 64) || typeof e.listening !== "boolean" ||
+        typeof e.credentialRequired !== "boolean" || !(port === null || (Number.isSafeInteger(port) && (port as number) >= 1 && (port as number) <= 65535)) ||
+        e.url !== (port === null ? null : `http://127.0.0.1:${port}/`) || e.origin !== (port === null ? null : `http://127.0.0.1:${port}`))
+      throw new ProtocolError("Invalid service endpoint");
+    return e as unknown as ServiceEndpoint;
+  }
+
   private async control(action: "start" | "stop" | "restart", workspaceId: string, serviceId: string, options: { clientRequestId?: string; signal?: AbortSignal }): Promise<ServiceStatus> {
     checkWorkspace(workspaceId); checkService(serviceId);
     const params: Params = { workspaceId, serviceId };
@@ -226,6 +243,10 @@ export class Services extends Domain {
   }
 }
 
+export interface ServiceEndpoint {
+  workspaceId: string; serviceId: string; state: string; instanceId: string | null; port: number | null;
+  url: string | null; origin: string | null; listening: boolean; credentialRequired: boolean; credential: string | null;
+}
 export interface CommandPreview {
   executable: string; arguments: string[]; presetApplied: boolean; changed: boolean; notes: string[]; resources: Record<string, unknown> | null;
   /** job.preview only: pass it as expectedPreviewFingerprint to start exactly this plan. Absent from older servers. */

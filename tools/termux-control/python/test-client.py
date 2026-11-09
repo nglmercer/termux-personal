@@ -162,6 +162,9 @@ assert result.returncode == 0, result.stderr
 result = run_case(["workspaces", "run", ws, "test"], {"jsonrpc": "2.0", "id": 2, "result": {"job": {"id": "job_3"}}},
                   expect_request("workspace.task.run", {"workspaceId": ws, "taskId": "test"}))
 assert result.returncode == 0, result.stderr
+result = run_case(["workspaces", "endpoint", ws, "api"], {"jsonrpc": "2.0", "id": 2, "result": {"endpoint": {}}},
+                  expect_request("workspace.service.endpoint", {"workspaceId": ws, "serviceId": "api"}))
+assert result.returncode == 0, result.stderr
 result = run_case(["workspaces", "tasks", ws], {"jsonrpc": "2.0", "id": 2, "result": {"tasks": []}}, expect_request("workspace.tasks", {"id": ws}))
 assert result.returncode == 0, result.stderr
 quoted_arg = 'name "with" quote'

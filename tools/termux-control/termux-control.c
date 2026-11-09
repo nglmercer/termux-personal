@@ -606,6 +606,7 @@ static const char *domain_method(const char *group, const char *sub, int count) 
         if (!strcmp(sub, "ports") && count == 1) return "workspace.service.ports";
         if (!strcmp(sub, "service-status") && count == 2) return "workspace.service.status";
         if (!strcmp(sub, "service-health") && count == 2) return "workspace.service.health";
+        if (!strcmp(sub, "endpoint") && count == 2) return "workspace.service.endpoint";
         if (!strcmp(sub, "service-start") && count == 2) return "workspace.service.start";
         if (!strcmp(sub, "service-stop") && count == 2) return "workspace.service.stop";
         if (!strcmp(sub, "service-restart") && count == 2) return "workspace.service.restart";
@@ -834,7 +835,7 @@ static void usage(void) {
                     "              [--test-concurrency N] [--expect-fingerprint HEX] -- EXECUTABLE [ARG...]\n"
                     "              (--test-concurrency needs --build-preset; --expect-fingerprint is for start|run only)\n"
                     "       termux-control [--socket PATH] workspaces list|get ID|tasks ID|git ID status|branch|diff|log|run ID TASK|create NAME ROOT PATH|update ID NAME ROOT PATH|remove ID|select ID\n"
-                    "       termux-control [--socket PATH] workspaces task-preview ID TASK|services ID|ports ID|service-status|service-health|service-start|service-stop|service-restart ID SERVICE\n"
+                    "       termux-control [--socket PATH] workspaces task-preview ID TASK|services ID|ports ID|service-status|service-health|service-start|service-stop|service-restart|endpoint ID SERVICE\n"
                     "       termux-control [--socket PATH] jobs resource ID|history|history-get ID|diagnostics ID|processes ID\n"
                     "       termux-control [--socket PATH] resources capabilities|snapshot\n");
 }

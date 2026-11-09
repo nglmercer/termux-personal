@@ -285,6 +285,7 @@ public final class RpcDispatcher {
             case "workspace.service.restart": return serviceControl("restart", request.params, scopes);
             case "workspace.service.logs": return serviceLogs(request.params, scopes);
             case "workspace.service.health": return serviceHealth(request.params, scopes);
+            case "workspace.service.endpoint": return serviceEndpoint(request.params, scopes);
             case "workspace.service.ports": return servicePorts(request.params, scopes);
             case "workspace.service.proxy": return serviceProxy(request.params, scopes);
             case "workspace.backup.export": return backupExport(request.params, scopes);
@@ -759,7 +760,7 @@ public final class RpcDispatcher {
         if (!(value instanceof List)) throw new BadParameters();
         List<WorkspaceRepository.ServiceDefinition> result = new ArrayList<>();
         for (Object item : (List<?>) value) {
-            Map<?, ?> p = parameters(item, "id", "executable", "args", "restartPolicy", "resources", "ports");
+            Map<?, ?> p = parameters(item, "id", "executable", "args", "restartPolicy", "resources", "ports", "credential");
             try {
                 List<Integer> ports = new ArrayList<>();
                 if (p.containsKey("ports")) {
@@ -771,7 +772,7 @@ public final class RpcDispatcher {
                 }
                 result.add(new WorkspaceRepository.ServiceDefinition(string(p, "id"), string(p, "executable"), stringList(p, "args"),
                     p.containsKey("restartPolicy") ? WorkspaceRepository.RestartPolicy.parse(string(p, "restartPolicy")) : WorkspaceRepository.RestartPolicy.NEVER,
-                    resourcePolicyFrom(p.get("resources"), false), ports));
+                    resourcePolicyFrom(p.get("resources"), false), ports, optionalBoolean(p, "credential")));
             } catch (WorkspaceRepository.WorkspaceException e) {
                 throw new DomainError(e.code);
             } catch (IllegalArgumentException e) {
@@ -808,6 +809,7 @@ public final class RpcDispatcher {
                 m.put("id", d.id); m.put("executable", d.executable); m.put("args", d.args); m.put("restartPolicy", d.restartPolicy.wireName);
                 m.put("ports", d.ports);
                 if (d.resources != null) m.put("resources", plainPolicy(d.resources));
+                if (d.credential) m.put("credential", true);
                 services.add(m);
             }
             result.put("services", services);
@@ -1430,6 +1432,11 @@ public final class RpcDispatcher {
         return resource.jobProcesses(id);
     }
 
+    /** False when absent or null; anything other than a JSON boolean is a bad parameter. */
+    private static boolean optionalBoolean(Map<?, ?> p, String key) throws BadParameters {
+        return p.get(key) != null && booleanValue(p, key);
+    }
+
     private static boolean booleanValue(Map<?, ?> p, String key) throws BadParameters {
         Object value = p.get(key);
         if (!(value instanceof Boolean)) throw new BadParameters();
@@ -1514,6 +1521,16 @@ public final class RpcDispatcher {
         Map<?, ?> p = parameters(params, "workspaceId", "serviceId");
         String ws = string(p, "workspaceId"), svc = string(p, "serviceId");
         return Collections.singletonMap("service", workspaceCall(() -> services.health(ws, svc, 300)));
+    }
+
+    /** Where and how to reach the current run of a service; never starts, restarts or retries anything. */
+    private Object serviceEndpoint(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
+        com.termux.app.control.workspace.WorkspaceServiceController services = requireServices();
+        requireWorkspaceScope(scopes, ControlCore.Scope.WORKSPACES_READ);
+        jobLease(scopes, ControlCore.Scope.JOBS_EXECUTE);
+        Map<?, ?> p = parameters(params, "workspaceId", "serviceId");
+        String ws = string(p, "workspaceId"), svc = string(p, "serviceId");
+        return Collections.singletonMap("endpoint", workspaceCall(() -> services.endpoint(ws, svc, 300)));
     }
 
     private Object servicePorts(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {

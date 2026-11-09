@@ -16,6 +16,8 @@ android {
     namespace "com.termux"
 
     sourceSets.test.resources.srcDir rootProject.file("sdk/protocol/v1")
+    // The reference backend of the local endpoint contract is exercised as-is by the on-device tests.
+    sourceSets.androidTest.assets.srcDir rootProject.file("tools/termux-service-example")
 
     compileSdkVersion project.properties.compileSdkVersion.toInteger()
     ndkVersion = System.getenv("JITPACK_NDK_VERSION") ?: project.properties.ndkVersion

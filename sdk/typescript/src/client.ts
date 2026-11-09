@@ -11,7 +11,7 @@ const readOnly = new Set(["system.hello", "system.capabilities", "system.describ
   "job.list", "job.get", "job.output.read", "process.list", "file.roots", "file.list", "file.stat", "file.read",
   "workspace.list", "workspace.get", "workspace.tasks",
   "resource.capabilities", "resource.snapshot", "job.resource.get", "job.history.list", "job.history.get", "job.diagnostics.export", "job.processes",
-  "workspace.service.list", "workspace.service.status", "workspace.service.health", "workspace.service.ports", "workspace.service.logs",
+  "workspace.service.list", "workspace.service.status", "workspace.service.health", "workspace.service.endpoint", "workspace.service.ports", "workspace.service.logs",
   "workspace.backup.status", "job.preview", "workspace.task.preview"]);
 type JsonObject = Record<string, unknown>;
 function object(value: unknown): value is JsonObject { return typeof value === "object" && value !== null && !Array.isArray(value); }

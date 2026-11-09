@@ -87,6 +87,8 @@ final class ControlMethodRegistry {
         new Descriptor("workspace.service.restart", true, "none", false, ControlCore.Scope.WORKSPACES_READ, ControlCore.Scope.JOBS_EXECUTE),
         new Descriptor("workspace.service.logs", false, "response", false, ControlCore.Scope.WORKSPACES_READ, ControlCore.Scope.JOBS_OUTPUT),
         new Descriptor("workspace.service.health", false, "none", false, ControlCore.Scope.WORKSPACES_READ),
+        // The answer can carry the run's credential, which controls the backend: it needs job execution consent too.
+        new Descriptor("workspace.service.endpoint", false, "none", false, ControlCore.Scope.WORKSPACES_READ, ControlCore.Scope.JOBS_EXECUTE),
         new Descriptor("workspace.service.ports", false, "none", false, ControlCore.Scope.WORKSPACES_READ),
         new Descriptor("workspace.service.proxy", true, "none", false, ControlCore.Scope.WORKSPACES_WRITE),
         new Descriptor("workspace.backup.export", true, "none", false, ControlCore.Scope.WORKSPACES_WRITE, ControlCore.Scope.FILES_READ),
