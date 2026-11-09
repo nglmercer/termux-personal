@@ -31,6 +31,9 @@ public final class DeviceCompatibilityAdvisor {
             ignoringBatteryOptimizations, notificationsAllowed;
         /** Number of other same-UID processes visible in /proc, if it could be listed. */
         public Integer visibleProcessCount;
+        /** Result of the virtualization check; null when it was not run. */
+        public Boolean isolatedVmSupported;
+        public List<String> isolatedVmBlockers = new ArrayList<>();
     }
 
     public static final class Item {
@@ -55,7 +58,7 @@ public final class DeviceCompatibilityAdvisor {
             limits.addProperty("rlimitCpu", nativeOk);
             limits.addProperty("cgroups", false);
             limits.addProperty("safeProcessStop", nativeOk);
-            limits.addProperty("virtualMachine", false);
+            limits.addProperty("virtualMachine", is("virtual_machine"));
             JsonObject root = new JsonObject();
             root.add("resourceLimits", limits);
             return root;
@@ -99,7 +102,10 @@ public final class DeviceCompatibilityAdvisor {
         if (Boolean.FALSE.equals(in.notificationsAllowed))
             items.add(new Item("notifications", Status.UNSUPPORTED, "notification permission is denied", "The foreground-service notification may be hidden; the service still runs on most versions."));
         items.add(new Item("cgroups", Status.UNSUPPORTED, "not attempted: writing cgroup limits needs privileges this app does not have", "Use per-job RLIMIT_* and parallelism limits instead."));
-        items.add(new Item("virtual_machine", Status.UNSUPPORTED, "no isolated execution backend is available", ""));
+        items.add(in.isolatedVmSupported == null ? new Item("virtual_machine", Status.UNKNOWN, "isolated execution was not checked", "")
+            : in.isolatedVmSupported ? new Item("virtual_machine", Status.SUPPORTED, "an isolated guest can be run", "")
+            : new Item("virtual_machine", Status.UNSUPPORTED, "no isolated execution backend is available"
+                + (in.isolatedVmBlockers.isEmpty() ? "" : ": " + in.isolatedVmBlockers.get(0)), "Native execution is unaffected."));
         return new Report(items, diagnostics(in), optionalChanges());
     }
 
@@ -192,6 +198,11 @@ public final class DeviceCompatibilityAdvisor {
             android.os.PowerManager pm = (android.os.PowerManager) context.getSystemService(android.content.Context.POWER_SERVICE);
             if (pm != null) in.ignoringBatteryOptimizations = pm.isIgnoringBatteryOptimizations(context.getPackageName());
         } catch (RuntimeException ignored) { }
+        try {
+            com.termux.app.control.execution.VirtualizationCapabilityDetector.Report vm = com.termux.app.control.execution.VirtualizationCapabilityDetector
+                .detect(com.termux.app.control.execution.VirtualizationCapabilityDetector.collect(context));
+            in.isolatedVmSupported = vm.supported; in.isolatedVmBlockers = new ArrayList<>(vm.blockers);
+        } catch (RuntimeException ignored) { in.isolatedVmSupported = null; }
         return in;
     }
 }
