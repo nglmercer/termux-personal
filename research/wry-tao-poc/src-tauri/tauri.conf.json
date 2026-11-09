@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Wry Tao PoC",
+  "version": "0.1.0",
+  "identifier": "com.termux.wrytaopoc",
+  "build": { "frontendDist": "../dist" },
+  "app": {
+    "windows": [{ "title": "Wry/Tao PoC" }],
+    "security": { "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'" }
+  },
+  "bundle": { "active": true, "icon": [] }
+}
