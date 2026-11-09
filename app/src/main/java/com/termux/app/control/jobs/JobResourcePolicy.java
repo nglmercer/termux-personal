@@ -109,7 +109,16 @@ public final class JobResourcePolicy {
     /** What the running device can enforce; supplied by the owner from real detection, never assumed. */
     public static final class Capabilities {
         public final boolean nativeLimits;
-        public Capabilities(boolean nativeLimits) { this.nativeLimits = nativeLimits; }
+        /**
+         * Smallest {@code RLIMIT_AS} a trivial process survives on this device, measured; zero when unknown. On Android 16 the
+         * dynamic linker reserves large address ranges, so a limit below this makes even {@code cat} abort at startup.
+         */
+        public final long minAddressSpaceBytes;
+        public Capabilities(boolean nativeLimits) { this(nativeLimits, 0); }
+        public Capabilities(boolean nativeLimits, long minAddressSpaceBytes) {
+            if (minAddressSpaceBytes < 0) throw new IllegalArgumentException("Invalid minimum");
+            this.nativeLimits = nativeLimits; this.minAddressSpaceBytes = minAddressSpaceBytes;
+        }
     }
 
     /** The limits that will really be requested of the child, and what could not be provided. */
@@ -143,6 +152,10 @@ public final class JobResourcePolicy {
             if (mAddressSpaceBytes != 0) { unsupported.add("addressSpaceBytes"); blocked = true; }
             if (mCpuTimeSeconds != 0) { unsupported.add("cpuTimeSeconds"); blocked = true; }
             if (nice >= 0) { unsupported.add("niceLevel"); if (mRequireNice) blocked = true; }
+        }
+        // A limit below what a trivial process needs here would only produce a job that aborts at once: refuse it instead.
+        if (capabilities.nativeLimits && mAddressSpaceBytes != 0 && capabilities.minAddressSpaceBytes > mAddressSpaceBytes) {
+            unsupported.add("addressSpaceBytes"); blocked = true;
         }
         ManagedNative.NativeLimits limits = capabilities.nativeLimits ?
             new ManagedNative.NativeLimits(mAddressSpaceBytes, mCpuTimeSeconds, nice, required) : ManagedNative.NativeLimits.NONE;

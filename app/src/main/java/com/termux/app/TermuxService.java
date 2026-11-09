@@ -111,6 +111,7 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
     private com.termux.app.control.jobs.ResourceAdmissionController mJobAdmission;
     private com.termux.app.control.workspace.WorkspaceServiceController mServiceController;
     private com.termux.app.control.workspace.WorkspacePortService mPortService;
+    private com.termux.app.control.workspace.WorkspaceBackupService mBackupService;
     /** Process listing and workspace store are created once per service on the start worker, under their own lock. */
     private final Object mDomainLock = new Object();
     private com.termux.app.control.process.ProcessService mProcessService;
@@ -248,6 +249,7 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
             // Services first: closing it prevents any restart from racing with the coordinator shutting down.
             if (mServiceController != null) mServiceController.close();
             if (mPortService != null) mPortService.close();
+            if (mBackupService != null) mBackupService.close();
             if (mJobCoordinator != null) mJobCoordinator.stopAccepting();
         }
         if (mOutputSubscriptions != null) mOutputSubscriptions.close();
@@ -1124,9 +1126,12 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
             if (workspaces) {
                 if (mPortService == null) mPortService = new com.termux.app.control.workspace.WorkspacePortService();
                 ports = mPortService;
-                if (android.os.Build.VERSION.SDK_INT >= 26)
-                    backup = new com.termux.app.control.workspace.WorkspaceBackupService(new java.io.File(getFilesDir(), "workspace-backups"),
-                        com.termux.app.control.workspace.WorkspaceBackupService.Limits.defaults());
+                if (android.os.Build.VERSION.SDK_INT >= 26) {
+                    // One instance per service lifetime, so background operations survive a reconnect of the control socket.
+                    if (mBackupService == null) mBackupService = new com.termux.app.control.workspace.WorkspaceBackupService(
+                        new java.io.File(getFilesDir(), "workspace-backups"), com.termux.app.control.workspace.WorkspaceBackupService.Limits.defaults());
+                    backup = mBackupService;
+                }
             }
         }
         server.configureExtras(resource, services, backup, ports);

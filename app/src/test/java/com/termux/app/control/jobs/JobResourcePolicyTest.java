@@ -113,4 +113,17 @@ public class JobResourcePolicyTest {
         small.remove("1");
         assertTrue("removal returns the reserved bytes", small.reserve("3") != null);
     }
+
+    @Test public void anAddressSpaceLimitBelowTheMeasuredDeviceMinimumIsRefusedNotAccepted() {
+        long gib = 1L << 30;
+        JobResourcePolicy small = JobResourcePolicy.builder().addressSpaceBytes(2 * gib).build();
+        JobResourcePolicy.Effective refused = small.resolve(new JobResourcePolicy.Capabilities(true, 4 * gib));
+        assertTrue("a limit under which even a trivial process aborts would only produce a job that dies at once", refused.blocked);
+        assertEquals(java.util.Collections.singletonList("addressSpaceBytes"), refused.unsupported);
+        assertFalse(small.resolve(new JobResourcePolicy.Capabilities(true, 2 * gib)).blocked);
+        assertFalse("an unknown minimum never blocks", small.resolve(new JobResourcePolicy.Capabilities(true, 0)).blocked);
+        assertFalse("no address-space limit asked, nothing to refuse",
+            JobResourcePolicy.ofProfile(JobResourcePolicy.Profile.BALANCED).resolve(new JobResourcePolicy.Capabilities(true, 8 * gib)).blocked);
+        try { new JobResourcePolicy.Capabilities(true, -1); fail("negative minimum"); } catch (IllegalArgumentException expected) { }
+    }
 }

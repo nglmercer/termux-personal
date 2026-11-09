@@ -6,7 +6,7 @@ const WS_ID = "ws_0123456789abcdef";
 const METHODS = ["system.hello", "system.capabilities", "resource.capabilities", "resource.snapshot", "job.resource.get", "job.history.list", "job.history.get",
   "job.diagnostics.export", "job.processes", "job.start", "workspace.get", "workspace.update", "workspace.service.list", "workspace.service.status",
   "workspace.service.start", "workspace.service.stop", "workspace.service.restart", "workspace.service.logs", "workspace.service.health",
-  "workspace.service.ports", "workspace.service.proxy", "workspace.backup.export", "workspace.backup.import"];
+  "workspace.service.ports", "workspace.service.proxy", "workspace.backup.export", "workspace.backup.import", "workspace.backup.status", "workspace.backup.cancel", "job.preview", "workspace.task.preview"];
 const SERVICE = { workspaceId: WS_ID, serviceId: "dev-server", state: "running", restartPolicy: "never", jobId: "job_1", restartsInWindow: 0,
   nextStartInMillis: null, lastReason: null, lastExitCode: null, ports: [3000] };
 const JOB = { id: "job_1", state: "queued", startedAt: null, endedAt: null, exitCode: null, failureCode: null, pid: null, workspaceId: null,
@@ -146,4 +146,36 @@ test("methods the server does not advertise raise UnavailableError", async () =>
   const client = await TermuxClient.fromTransport(new Mock(replying({}), ["system.hello", "system.capabilities"]));
   await assert.rejects(client.resources.snapshot(), UnavailableError);
   await assert.rejects(client.services.list(WS_ID), UnavailableError);
+});
+
+const OP = { id: "bk_1", kind: "export", workspaceId: WS_ID, state: "running", files: 3, bytes: 10, startedAt: 1, endedAt: null, result: null, error: null };
+
+test("background backups return an operation and expose progress and cancellation", async () => {
+  const sentParams: Array<Record<string, unknown>> = [];
+  const peer = new Mock((request, t) => { sentParams.push(request.params as Record<string, unknown>); t.reply(request, { operation: OP }); });
+  const client = await TermuxClient.fromTransport(peer);
+  const op = await client.backups.export(WS_ID, { background: true });
+  assert.equal(op.state, "running");
+  assert.equal(sentParams[0].async, true);
+  assert.equal((await client.backups.status("bk_1")).files, 3);
+  assert.equal((await client.backups.cancel("bk_1")).id, "bk_1");
+  await client.backups.restore(WS_ID, "b.zip", { background: true });
+  assert.equal(sentParams[sentParams.length - 1].async, true);
+  await assert.rejects((await TermuxClient.fromTransport(new Mock(replying({ operation: { ...OP, state: "weird" } })))).backups.export(WS_ID, { background: true }),
+    (error: unknown) => error instanceof ProtocolError && error.outcomeUnknown === true);
+  await assert.rejects((await TermuxClient.fromTransport(new Mock(replying({ operation: { ...OP, files: -1 } })))).backups.status("bk_1"), ProtocolError);
+  const plain = new Mock(replying({ backup: { id: "x", format: "zip", files: 1, bytes: 1, archiveBytes: 1, truncated: false, skipped: { excluded: 0, sensitive: 0, links: 0, unsafe: 0 } } }));
+  await (await TermuxClient.fromTransport(plain)).backups.export(WS_ID);
+  assert.ok(!("async" in (plain.requests.find(r => r.method === "workspace.backup.export")?.params as Record<string, unknown>)));
+});
+
+test("previews validate the response and send the same parameters as a start", async () => {
+  const preview = { executable: "cargo", arguments: ["build", "-j", "2"], presetApplied: true, changed: true, notes: ["cargo -j 2"], resources: { profile: "balanced" } };
+  const peer = new Mock(replying(preview));
+  const client = await TermuxClient.fromTransport(peer);
+  const result = await client.jobs.preview({ executable: "cargo", args: ["build"], resources: { profile: "balanced", applyBuildPreset: true } });
+  assert.deepEqual(result.arguments, ["build", "-j", "2"]);
+  assert.deepEqual(peer.requests.find(r => r.method === "job.preview")?.params, { executable: "cargo", args: ["build"], resources: { profile: "balanced", applyBuildPreset: true } });
+  assert.equal((await client.workspaces.previewTask(WS_ID, "build")).changed, true);
+  await assert.rejects((await TermuxClient.fromTransport(new Mock(replying({ ...preview, arguments: [1] })))).jobs.preview({ executable: "cargo", args: [] }), ProtocolError);
 });

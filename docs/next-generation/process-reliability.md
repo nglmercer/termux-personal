@@ -38,11 +38,36 @@ Device-aware resource policy, workspace profiles and per-task resources, managed
 
 ## Not implemented yet
 
-A working isolated execution backend: only the abstraction and capability detection exist, and the VM is reported as unsupported (see [execution-backend.md](execution-backend.md)). A preview API for the effective command of a build preset, Node heap limits through `job.start`, and progress or cancellation of backups over RPC. The UI and everything native have not been run on a device.
+A working isolated execution backend: only the abstraction and capability detection exist, and the VM is reported as unsupported (see [execution-backend.md](execution-backend.md)). The UI (the jobs dialog) has not been exercised on a device.
+
+## Verification on Android
+
+Run on a physical POCO X3 Pro (`vayu`, Android 16 / API 36, kernel 4.14, arm64-v8a) over ADB, with the debug build installed:
+
+* `ManagedLimitsInstrumentedTest` (9 tests) passes. It confirms on bionic and the app's seccomp policy that `RLIMIT_AS`, `RLIMIT_CPU` and `nice` are applied to the child only and the app's own limits are unchanged, that a CPU-bound child is ended by its CPU limit (`SIGXCPU`/`SIGKILL`), that a required limit that cannot be applied fails the launch and is attributed to the limit, that `ProcessSnapshot` finds an owned child and its descendants, and, through the production coordinator, AppShell and the owned launcher, that a job with a resource policy reaches `RUNNING`, has exactly the requested limits, is measured through `/proc` by the supervisor, is cancelled, and releases its admission slot.
+* `WorkspaceExtrasInstrumentedTest` (5 tests, repeated twice) passes on the production coordinator, AppShell and owned launcher, with `java.nio.file` and loopback sockets on this Android version: a workspace service starts, has a live owned child and stops through its owned handle with its end recorded as evidence; a failing `on-failure` service is restarted with backoff and ends in `crash_loop` after the configured number of restarts, with no further attempts; the supervisor measures real memory growth (a child holding about 40 MB), records `MEMORY_SOFT_EXCEEDED` against a 16 MiB threshold and, being warn-only, never stops the job; a tar.gz and a ZIP backup round-trip with symbolic links, sensitive files and excluded directories handled, and a hostile archive (traversal, an absolute path, a write through a planted symlink) writes only its one harmless file; a loopback proxy relays traffic and a loopback-only listener is not reported as LAN exposed.
+* `RpcOnDeviceInstrumentedTest` (5 tests, repeated) drives the JSON-RPC dispatcher in process over the same real runtime: `resource.capabilities` reports from measurement that this device has the native launcher, `RLIMIT_AS`/`RLIMIT_CPU` and `/proc` monitoring and that cgroups and a VM are not available; `resource.snapshot` reports the real RAM and CPU count; a job started with a resource policy is limited, measured, listed by `job.processes`, recorded with `NORMAL_EXIT`/`confirmed` evidence and reported without leaking app paths in the shared diagnostics; an address-space limit the device cannot run is refused as `UNSUPPORTED`; `job.preview` returns a worker count capped by this device's CPUs and starts nothing; and a workspace service starts and stops over RPC.
+* The whole `com.termux.app.control` instrumented package passes (27 tests, including the existing managed-native, owned-child and worker-policy tests).
+* The full instrumented suite has 15 failures, all in packages this work does not touch (`compat.cli`, `compat.network`, `compat.runtime`, `extrakeys`, `filepicker`): package-private access across the test APK, an ELF-inspection expectation and a hard-link permission on this device. They are not caused by these changes.
+
+**Findings from the device.** (1)  on this Android 16 build the dynamic linker reserves enough address space that any process, even `cat`, aborts at startup with an `RLIMIT_AS` of 2 GiB or less, and starts at 4 GiB. A small limit would therefore only produce a job that dies at once. The minimum is not a constant: `ManagedNative.minAddressSpaceBytes()` measures it once by launching a trivial child under ascending limits, and a job that asks for a lower `addressSpaceBytes` is refused before admission as `UNSUPPORTED` (an unknown minimum never blocks). The probe runs only when a job asks for an address-space limit. Other devices were not tested, which is why it is measured and not hard-coded. (2) `InetAddress.getLoopbackAddress()` is `::1` on this Android build, so a service listening on `127.0.0.1` looked closed and a relay could not reach it. The port service now uses the IPv4 literal `127.0.0.1` everywhere, as its contract says.
+
+**Local control socket and UI, driven by hand over ADB** (with the owner enabling Local control in the app, and the CLI built on the phone from `tools/termux-control`):
+
+* Over the real socket, `resources capabilities`, `jobs start|run|list|resource|processes|history-get` and `jobs cancel` behave as the in-process tests do. A job started without `resources` is unmanaged (`limits: null`, no metrics, as the opt-in rule requires); one started with `--profile balanced` reports `limits.profile = balanced`, live RSS/CPU/process metrics and its root process.
+* The Managed jobs dialog lists real jobs, opens a detail view with the resources line, and its Cancel job button asks for confirmation, moves the job through `cancelling` to `cancelled`, and the detail then shows `USER_CANCELLED (confidence confirmed)` plus the evidence that is not available (`ApplicationExitInfo` for native children, logcat). A job that ends by itself shows `NORMAL_EXIT`.
+* Replacing the app while two jobs were running made both appear in the history as `lost` / `SERVICE_LOST` after the restart, and the earlier finished jobs kept their `exited` / `NORMAL_EXIT` records. No process id is stored.
+* Found and fixed here: the detail dialog showed `profile unknown` for a running job, because the stored record is only loaded for finished jobs. It now takes the profile from the live policy first. A record stored while a job runs still says `STARTING`; it is only an "unfinished" marker used for LOST recovery, and the live state comes from the registry.
+
+Not covered on the device: the thermal and low-memory pressure paths of the supervisor (real memory pressure is deliberately not induced) and the VM backend, which reports `UNSUPPORTED` here. The x86_64 emulator was not usable on the build host (no KVM).
+
+## Test environment
+
+The unit suite passes in full (0 failures) on JDK 21. On JDK 27 the 35 Robolectric tests fail to start (`ClassReader`), identically with and without these changes, because Robolectric 4.10 cannot instrument classes with that JDK. Run Gradle with `-Dorg.gradle.java.home=<JDK 21>` to run them.
 
 ## Known limits
 
 * Descendants that call `setsid` or change process group are outside the group signal and may survive a stop. The supervisor's RSS sum also loses a descendant once its parent exits and it is reparented.
 * Android may hide other processes from `/proc`; the snapshot reports `incomplete` and metrics stay `null` rather than zero.
 * The sampler is a poll; the low-memory killer can act between samples.
-* Native limits rely on `setrlimit`/`setpriority`, which no seccomp policy is known to block, but this has not been run on a device.
+* Native limits rely on `setrlimit`/`setpriority`. They were applied and verified on one device (see above); other devices and ROMs were not tested, and the address-space minimum in particular varies.

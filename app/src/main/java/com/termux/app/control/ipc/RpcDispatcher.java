@@ -289,6 +289,10 @@ public final class RpcDispatcher {
             case "workspace.service.proxy": return serviceProxy(request.params, scopes);
             case "workspace.backup.export": return backupExport(request.params, scopes);
             case "workspace.backup.import": return backupImport(request.params, scopes);
+            case "workspace.backup.status": return backupStatus(request.params, scopes);
+            case "workspace.backup.cancel": return backupCancel(request.params, scopes);
+            case "job.preview": return jobPreview(request.params, scopes);
+            case "workspace.task.preview": return workspaceTaskPreview(request.params, scopes);
             default: throw new UnknownMethod();
         }
     }
@@ -309,32 +313,114 @@ public final class RpcDispatcher {
         return lease;
     }
 
+    private static final String[] JOB_START_KEYS = {"executable", "args", "cwd", "workspaceId", "env", "stdin", "timeoutMs", "presentation", "clientRequestId", "resources"};
+
     private Object jobStart(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
         JobCoordinator jobs = requireJobs();
         JobAuthority.Lease lease = jobLease(scopes, ControlCore.Scope.JOBS_EXECUTE);
-        Map<?, ?> p = parameters(params, "executable", "args", "cwd", "workspaceId", "env", "stdin", "timeoutMs",
-            "presentation", "clientRequestId", "resources");
-        JobSpec spec;
+        return startedJob(jobs.start(planJob(parameters(params, JOB_START_KEYS)).spec, lease));
+    }
+
+    /**
+     * What a job would run: the validated spec plus how a build preset changed it. {@code job.start} and {@code job.preview} share
+     * {@link #planJob}, so a preview can never differ from what a start would really launch.
+     */
+    private static final class Planned {
+        final JobSpec spec; final BuildPresets.Preview preview; final boolean presetApplied;
+        Planned(JobSpec spec, BuildPresets.Preview preview, boolean presetApplied) { this.spec = spec; this.preview = preview; this.presetApplied = presetApplied; }
+    }
+
+    private Planned planJob(Map<?, ?> p) throws BadParameters, DomainError {
         try {
             JobResourcePolicy resources = resourcePolicy(p);
             String executable = string(p, "executable");
             List<String> args = stringList(p, "args");
             Map<String, String> env = stringMap(p, "env");
+            boolean preset = resources != null && presetRequested(p);
+            int nodeHeap = nodeHeapMiB(p);
+            if (nodeHeap > 0 && !preset) throw new IllegalArgumentException("nodeHeapMiB needs applyBuildPreset");
+            BuildPresets.Preview preview = null;
             // Opt-in only: a known build tool gets a worker-count recommendation, and nothing the caller set is overridden.
-            if (resources != null && presetRequested(p)) {
+            if (preset) {
                 JobResourcePolicy sized = resources.processConcurrencyHint() == 0 && mServices.extras.resource != null ?
                     withRecommendedWorkers(resources, mServices.extras.resource) : resources;
-                BuildPresets.Preview preview = BuildPresets.apply(executable, args, new ArrayList<>(env.keySet()),
-                    sized.effectiveConcurrencyHint(), Runtime.getRuntime().availableProcessors(), 0);
+                preview = BuildPresets.apply(executable, args, new ArrayList<>(env.keySet()), sized.effectiveConcurrencyHint(),
+                    Runtime.getRuntime().availableProcessors(), nodeHeap);
                 args = preview.arguments;
             }
-            spec = new JobSpec(executable, args, optionalString(p, "cwd"),
-                optionalString(p, "workspaceId"), env, optionalStdin(p), longNumberOrDefault(p, "timeoutMs", 0),
-                presentation(p), optionalString(p, "clientRequestId"), resources);
+            JobSpec spec = new JobSpec(executable, args, optionalString(p, "cwd"), optionalString(p, "workspaceId"), env, optionalStdin(p),
+                longNumberOrDefault(p, "timeoutMs", 0), presentation(p), optionalString(p, "clientRequestId"), resources);
+            return new Planned(spec, preview, preset);
         } catch (IllegalArgumentException e) {
             throw new DomainError("INVALID_REQUEST");
         }
-        return startedJob(jobs.start(spec, lease));
+    }
+
+    /** {@code resources.nodeHeapMiB}: the Node.js old-space limit a preset may add. Zero when absent. */
+    private static int nodeHeapMiB(Map<?, ?> p) throws BadParameters {
+        Object resources = p.get("resources");
+        if (!(resources instanceof Map) || ((Map<?, ?>) resources).get("nodeHeapMiB") == null) return 0;
+        long value = longNumber((Map<?, ?>) resources, "nodeHeapMiB");
+        if (value < 64 || value > 16384) throw new IllegalArgumentException("nodeHeapMiB out of range");
+        return (int) value;
+    }
+
+    private static Map<String, Object> previewResult(Planned plan) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("executable", plan.spec.executable());
+        result.put("arguments", new ArrayList<Object>(plan.spec.arguments()));
+        result.put("presetApplied", plan.presetApplied);
+        result.put("changed", plan.preview != null && plan.preview.changed);
+        List<Object> notes = new ArrayList<>();
+        if (plan.preview == null) notes.add("no build preset requested; the command is exactly as given");
+        else notes.addAll(plan.preview.notes);
+        result.put("notes", notes);
+        result.put("resources", plan.spec.resources() == null ? null : plainPolicy(plan.spec.resources()));
+        return result;
+    }
+
+    /** The effective command of a start, without starting anything. */
+    private Object jobPreview(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
+        requireJobs();
+        jobLease(scopes, ControlCore.Scope.JOBS_READ);
+        return previewResult(planJob(parameters(params, JOB_START_KEYS)));
+    }
+
+    /** The effective command of a stored task, exactly as {@code workspace.task.run} would launch it. */
+    private Object workspaceTaskPreview(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
+        WorkspaceRepository workspaces = requireWorkspaces();
+        requireWorkspaceScope(scopes, ControlCore.Scope.WORKSPACES_READ);
+        Map<?, ?> p = parameters(params, "workspaceId", "taskId");
+        String workspaceId = string(p, "workspaceId");
+        return previewResult(planTask(workspaces, workspaceId, findPreset(workspaces, workspaceId, string(p, "taskId")), null));
+    }
+
+    private static WorkspaceRepository.TaskPreset findPreset(WorkspaceRepository workspaces, String workspaceId, String taskId) throws DomainError {
+        if (!workspaceCall(() -> workspaces.get(workspaceId)).available) throw new DomainError("UNAVAILABLE");
+        for (WorkspaceRepository.TaskPreset candidate : workspaceCall(() -> workspaces.tasks(workspaceId))) if (candidate.id.equals(taskId)) return candidate;
+        throw new DomainError("NOT_FOUND");
+    }
+
+    private Planned planTask(WorkspaceRepository workspaces, String workspaceId, WorkspaceRepository.TaskPreset preset, String clientRequestId) throws DomainError {
+        try {
+            // A preset's own policy wins, then the workspace's profile; neither means the historical, unrestricted run.
+            WorkspaceRepository.Workspace owner = workspaceCall(() -> workspaces.get(workspaceId));
+            JobResourcePolicy resources = preset.resources != null ? preset.resources :
+                owner.resourceProfile == null ? null : JobResourcePolicy.ofProfile(owner.resourceProfile);
+            List<String> arguments = preset.args;
+            BuildPresets.Preview preview = null;
+            if (resources != null) {
+                if (mServices.extras.resource != null && resources.processConcurrencyHint() == 0) resources = withRecommendedWorkers(resources, mServices.extras.resource);
+                // Stored presets are trusted state that opted into a profile, so known build tools get the worker recommendation.
+                preview = BuildPresets.apply(preset.executable, arguments, Collections.<String>emptyList(), resources.effectiveConcurrencyHint(),
+                    Runtime.getRuntime().availableProcessors(), 0);
+                arguments = preview.arguments;
+            }
+            return new Planned(new JobSpec(preset.executable, arguments, null, workspaceId, Collections.<String, String>emptyMap(), null,
+                preset.timeoutMillis, JobSpec.Presentation.BACKGROUND, clientRequestId, resources), preview, resources != null);
+        } catch (IllegalArgumentException e) {
+            throw new DomainError("INVALID_REQUEST");
+        }
     }
 
     /** The profile's concurrency hint, replaced by the device-aware recommendation when this device has one. */
@@ -378,7 +464,7 @@ public final class RpcDispatcher {
     private static JobResourcePolicy resourcePolicyFrom(Object value, boolean allowPreset) throws BadParameters {
         if (value == null) return null;
         Map<?, ?> r = allowPreset ?
-            parameters(value, "profile", "memorySoftBytes", "addressSpaceBytes", "cpuTimeSeconds", "maxOutputBytes", "processConcurrencyHint", "niceLevel", "onPressure", "requireNice", "applyBuildPreset") :
+            parameters(value, "profile", "memorySoftBytes", "addressSpaceBytes", "cpuTimeSeconds", "maxOutputBytes", "processConcurrencyHint", "niceLevel", "onPressure", "requireNice", "applyBuildPreset", "nodeHeapMiB") :
             parameters(value, "profile", "memorySoftBytes", "addressSpaceBytes", "cpuTimeSeconds", "maxOutputBytes", "processConcurrencyHint", "niceLevel", "onPressure", "requireNice");
         JobResourcePolicy.Builder builder = JobResourcePolicy.builder();
         try {
@@ -422,34 +508,8 @@ public final class RpcDispatcher {
         JobAuthority.Lease lease = jobLease(scopes, ControlCore.Scope.JOBS_EXECUTE);
         Map<?, ?> p = parameters(params, "workspaceId", "taskId", "clientRequestId");
         String workspaceId = string(p, "workspaceId");
-        String taskId = string(p, "taskId");
-        String clientRequestId = optionalString(p, "clientRequestId");
-        if (!workspaceCall(() -> workspaces.get(workspaceId)).available) throw new DomainError("UNAVAILABLE");
-        WorkspaceRepository.TaskPreset preset = null;
-        for (WorkspaceRepository.TaskPreset candidate : workspaceCall(() -> workspaces.tasks(workspaceId))) {
-            if (candidate.id.equals(taskId)) preset = candidate;
-        }
-        if (preset == null) throw new DomainError("NOT_FOUND");
-        JobSpec spec;
-        try {
-            // A preset's own policy wins, then the workspace's profile; neither means the historical, unrestricted run.
-            WorkspaceRepository.Workspace owner = workspaceCall(() -> workspaces.get(workspaceId));
-            JobResourcePolicy resources = preset.resources != null ? preset.resources :
-                owner.resourceProfile == null ? null : JobResourcePolicy.ofProfile(owner.resourceProfile);
-            List<String> arguments = preset.args;
-            if (resources != null && mServices.extras.resource != null && resources.processConcurrencyHint() == 0)
-                resources = withRecommendedWorkers(resources, mServices.extras.resource);
-            if (resources != null) {
-                // Stored presets are trusted state that opted into a profile, so known build tools get the worker recommendation.
-                arguments = BuildPresets.apply(preset.executable, arguments, Collections.<String>emptyList(), resources.effectiveConcurrencyHint(),
-                    Runtime.getRuntime().availableProcessors(), 0).arguments;
-            }
-            spec = new JobSpec(preset.executable, arguments, null, workspaceId, Collections.<String, String>emptyMap(), null,
-                preset.timeoutMillis, JobSpec.Presentation.BACKGROUND, clientRequestId, resources);
-        } catch (IllegalArgumentException e) {
-            throw new DomainError("INVALID_REQUEST");
-        }
-        return startedJob(jobs.start(spec, lease));
+        WorkspaceRepository.TaskPreset preset = findPreset(workspaces, workspaceId, string(p, "taskId"));
+        return startedJob(jobs.start(planTask(workspaces, workspaceId, preset, optionalString(p, "clientRequestId")).spec, lease));
     }
 
     private Object jobList(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
@@ -1484,25 +1544,30 @@ public final class RpcDispatcher {
         WorkspaceRepository workspaces = requireWorkspaces();
         requireWorkspaceScope(scopes, ControlCore.Scope.WORKSPACES_WRITE);
         requireWorkspaceScope(scopes, ControlCore.Scope.FILES_READ);
-        Map<?, ?> p = parameters(params, "workspaceId", "format", "includeSensitive");
+        Map<?, ?> p = parameters(params, "workspaceId", "format", "includeSensitive", "async");
         String ws = string(p, "workspaceId");
-        com.termux.app.control.workspace.WorkspaceBackupService.Format format;
+        final com.termux.app.control.workspace.WorkspaceBackupService.Format format;
         try { format = p.containsKey("format") ? com.termux.app.control.workspace.WorkspaceBackupService.Format.parse(string(p, "format")) : com.termux.app.control.workspace.WorkspaceBackupService.Format.ZIP; }
         catch (IllegalArgumentException e) { throw new BadParameters(); }
-        boolean sensitive = p.containsKey("includeSensitive") && booleanValue(p, "includeSensitive");
+        final boolean sensitive = p.containsKey("includeSensitive") && booleanValue(p, "includeSensitive");
+        boolean async = p.containsKey("async") && booleanValue(p, "async");
         if (!workspaceCall(() -> workspaces.get(ws)).available) throw new DomainError("UNAVAILABLE");
+        final byte[] config = workspaceCall(() -> workspaces.exportConfig(ws));
+        final java.io.File directory = workspaceCall(() -> workspaces.directory(ws));
+        if (async) return startBackupOperation(backup, "export", ws, control -> exportResult(backup.export(ws, directory, config, format, sensitive, control)));
         try {
-            byte[] config = workspaceCall(() -> workspaces.exportConfig(ws));
-            com.termux.app.control.workspace.WorkspaceBackupService.Summary s = backup.export(ws, workspaceCall(() -> workspaces.directory(ws)), config, format, sensitive,
-                new com.termux.app.control.workspace.WorkspaceBackupService.Control());
-            Map<String, Object> b = new LinkedHashMap<>();
-            b.put("id", s.backupId); b.put("format", s.format.wireName); b.put("files", s.files); b.put("bytes", s.bytes); b.put("archiveBytes", s.archiveBytes);
-            b.put("truncated", s.truncated);
-            Map<String, Object> skipped = new LinkedHashMap<>();
-            skipped.put("excluded", s.skippedExcluded); skipped.put("sensitive", s.skippedSensitive); skipped.put("links", s.skippedLinks); skipped.put("unsafe", s.skippedUnsafe);
-            b.put("skipped", skipped);
-            return Collections.singletonMap("backup", b);
+            return exportResult(backup.export(ws, directory, config, format, sensitive, new com.termux.app.control.workspace.WorkspaceBackupService.Control()));
         } catch (java.io.IOException e) { throw new DomainError("UNAVAILABLE"); }
+    }
+
+    private static Map<String, Object> exportResult(com.termux.app.control.workspace.WorkspaceBackupService.Summary s) {
+        Map<String, Object> b = new LinkedHashMap<>();
+        b.put("id", s.backupId); b.put("format", s.format.wireName); b.put("files", s.files); b.put("bytes", s.bytes); b.put("archiveBytes", s.archiveBytes);
+        b.put("truncated", s.truncated);
+        Map<String, Object> skipped = new LinkedHashMap<>();
+        skipped.put("excluded", s.skippedExcluded); skipped.put("sensitive", s.skippedSensitive); skipped.put("links", s.skippedLinks); skipped.put("unsafe", s.skippedUnsafe);
+        b.put("skipped", skipped);
+        return Collections.<String, Object>singletonMap("backup", b);
     }
 
     /** Restoring is destructive only with overwrite, and overwrite needs explicit confirmation from the caller. */
@@ -1511,29 +1576,74 @@ public final class RpcDispatcher {
         WorkspaceRepository workspaces = requireWorkspaces();
         requireWorkspaceScope(scopes, ControlCore.Scope.WORKSPACES_WRITE);
         requireWorkspaceScope(scopes, ControlCore.Scope.FILES_WRITE);
-        Map<?, ?> p = parameters(params, "workspaceId", "backupId", "paths", "overwrite", "confirm", "applyConfig");
-        String ws = string(p, "workspaceId");
-        boolean overwrite = p.containsKey("overwrite") && booleanValue(p, "overwrite");
+        Map<?, ?> p = parameters(params, "workspaceId", "backupId", "paths", "overwrite", "confirm", "applyConfig", "async");
+        final String ws = string(p, "workspaceId");
+        final boolean overwrite = p.containsKey("overwrite") && booleanValue(p, "overwrite");
         boolean confirm = p.containsKey("confirm") && booleanValue(p, "confirm");
         if (overwrite && !confirm) throw new DomainError("PERMISSION_REQUIRED");
-        boolean apply = p.containsKey("applyConfig") && booleanValue(p, "applyConfig");
+        final boolean apply = p.containsKey("applyConfig") && booleanValue(p, "applyConfig");
         if (apply && !confirm) throw new DomainError("PERMISSION_REQUIRED"); // replaces tasks and services
-        List<String> paths = p.containsKey("paths") ? stringList(p, "paths") : null;
+        boolean async = p.containsKey("async") && booleanValue(p, "async");
+        final List<String> paths = p.containsKey("paths") ? stringList(p, "paths") : null;
         if (paths != null && paths.size() > 64) throw new BadParameters();
         if (!workspaceCall(() -> workspaces.get(ws)).available) throw new DomainError("UNAVAILABLE");
-        java.io.File archive = backup.resolve(ws, string(p, "backupId"));
+        final java.io.File archive = backup.resolve(ws, string(p, "backupId"));
         if (archive == null) throw new DomainError("NOT_FOUND");
-        final byte[][] config = new byte[1][];
+        final java.io.File directory = workspaceCall(() -> workspaces.directory(ws));
+        if (async) return startBackupOperation(backup, "import", ws, control -> restoreResult(backup, workspaces, ws, archive, directory, paths, overwrite, apply, control));
         try {
-            com.termux.app.control.workspace.WorkspaceBackupService.Summary s = backup.restore(archive.getName(), archive, workspaceCall(() -> workspaces.directory(ws)),
-                paths, overwrite, new com.termux.app.control.workspace.WorkspaceBackupService.Control(), c -> config[0] = c);
-            boolean applied = false;
-            if (apply && config[0] != null) { workspaceCall(() -> workspaces.applyConfig(ws, config[0])); applied = true; }
-            Map<String, Object> r = new LinkedHashMap<>();
-            r.put("files", s.files); r.put("bytes", s.bytes); r.put("conflicts", s.conflicts); r.put("skippedUnsafe", s.skippedUnsafe);
-            r.put("truncated", s.truncated); r.put("configApplied", applied);
-            return Collections.singletonMap("restore", r);
+            return restoreResult(backup, workspaces, ws, archive, directory, paths, overwrite, apply, new com.termux.app.control.workspace.WorkspaceBackupService.Control());
         } catch (java.io.IOException e) { throw new DomainError("INVALID_REQUEST"); }
+    }
+
+    private static Map<String, Object> restoreResult(com.termux.app.control.workspace.WorkspaceBackupService backup, WorkspaceRepository workspaces, String ws,
+            java.io.File archive, java.io.File directory, List<String> paths, boolean overwrite, boolean apply,
+            com.termux.app.control.workspace.WorkspaceBackupService.Control control) throws java.io.IOException {
+        final byte[][] config = new byte[1][];
+        com.termux.app.control.workspace.WorkspaceBackupService.Summary s = backup.restore(archive.getName(), archive, directory, paths, overwrite, control, c -> config[0] = c);
+        boolean applied = false;
+        if (apply && config[0] != null) {
+            try { workspaces.applyConfig(ws, config[0]); applied = true; }
+            catch (WorkspaceRepository.WorkspaceException e) { throw new java.io.IOException("Stored workspace definition was refused"); }
+        }
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("files", s.files); r.put("bytes", s.bytes); r.put("conflicts", s.conflicts); r.put("skippedUnsafe", s.skippedUnsafe);
+        r.put("truncated", s.truncated); r.put("configApplied", applied);
+        return Collections.<String, Object>singletonMap("restore", r);
+    }
+
+    private Object startBackupOperation(com.termux.app.control.workspace.WorkspaceBackupService backup, String kind, String ws,
+                                        com.termux.app.control.workspace.BackupOperations.Task task) throws DomainError {
+        try { return Collections.singletonMap("operation", operationMap(backup.operations().submit(kind, ws, task))); }
+        catch (com.termux.app.control.workspace.BackupOperations.BusyException e) { throw new DomainError("RESOURCE_LIMITED"); }
+    }
+
+    private static Map<String, Object> operationMap(com.termux.app.control.workspace.BackupOperations.View v) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", v.id); m.put("kind", v.kind); m.put("workspaceId", v.workspaceId);
+        m.put("state", v.state.name().toLowerCase(java.util.Locale.ROOT));
+        m.put("files", v.files); m.put("bytes", v.bytes); m.put("startedAt", v.startedAt); m.put("endedAt", v.endedAt);
+        m.put("result", v.result); m.put("error", v.error);
+        return m;
+    }
+
+    private Object backupStatus(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
+        com.termux.app.control.workspace.WorkspaceBackupService backup = requireBackup();
+        requireWorkspaceScope(scopes, ControlCore.Scope.WORKSPACES_READ);
+        com.termux.app.control.workspace.BackupOperations.View v = backup.operations().get(string(parameters(params, "operationId"), "operationId"));
+        if (v == null) throw new DomainError("NOT_FOUND");
+        return Collections.singletonMap("operation", operationMap(v));
+    }
+
+    /** Cooperative: the operation stops between chunks and removes its temporary files. Poll status for the outcome. */
+    private Object backupCancel(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
+        com.termux.app.control.workspace.WorkspaceBackupService backup = requireBackup();
+        requireWorkspaceScope(scopes, ControlCore.Scope.WORKSPACES_WRITE);
+        String id = string(parameters(params, "operationId"), "operationId");
+        com.termux.app.control.workspace.BackupOperations operations = backup.operations();
+        if (operations.get(id) == null) throw new DomainError("NOT_FOUND");
+        if (!operations.cancel(id)) throw new DomainError("CONFLICT"); // already finished
+        return Collections.singletonMap("operation", operationMap(operations.get(id)));
     }
 
     private static final class DomainError extends Exception {

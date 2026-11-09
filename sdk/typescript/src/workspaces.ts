@@ -1,6 +1,7 @@
 import type { TermuxClient } from "./client.ts";
 import { ProtocolError, UnavailableError } from "./errors.ts";
 import { type JobRecord, jobRecord } from "./jobs.ts";
+import { commandPreview, type CommandPreview } from "./resources.ts";
 
 export interface TaskPreset { id: string; label: string; executable: string; args: string[]; timeoutMs: number; resources?: Record<string, unknown> }
 export type WorkspaceProfile = "unrestricted" | "protected" | "balanced" | "performance" | "custom";
@@ -145,6 +146,12 @@ export class Workspaces {
       if (error instanceof ProtocolError) throw new ProtocolError("Invalid Git change response", true);
       throw error;
     }
+  }
+
+  /** The effective command runTask would launch, including any build preset. Starts nothing. */
+  async previewTask(workspaceId: string, taskId: string, signal?: AbortSignal): Promise<CommandPreview> {
+    const { result } = await this.call("workspace.task.preview", { workspaceId, taskId }, signal);
+    return commandPreview(result);
   }
 
   async runTask(workspaceId: string, taskId: string, options: { clientRequestId?: string; signal?: AbortSignal } = {}): Promise<JobRecord> {

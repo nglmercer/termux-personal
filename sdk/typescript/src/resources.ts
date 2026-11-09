@@ -34,6 +34,10 @@ export interface BackupSummary {
   id: string; format: BackupFormat; files: number; bytes: number; archiveBytes: number; truncated: boolean;
   skipped: { excluded: number; sensitive: number; links: number; unsafe: number };
 }
+export interface BackupOperation {
+  id: string; kind: "export" | "import"; workspaceId: string; state: "running" | "completed" | "failed" | "cancelled";
+  files: number; bytes: number; startedAt: number; endedAt: number | null; result: Record<string, unknown> | null; error: string | null;
+}
 export interface RestoreSummary { files: number; bytes: number; conflicts: number; skippedUnsafe: number; truncated: boolean; configApplied: boolean }
 
 type Params = Record<string, unknown>;
@@ -222,22 +226,60 @@ export class Services extends Domain {
   }
 }
 
+export interface CommandPreview { executable: string; arguments: string[]; presetApplied: boolean; changed: boolean; notes: string[]; resources: Record<string, unknown> | null }
+export function commandPreview(result: unknown): CommandPreview {
+  if (!isObject(result) || typeof result.executable !== "string" || !Array.isArray(result.arguments) || !result.arguments.every(a => typeof a === "string") ||
+      typeof result.presetApplied !== "boolean" || typeof result.changed !== "boolean" || !Array.isArray(result.notes))
+    throw new ProtocolError("Invalid command preview");
+  return result as unknown as CommandPreview;
+}
+
 /** Workspace archives in app-private storage. Restoring never overwrites without overwrite and confirm. */
 export class Backups extends Domain {
-  async export(workspaceId: string, options: { format?: BackupFormat; includeSensitive?: boolean; signal?: AbortSignal } = {}): Promise<BackupSummary> {
+  private operation(result: unknown, message: string): BackupOperation {
+    const op = isObject(result) ? result.operation : undefined;
+    if (!isObject(op) || typeof op.id !== "string" || !["export", "import"].includes(op.kind as string) ||
+        !["running", "completed", "failed", "cancelled"].includes(op.state as string) || !nonNegative(op.files) || !nonNegative(op.bytes) ||
+        !(op.result === null || isObject(op.result)))
+      throw new ProtocolError(message, true);
+    return op as unknown as BackupOperation;
+  }
+
+  /** Progress (files, bytes) and, once finished, the result of a background export or restore. */
+  async status(operationId: string, signal?: AbortSignal): Promise<BackupOperation> {
+    const { result } = await this.call("workspace.backup.status", { operationId }, signal);
+    const op = isObject(result) ? result.operation : undefined;
+    if (!isObject(op) || !["running", "completed", "failed", "cancelled"].includes(op.state as string) || !nonNegative(op.files)) throw new ProtocolError("Invalid backup status");
+    return op as unknown as BackupOperation;
+  }
+
+  /** Cooperative: the operation stops between chunks and removes its temporary files. Poll status for the outcome. */
+  async cancel(operationId: string, signal?: AbortSignal): Promise<BackupOperation> {
+    const { result } = await this.call("workspace.backup.cancel", { operationId }, signal);
+    return this.operation(result, "Invalid backup cancel response");
+  }
+
+  /** With background: true the operation is returned at once; poll status and stop it with cancel. */
+  async export(workspaceId: string, options: { format?: BackupFormat; includeSensitive?: boolean; background: true; signal?: AbortSignal }): Promise<BackupOperation>;
+  async export(workspaceId: string, options?: { format?: BackupFormat; includeSensitive?: boolean; background?: false; signal?: AbortSignal }): Promise<BackupSummary>;
+  async export(workspaceId: string, options: { format?: BackupFormat; includeSensitive?: boolean; background?: boolean; signal?: AbortSignal } = {}): Promise<BackupSummary | BackupOperation> {
     checkWorkspace(workspaceId);
     const format = options.format ?? "zip";
     if (!FORMATS.has(format)) throw new TypeError("format must be zip or tar.gz");
     const params: Params = { workspaceId, format };
     if (options.includeSensitive) params.includeSensitive = true;
+    if (options.background) params.async = true;
     const { result } = await this.call("workspace.backup.export", params, options.signal);
+    if (options.background) return this.operation(result, "Invalid backup operation");
     const b = isObject(result) ? result.backup : undefined;
     if (!isObject(b) || typeof b.id !== "string" || !FORMATS.has(b.format as string) || !nonNegative(b.files) || typeof b.truncated !== "boolean" || !isObject(b.skipped))
       throw new ProtocolError("Invalid backup response", true);
     return b as unknown as BackupSummary;
   }
 
-  async restore(workspaceId: string, backupId: string, options: { paths?: string[]; overwrite?: boolean; confirm?: boolean; applyConfig?: boolean; signal?: AbortSignal } = {}): Promise<RestoreSummary> {
+  async restore(workspaceId: string, backupId: string, options: { paths?: string[]; overwrite?: boolean; confirm?: boolean; applyConfig?: boolean; background: true; signal?: AbortSignal }): Promise<BackupOperation>;
+  async restore(workspaceId: string, backupId: string, options?: { paths?: string[]; overwrite?: boolean; confirm?: boolean; applyConfig?: boolean; background?: false; signal?: AbortSignal }): Promise<RestoreSummary>;
+  async restore(workspaceId: string, backupId: string, options: { paths?: string[]; overwrite?: boolean; confirm?: boolean; applyConfig?: boolean; background?: boolean; signal?: AbortSignal } = {}): Promise<RestoreSummary | BackupOperation> {
     checkWorkspace(workspaceId);
     if ((options.overwrite || options.applyConfig) && !options.confirm) throw new TypeError("overwrite and applyConfig need confirm");
     const params: Params = { workspaceId, backupId };
@@ -248,7 +290,9 @@ export class Backups extends Domain {
     if (options.overwrite) params.overwrite = true;
     if (options.confirm) params.confirm = true;
     if (options.applyConfig) params.applyConfig = true;
+    if (options.background) params.async = true;
     const { result } = await this.call("workspace.backup.import", params, options.signal);
+    if (options.background) return this.operation(result, "Invalid restore operation");
     const r = isObject(result) ? result.restore : undefined;
     if (!isObject(r) || !["files", "bytes", "conflicts", "skippedUnsafe"].every(k => nonNegative(r[k])) || typeof r.configApplied !== "boolean")
       throw new ProtocolError("Invalid restore response", true);

@@ -90,7 +90,11 @@ final class ControlMethodRegistry {
         new Descriptor("workspace.service.ports", false, "none", false, ControlCore.Scope.WORKSPACES_READ),
         new Descriptor("workspace.service.proxy", true, "none", false, ControlCore.Scope.WORKSPACES_WRITE),
         new Descriptor("workspace.backup.export", true, "none", false, ControlCore.Scope.WORKSPACES_WRITE, ControlCore.Scope.FILES_READ),
-        new Descriptor("workspace.backup.import", true, "none", false, ControlCore.Scope.WORKSPACES_WRITE, ControlCore.Scope.FILES_WRITE)
+        new Descriptor("workspace.backup.import", true, "none", false, ControlCore.Scope.WORKSPACES_WRITE, ControlCore.Scope.FILES_WRITE),
+        new Descriptor("workspace.backup.status", false, "none", false, ControlCore.Scope.WORKSPACES_READ),
+        new Descriptor("workspace.backup.cancel", true, "none", false, ControlCore.Scope.WORKSPACES_WRITE),
+        new Descriptor("job.preview", false, "none", false, ControlCore.Scope.JOBS_READ),
+        new Descriptor("workspace.task.preview", false, "none", false, ControlCore.Scope.WORKSPACES_READ)
     ));
 
     /** Feature names the server has actually wired: "output", "jobs", "processes" and "files". */
@@ -103,6 +107,7 @@ final class ControlMethodRegistry {
                 if (!features.contains(feature)) continue;
                 // Running a preset needs both the workspace store and the job coordinator.
                 if ((descriptor.name.equals("workspace.task.run") || descriptor.name.startsWith("workspace.git")) && !features.contains("jobs")) continue;
+                if (descriptor.name.equals("workspace.task.preview") && !features.contains("jobs")) continue; // the preview mirrors the run
             } else if (!descriptor.name.equals("system.describe") && !descriptor.output && !coreMethods.contains(descriptor.name)) {
                 continue;
             } else if (descriptor.output && !features.contains("output")) {

@@ -47,8 +47,8 @@ public final class OwnedChildProcess extends Process {
     }
 
     /** As above, with limits applied to the child before it executes. */
-    static OwnedChildProcess launch(String[] command, String[] environment, String cwd,
-                                    ManagedNative.NativeLimits limits) throws IOException {
+    public static OwnedChildProcess launch(String[] command, String[] environment, String cwd,
+                                           ManagedNative.NativeLimits limits) throws IOException {
         if (!ManagedNative.isLibraryAvailable()) return null;
         int[] out = new int[4];
         int result = ManagedNative.launch(command[0], cwd, command, environment, out, limits);

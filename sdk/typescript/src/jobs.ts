@@ -1,5 +1,6 @@
 import type { TermuxClient } from "./client.ts";
 import { ProtocolError, UnavailableError } from "./errors.ts";
+import { commandPreview, type CommandPreview } from "./resources.ts";
 
 export type JobState = "queued" | "starting" | "running" | "cancelling" | "exited" | "failed" | "cancelled" | "timed_out" | "lost";
 export type JobStream = "stdout" | "stderr";
@@ -102,6 +103,12 @@ export class Jobs {
       if (error instanceof ProtocolError) throw new ProtocolError("Invalid job start response", true);
       throw error;
     }
+  }
+
+  /** The effective command of a start, without starting anything. It uses the same planning as start. */
+  async preview(spec: JobSpec, signal?: AbortSignal): Promise<CommandPreview> {
+    const { result } = await this.call("job.preview", startParams(spec), signal);
+    return commandPreview(result);
   }
 
   async list(options: { workspaceId?: string; cursor?: number; limit?: number; signal?: AbortSignal } = {}): Promise<{ jobs: JobRecord[]; nextCursor: number | null }> {

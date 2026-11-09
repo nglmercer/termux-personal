@@ -398,6 +398,12 @@ class Workspaces:
         except ProtocolError as exc:
             raise ProtocolError("Invalid Git change response", outcome_unknown=True) from exc
 
+    def preview_task(self, workspace_id: str, task_id: str) -> dict:
+        """The effective command ``run_task`` would launch, including any build preset. Starts nothing."""
+        from .jobs import _preview
+        result, _ = self._call("workspace.task.preview", {"workspaceId": workspace_id, "taskId": task_id})
+        return _preview(result)
+
     def run_task(self, workspace_id: str, task_id: str, *, client_request_id: Optional[str] = None) -> JobRecord:
         """Only identifiers are sent. The server supplies the executable, arguments and directory."""
         params: dict = {"workspaceId": workspace_id, "taskId": task_id}

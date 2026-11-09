@@ -152,7 +152,7 @@ public final class JobCoordinator {
         if (spec.timeoutMillis() != 0 && !mAdapter.ownsChildIdentity()) return new StartResult(StartStatus.UNSUPPORTED, null);
         // A hard limit that this device cannot enforce is refused up front, never dropped silently.
         final JobResourcePolicy resources = spec.resources();
-        if (resources != null && resources.resolve(new JobResourcePolicy.Capabilities(mAdapter.ownsChildIdentity())).blocked)
+        if (resources != null && resources.resolve(new JobResourcePolicy.Capabilities(mAdapter.ownsChildIdentity(), resources.addressSpaceBytes() == 0 ? 0 : mAdapter.minAddressSpaceBytes())).blocked)
             return new StartResult(StartStatus.UNSUPPORTED, null);
         final boolean heavy = mAdmission != null && resources != null && resources.profile() != JobResourcePolicy.Profile.UNRESTRICTED;
         synchronized (this) {

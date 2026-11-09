@@ -596,6 +596,7 @@ static const char *domain_method(const char *group, const char *sub, int count) 
         if (!strcmp(sub, "tasks") && count == 1) return "workspace.tasks";
         if (!strcmp(sub, "git") && count == 2) return "workspace.git";
         if (!strcmp(sub, "run") && count == 2) return "workspace.task.run";
+        if (!strcmp(sub, "task-preview") && count == 2) return "workspace.task.preview";
         if (!strcmp(sub, "create") && count == 3) return "workspace.create";
         if (!strcmp(sub, "update") && count == 4) return "workspace.update";
         if (!strcmp(sub, "remove") && count == 1) return "workspace.remove";
@@ -627,7 +628,7 @@ static int domain_call(const char *path, const char *method, char **args, int co
     else if (!strcmp(method, "workspace.service.list") || !strcmp(method, "workspace.service.ports")) keys[0] = "workspaceId";
     else if (!strncmp(method, "workspace.service.", 18) && count == 2) { keys[0] = "workspaceId"; keys[1] = "serviceId"; }
     else if (!strcmp(method, "workspace.git")) { keys[0] = "workspaceId"; keys[1] = "subcommand"; }
-    else if (!strcmp(method, "workspace.task.run")) { keys[0] = "workspaceId"; keys[1] = "taskId"; }
+    else if (!strcmp(method, "workspace.task.run") || !strcmp(method, "workspace.task.preview")) { keys[0] = "workspaceId"; keys[1] = "taskId"; }
     else if (!strcmp(method, "workspace.remove") || !strcmp(method, "workspace.select")) keys[0] = "id";
     else if (!strcmp(method, "workspace.create")) { keys[0] = "name"; keys[1] = "rootId"; keys[2] = "path"; }
     const char *update_keys[4] = {"id", "name", "rootId", "path"};
@@ -735,12 +736,16 @@ static int terminal_exit(struct span state, struct span exit_code) {
     if (equals(state, "\"failed\"") || equals(state, "\"lost\"")) return JOB_EXIT_FAILED;
     return -1;
 }
-/* jobs start|run [--cwd DIR] [--workspace ID] [--timeout MS] -- EXECUTABLE [ARG...] */
+/* jobs start|run [--cwd DIR] [--workspace ID] [--timeout MS] [--profile unrestricted|protected|balanced|performance|custom] [--build-preset] -- EXECUTABLE [ARG...] */
 static int job_start(const char *path, char **args, int count, int run) {
-    const char *cwd = NULL, *workspace = NULL, *timeout = NULL; int n = 0;
-    for (; n < count && strcmp(args[n], "--"); n += 2) {
+    const char *cwd = NULL, *workspace = NULL, *timeout = NULL, *profile = NULL; int n = 0, build_preset = 0, step = 2;
+    for (; n < count && strcmp(args[n], "--"); n += step) {
+        step = 2;
+        if (!strcmp(args[n], "--build-preset")) { build_preset = 1; step = 1; continue; } /* a flag without a value */
         if (n + 1 >= count) return -2;
-        if (!strcmp(args[n], "--cwd")) cwd = args[n + 1];
+        if (!strcmp(args[n], "--profile") && (!strcmp(args[n + 1], "unrestricted") || !strcmp(args[n + 1], "protected") ||
+            !strcmp(args[n + 1], "balanced") || !strcmp(args[n + 1], "performance") || !strcmp(args[n + 1], "custom"))) profile = args[n + 1];
+        else if (!strcmp(args[n], "--cwd")) cwd = args[n + 1];
         else if (!strcmp(args[n], "--workspace")) workspace = args[n + 1];
         else if (!strcmp(args[n], "--timeout") && number(args[n + 1], 1, 86400000)) timeout = args[n + 1];
         else return -2;
@@ -757,6 +762,10 @@ static int job_start(const char *path, char **args, int count, int run) {
     if (cwd && (append(req, MAX_JOB_REQUEST, &used, ",\"cwd\":") || quoted(req, MAX_JOB_REQUEST, &used, cwd))) goto too_long;
     if (workspace && (append(req, MAX_JOB_REQUEST, &used, ",\"workspaceId\":") || quoted(req, MAX_JOB_REQUEST, &used, workspace))) goto too_long;
     if (timeout && (append(req, MAX_JOB_REQUEST, &used, ",\"timeoutMs\":") || append(req, MAX_JOB_REQUEST, &used, timeout))) goto too_long;
+    /* Resource handling is opt-in; without --profile the request is exactly what it always was. */
+    if ((profile || build_preset) && (append(req, MAX_JOB_REQUEST, &used, ",\"resources\":{\"profile\":") ||
+        quoted(req, MAX_JOB_REQUEST, &used, profile ? profile : "balanced") ||
+        (build_preset && append(req, MAX_JOB_REQUEST, &used, ",\"applyBuildPreset\":true")) || append(req, MAX_JOB_REQUEST, &used, "}"))) goto too_long;
     if (append(req, MAX_JOB_REQUEST, &used, "}}")) goto too_long;
     int fd = connect_control(path);
     if (fd < 0) { free(req); return 1; }
@@ -800,7 +809,7 @@ static void usage(void) {
                     "       termux-control [--socket PATH] jobs list|get ID|cancel ID|logs ID [--stream stdout|stderr] [--follow]\n"
                     "       termux-control [--socket PATH] jobs start|run [--cwd DIR] [--workspace ID] [--timeout MS] -- EXECUTABLE [ARG...]\n"
                     "       termux-control [--socket PATH] workspaces list|get ID|tasks ID|git ID status|branch|diff|log|run ID TASK|create NAME ROOT PATH|update ID NAME ROOT PATH|remove ID|select ID\n"
-                    "       termux-control [--socket PATH] workspaces services ID|ports ID|service-status|service-health|service-start|service-stop|service-restart ID SERVICE\n"
+                    "       termux-control [--socket PATH] workspaces task-preview ID TASK|services ID|ports ID|service-status|service-health|service-start|service-stop|service-restart ID SERVICE\n"
                     "       termux-control [--socket PATH] jobs resource ID|history|history-get ID|diagnostics ID|processes ID\n"
                     "       termux-control [--socket PATH] resources capabilities|snapshot\n");
 }

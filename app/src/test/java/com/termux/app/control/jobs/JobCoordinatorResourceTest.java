@@ -20,6 +20,7 @@ public class JobCoordinatorResourceTest {
     private final AtomicLong clock = new AtomicLong(1000);
     private final AtomicInteger launches = new AtomicInteger();
     private final AtomicBoolean owned = new AtomicBoolean(true);
+    private final java.util.concurrent.atomic.AtomicLong minAddressSpace = new java.util.concurrent.atomic.AtomicLong();
     private final AtomicBoolean failLaunch = new AtomicBoolean(), failLimit = new AtomicBoolean();
     private final CountDownLatch finishJobs = new CountDownLatch(1);
     private JobRegistry registry;
@@ -52,6 +53,7 @@ public class JobCoordinatorResourceTest {
                 return child;
             }
             @Override public boolean ownsChildIdentity() { return owned.get(); }
+            @Override public long minAddressSpaceBytes() { return minAddressSpace.get(); }
         });
         JobCoordinator.Policy policy = new JobCoordinator.Policy() {
             @Override public JobCoordinator.Resolution authorizeAndResolve(JobSpec job, long epoch) { return new JobCoordinator.Resolution("/bin/echo", "/home"); }
@@ -226,5 +228,15 @@ public class JobCoordinatorResourceTest {
         assertTrue(until(() -> { JobHistoryStore.Record r = history.get(queued.job.id); return r != null && r.finished(); }));
         assertEquals("a job that never ran has no stored start", null, history.get(queued.job.id).startedAtWall);
         assertEquals(JobTerminationEvidence.Reason.USER_CANCELLED, history.get(queued.job.id).evidence.reason);
+    }
+
+    @Test public void anAddressSpaceLimitBelowTheDeviceMinimumIsRefusedBeforeAnythingIsAdmitted() throws Exception {
+        create(4);
+        minAddressSpace.set(4L << 30);
+        assertEquals(JobCoordinator.StartStatus.UNSUPPORTED, coordinator.start(spec("low", JobResourcePolicy.builder().addressSpaceBytes(1L << 30).build()), lease).status);
+        assertTrue(registry.list(lease.epoch()).isEmpty());
+        assertEquals(0, launches.get());
+        assertEquals(JobCoordinator.StartStatus.ACCEPTED, coordinator.start(spec("ok", JobResourcePolicy.builder().addressSpaceBytes(8L << 30).build()), lease).status);
+        assertEquals("a job that sets no address-space limit is unaffected", JobCoordinator.StartStatus.ACCEPTED, coordinator.start(spec("none", balanced()), lease).status);
     }
 }

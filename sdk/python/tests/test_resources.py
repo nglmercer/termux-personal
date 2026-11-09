@@ -14,7 +14,7 @@ METHODS = ["system.hello", "system.capabilities", "resource.capabilities", "reso
            "job.history.get", "job.diagnostics.export", "job.processes", "job.start", "workspace.create", "workspace.update", "workspace.get",
            "workspace.service.list", "workspace.service.status", "workspace.service.start", "workspace.service.stop", "workspace.service.restart",
            "workspace.service.logs", "workspace.service.health", "workspace.service.ports", "workspace.service.proxy",
-           "workspace.backup.export", "workspace.backup.import"]
+           "workspace.backup.export", "workspace.backup.import", "workspace.backup.status", "workspace.backup.cancel", "job.preview", "workspace.task.preview"]
 SERVICE = {"workspaceId": WS, "serviceId": "dev-server", "state": "running", "restartPolicy": "never", "jobId": "job_1", "restartsInWindow": 0,
            "nextStartInMillis": None, "lastReason": None, "lastExitCode": None, "ports": [3000]}
 JOB = {"id": "job_1", "state": "queued", "startedAt": None, "endedAt": None, "exitCode": None, "failureCode": None, "pid": None, "workspaceId": None,
@@ -150,6 +150,56 @@ class BackupsTest(unittest.TestCase):
             transport.reply(request, {"restore": restore})
         client(handler).backups.restore(WS, "b.zip", paths=["src"], overwrite=True, confirm=True, apply_config=True)
         self.assertEqual(sent[0], {"workspaceId": WS, "backupId": "b.zip", "paths": ["src"], "overwrite": True, "confirm": True, "applyConfig": True})
+
+
+OP = {"id": "bk_1", "kind": "export", "workspaceId": WS, "state": "running", "files": 3, "bytes": 10, "startedAt": 1, "endedAt": None,
+      "result": None, "error": None}
+
+
+class BackgroundAndPreviewTest(unittest.TestCase):
+    def test_background_backups_return_an_operation_with_progress_and_can_be_cancelled(self):
+        sent = []
+
+        def handler(request, transport):
+            sent.append(request["params"]); transport.reply(request, {"operation": OP})
+        c = client(handler)
+        self.assertEqual(c.backups.export(WS, background=True)["state"], "running")
+        self.assertTrue(sent[0]["async"])
+        self.assertEqual(c.backups.status("bk_1")["files"], 3)
+        self.assertEqual(c.backups.cancel("bk_1")["id"], "bk_1")
+        c.backups.restore(WS, "b.zip", background=True)
+        self.assertTrue(sent[-1]["async"])
+        with self.assertRaises(ProtocolError) as ctx:
+            client(replying({"operation": {**OP, "state": "weird"}})).backups.export(WS, background=True)
+        self.assertTrue(ctx.exception.outcome_unknown)
+        with self.assertRaises(ProtocolError):
+            client(replying({"operation": {**OP, "files": -1}})).backups.status("bk_1")
+
+    def test_a_plain_export_does_not_send_async(self):
+        sent = []
+        backup = {"id": "x", "format": "zip", "files": 1, "bytes": 1, "archiveBytes": 1, "truncated": False,
+                  "skipped": {"excluded": 0, "sensitive": 0, "links": 0, "unsafe": 0}}
+
+        def handler(request, transport):
+            sent.append(request["params"]); transport.reply(request, {"backup": backup})
+        client(handler).backups.export(WS)
+        self.assertNotIn("async", sent[0])
+
+    def test_previews_are_validated_and_send_what_a_start_would(self):
+        preview = {"executable": "cargo", "arguments": ["build", "-j", "2"], "presetApplied": True, "changed": True, "notes": ["cargo -j 2"],
+                   "resources": {"profile": "balanced"}}
+        sent = []
+
+        def handler(request, transport):
+            sent.append((request["method"], request["params"])); transport.reply(request, preview)
+        c = client(handler)
+        self.assertEqual(c.jobs.preview("cargo", ["build"], resources={"profile": "balanced", "applyBuildPreset": True})["arguments"], ["build", "-j", "2"])
+        self.assertEqual(sent[0], ("job.preview", {"executable": "cargo", "args": ["build"], "resources": {"profile": "balanced", "applyBuildPreset": True}}))
+        self.assertTrue(c.workspaces.preview_task(WS, "build")["changed"])
+        with self.assertRaises(ProtocolError):
+            client(replying({**preview, "arguments": [1]})).jobs.preview("cargo", [])
+        with self.assertRaises(ValueError):
+            c.jobs.preview("cargo", "build")
 
 
 class WorkspaceAndJobsCompatibilityTest(unittest.TestCase):

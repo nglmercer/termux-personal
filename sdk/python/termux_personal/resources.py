@@ -265,14 +265,19 @@ class Services(_Domain):
 class Backups(_Domain):
     """Workspace archives in app-private storage. Restoring never overwrites without ``overwrite`` and ``confirm``."""
 
-    def export(self, workspace_id: str, *, format: str = "zip", include_sensitive: bool = False) -> dict:
+    def export(self, workspace_id: str, *, format: str = "zip", include_sensitive: bool = False, background: bool = False) -> dict:
+        """With ``background=True`` returns the operation immediately; poll ``status`` and stop it with ``cancel``."""
         _check_ws(workspace_id)
         if format not in BACKUP_FORMATS:
             raise ValueError("format must be zip or tar.gz")
         params: dict = {"workspaceId": workspace_id, "format": format}
         if include_sensitive:
             params["includeSensitive"] = True
+        if background:
+            params["async"] = True
         result, _ = self._call("workspace.backup.export", params)
+        if background:
+            return self._operation(result, "Invalid backup operation")
         try:
             b = _obj(_obj(result, "Invalid backup response").get("backup"), "Invalid backup response")
             if (not isinstance(b.get("id"), str) or b.get("format") not in BACKUP_FORMATS or not _nonneg(b.get("files")) or
@@ -283,7 +288,7 @@ class Backups(_Domain):
             raise ProtocolError("Invalid backup response", outcome_unknown=True) from exc
 
     def restore(self, workspace_id: str, backup_id: str, *, paths=None, overwrite: bool = False, confirm: bool = False,
-                apply_config: bool = False) -> dict:
+                apply_config: bool = False, background: bool = False) -> dict:
         _check_ws(workspace_id)
         if (overwrite or apply_config) and not confirm:
             raise ValueError("overwrite and apply_config need confirm=True")
@@ -298,7 +303,11 @@ class Backups(_Domain):
             params["confirm"] = True
         if apply_config:
             params["applyConfig"] = True
+        if background:
+            params["async"] = True
         result, _ = self._call("workspace.backup.import", params)
+        if background:
+            return self._operation(result, "Invalid restore operation")
         try:
             r = _obj(_obj(result, "Invalid restore response").get("restore"), "Invalid restore response")
             if not all(_nonneg(r.get(k)) for k in ("files", "bytes", "conflicts", "skippedUnsafe")) or not isinstance(r.get("configApplied"), bool):
@@ -306,3 +315,28 @@ class Backups(_Domain):
             return r
         except ProtocolError as exc:
             raise ProtocolError("Invalid restore response", outcome_unknown=True) from exc
+
+    @staticmethod
+    def _operation(result, message):
+        try:
+            op = _obj(_obj(result, message).get("operation"), message)
+            if (not isinstance(op.get("id"), str) or op.get("kind") not in ("export", "import") or
+                    op.get("state") not in ("running", "completed", "failed", "cancelled") or not _nonneg(op.get("files")) or
+                    not _nonneg(op.get("bytes")) or not (op.get("result") is None or isinstance(op.get("result"), dict))):
+                raise ProtocolError(message)
+            return op
+        except ProtocolError as exc:
+            raise ProtocolError(message, outcome_unknown=True) from exc
+
+    def status(self, operation_id: str) -> dict:
+        """Progress (files, bytes) and, once finished, the result of a background export or restore."""
+        result, _ = self._call("workspace.backup.status", {"operationId": operation_id})
+        op = _obj(_obj(result, "Invalid backup status").get("operation"), "Invalid backup status")
+        if op.get("state") not in ("running", "completed", "failed", "cancelled") or not _nonneg(op.get("files")):
+            raise ProtocolError("Invalid backup status")
+        return op
+
+    def cancel(self, operation_id: str) -> dict:
+        """Cooperative: the operation stops between chunks and removes its temporary files. Poll ``status`` for the outcome."""
+        result, _ = self._call("workspace.backup.cancel", {"operationId": operation_id})
+        return self._operation(result, "Invalid backup cancel response")
