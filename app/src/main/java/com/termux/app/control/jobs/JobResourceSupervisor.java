@@ -206,7 +206,7 @@ public final class JobResourceSupervisor implements AutoCloseable {
             synchronized (this) {
                 level = mTracker.update(reading);
                 long now = mSampler.monotonicMillis();
-                if (processes != null) for (Tracked tracked : mTracked.values()) tracked.sample(processes, mSampler, now, reading, level);
+                if (processes != null) for (Tracked tracked : mTracked.values()) tracked.sample(processes, mSampler, now, reading, level, mAdmission.slots());
                 evaluate(level, now);
                 pruneFinished(deliveries);
                 boolean idle = mTracked.isEmpty() && mAdmission.queuedCount() == 0 && mAdmission.activeCount() == 0;
@@ -237,7 +237,7 @@ public final class JobResourceSupervisor implements AutoCloseable {
         for (Tracked tracked : mTracked.values()) {
             if (tracked.exceededSoft(now) && tracked.softEventAt == Long.MIN_VALUE) {
                 tracked.softEventAt = now;
-                event(tracked.id, "MEMORY_SOFT_EXCEEDED", "rss>" + tracked.policy.memorySoftBytes());
+                event(tracked.id, "MEMORY_SOFT_EXCEEDED", "rss>" + tracked.soft());
             } else if (!tracked.exceededSoft(now)) tracked.softEventAt = Long.MIN_VALUE;
             if (tracked.policy.onPressure() != JobResourcePolicy.PressureAction.STOP_JOB) continue;
             // A job that is already being stopped must not shadow the others while it winds down.
@@ -289,7 +289,7 @@ public final class JobResourceSupervisor implements AutoCloseable {
         final OwnedProcessControl control;
         final int pid;
         final JobResourcePolicy policy;
-        long startTicks = -1, softEventAt = Long.MIN_VALUE;
+        long startTicks = -1, softEventAt = Long.MIN_VALUE, derivedSoft;
         long peakRss = -1, rss = -1, lastTicks = -1, lastSampleAt;
         Double cpu;
         Integer count;
@@ -309,13 +309,21 @@ public final class JobResourceSupervisor implements AutoCloseable {
 
         long lastRss() { return Math.max(rss, 0); }
 
-        boolean exceededSoft(long now) { return policy.memorySoftBytes() != 0 && rss >= policy.memorySoftBytes(); }
+        /** The caller's threshold, else the device-derived one, else zero (none). */
+        long soft() { return policy.memorySoftBytes() != 0 ? policy.memorySoftBytes() : derivedSoft; }
 
-        void sample(ProcessSnapshot snapshot, Sampler sampler, long now, PressureTracker.Reading reading, PressureTracker.Level level) {
+        boolean exceededSoft(long now) { return soft() != 0 && rss >= soft(); }
+
+        void sample(ProcessSnapshot snapshot, Sampler sampler, long now, PressureTracker.Reading reading, PressureTracker.Level level, int slots) {
             if (identityLost) return;
             samples++;
             lastAvailable = reading == null ? null : reading.availableBytes; lastTotal = reading == null ? null : reading.totalBytes;
             lastLow = reading == null ? null : reading.androidLowMemory; lastLevel = level;
+            // No threshold from the caller: derive one from this device once, at the first reading that has the data.
+            if (derivedSoft == 0 && policy.memorySoftBytes() == 0 && reading != null) {
+                Long derived = com.termux.app.monitor.DeviceResourcePolicy.memorySoftBytes(policy.profile(), reading.totalBytes, reading.availableBytes, slots);
+                if (derived != null) derivedSoft = derived;
+            }
             incomplete = snapshot.incomplete;
             Map<Integer, ProcessSnapshot.Entry> byPid = new HashMap<>();
             Map<Integer, List<ProcessSnapshot.Entry>> children = new HashMap<>();
@@ -366,7 +374,7 @@ public final class JobResourceSupervisor implements AutoCloseable {
 
         Metrics metrics() {
             return new Metrics(rss < 0 ? null : rss, peakRss < 0 ? null : peakRss, cpu, count, incomplete,
-                policy.memorySoftBytes() != 0 && peakRss >= policy.memorySoftBytes(), identityLost,
+                soft() != 0 && peakRss >= soft(), identityLost,
                 lastAvailable, lastTotal, lastLow, lastLevel, samples, orphans);
         }
     }

@@ -13,6 +13,8 @@ export interface JobSpec {
   timeoutMs?: number;
   presentation?: "foreground" | "background";
   clientRequestId?: string;
+  /** Optional resource handling. Without it the job behaves exactly as before. */
+  resources?: Record<string, unknown>;
 }
 export interface JobRecord {
   id: string;
@@ -41,7 +43,7 @@ export class JobWaitTimeoutError extends Error {
 type Params = Record<string, unknown>;
 const STATES = new Set<string>(["queued", "starting", "running", "cancelling", "exited", "failed", "cancelled", "timed_out", "lost"]);
 const TERMINAL = new Set<string>(["exited", "failed", "cancelled", "timed_out", "lost"]);
-const SPEC_KEYS = ["cwd", "workspaceId", "env", "stdin", "timeoutMs", "presentation", "clientRequestId"] as const;
+const SPEC_KEYS = ["cwd", "workspaceId", "env", "stdin", "timeoutMs", "presentation", "clientRequestId", "resources"] as const;
 const isObject = (value: unknown): value is Params => typeof value === "object" && value !== null && !Array.isArray(value);
 const nonNegative = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
 const nullableInteger = (value: unknown) => value === null || Number.isSafeInteger(value);

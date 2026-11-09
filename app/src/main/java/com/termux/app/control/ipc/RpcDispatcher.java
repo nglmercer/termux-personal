@@ -51,6 +51,16 @@ public final class RpcDispatcher {
         this(core, null, new DomainServices(jobs, jobAuthority, null, null, workspaces));
     }
 
+    /** As above, with the optional resource, service, backup and port services. Each hides its own methods when null. */
+    public RpcDispatcher(ControlCore core, JobCoordinator jobs, JobAuthority jobAuthority, WorkspaceRepository workspaces,
+                         com.termux.app.control.resource.ResourceService resource,
+                         com.termux.app.control.workspace.WorkspaceServiceController services,
+                         com.termux.app.control.workspace.WorkspaceBackupService backup,
+                         com.termux.app.control.workspace.WorkspacePortService ports) {
+        this(core, null, new DomainServices(jobs, jobAuthority, null, null, workspaces)
+            .withExtras(new DomainServices.Extras(resource, services, backup, ports)));
+    }
+
     RpcDispatcher(ControlCore core, OutputClientLease output, DomainServices services) {
         if (core == null || services == null) throw new IllegalArgumentException("core and services required");
         mCore = core; mOutput = output; mServices = services;
@@ -261,6 +271,24 @@ public final class RpcDispatcher {
             case "workspace.task.run": return workspaceTaskRun(request.params, scopes);
             case "workspace.git": return workspaceGit(request.params, scopes);
             case "workspace.git.change": return workspaceGitChange(request.params, scopes);
+            case "resource.capabilities": return resourceCapabilities(request.params, scopes);
+            case "resource.snapshot": return resourceSnapshot(request.params, scopes);
+            case "job.resource.get": return jobResourceGet(request.params, scopes);
+            case "job.history.list": return jobHistoryList(request.params, scopes);
+            case "job.history.get": return jobHistoryGet(request.params, scopes);
+            case "job.diagnostics.export": return jobDiagnosticsExport(request.params, scopes);
+            case "job.processes": return jobProcesses(request.params, scopes);
+            case "workspace.service.list": return serviceList(request.params, scopes);
+            case "workspace.service.status": return serviceStatus(request.params, scopes);
+            case "workspace.service.start": return serviceControl("start", request.params, scopes);
+            case "workspace.service.stop": return serviceControl("stop", request.params, scopes);
+            case "workspace.service.restart": return serviceControl("restart", request.params, scopes);
+            case "workspace.service.logs": return serviceLogs(request.params, scopes);
+            case "workspace.service.health": return serviceHealth(request.params, scopes);
+            case "workspace.service.ports": return servicePorts(request.params, scopes);
+            case "workspace.service.proxy": return serviceProxy(request.params, scopes);
+            case "workspace.backup.export": return backupExport(request.params, scopes);
+            case "workspace.backup.import": return backupImport(request.params, scopes);
             default: throw new UnknownMethod();
         }
     }
@@ -294,8 +322,10 @@ public final class RpcDispatcher {
             Map<String, String> env = stringMap(p, "env");
             // Opt-in only: a known build tool gets a worker-count recommendation, and nothing the caller set is overridden.
             if (resources != null && presetRequested(p)) {
+                JobResourcePolicy sized = resources.processConcurrencyHint() == 0 && mServices.extras.resource != null ?
+                    withRecommendedWorkers(resources, mServices.extras.resource) : resources;
                 BuildPresets.Preview preview = BuildPresets.apply(executable, args, new ArrayList<>(env.keySet()),
-                    resources.effectiveConcurrencyHint(), Runtime.getRuntime().availableProcessors(), 0);
+                    sized.effectiveConcurrencyHint(), Runtime.getRuntime().availableProcessors(), 0);
                 args = preview.arguments;
             }
             spec = new JobSpec(executable, args, optionalString(p, "cwd"),
@@ -305,6 +335,19 @@ public final class RpcDispatcher {
             throw new DomainError("INVALID_REQUEST");
         }
         return startedJob(jobs.start(spec, lease));
+    }
+
+    /** The profile's concurrency hint, replaced by the device-aware recommendation when this device has one. */
+    private static JobResourcePolicy withRecommendedWorkers(JobResourcePolicy policy, com.termux.app.control.resource.ResourceService resource) {
+        int workers = resource.recommendedWorkers(policy.profile());
+        if (workers <= 0) return policy;
+        return JobResourcePolicy.fromJson(withHint(policy, workers));
+    }
+
+    private static com.google.gson.JsonObject withHint(JobResourcePolicy policy, int workers) {
+        com.google.gson.JsonObject o = policy.toJson();
+        o.addProperty("processConcurrencyHint", Math.min(workers, JobResourcePolicy.MAX_CONCURRENCY_HINT));
+        return o;
     }
 
     /** Shared by job.start and workspace.task.run so both report admission the same way. */
@@ -328,9 +371,15 @@ public final class RpcDispatcher {
      * out of range are rejected as an invalid request, never clamped. A null member means "unset".
      */
     private static JobResourcePolicy resourcePolicy(Map<?, ?> p) throws BadParameters {
-        if (!p.containsKey("resources") || p.get("resources") == null) return null;
-        Map<?, ?> r = parameters(p.get("resources"), "profile", "memorySoftBytes", "addressSpaceBytes", "cpuTimeSeconds",
-            "maxOutputBytes", "processConcurrencyHint", "niceLevel", "onPressure", "requireNice", "applyBuildPreset");
+        return resourcePolicyFrom(p.get("resources"), true);
+    }
+
+    /** {@code value} is the resources object itself; {@code allowPreset} permits the job.start-only applyBuildPreset flag. */
+    private static JobResourcePolicy resourcePolicyFrom(Object value, boolean allowPreset) throws BadParameters {
+        if (value == null) return null;
+        Map<?, ?> r = allowPreset ?
+            parameters(value, "profile", "memorySoftBytes", "addressSpaceBytes", "cpuTimeSeconds", "maxOutputBytes", "processConcurrencyHint", "niceLevel", "onPressure", "requireNice", "applyBuildPreset") :
+            parameters(value, "profile", "memorySoftBytes", "addressSpaceBytes", "cpuTimeSeconds", "maxOutputBytes", "processConcurrencyHint", "niceLevel", "onPressure", "requireNice");
         JobResourcePolicy.Builder builder = JobResourcePolicy.builder();
         try {
             if (r.get("profile") != null) builder.profile(JobResourcePolicy.Profile.parse(string(r, "profile")));
@@ -342,7 +391,7 @@ public final class RpcDispatcher {
                 if (!(r.get("requireNice") instanceof Boolean)) throw new BadParameters();
                 builder.requireNice((Boolean) r.get("requireNice"));
             }
-            // Out-of-range or inconsistent values are an IllegalArgumentException, which job.start reports as INVALID_REQUEST.
+            // Out-of-range or inconsistent values are an IllegalArgumentException, reported by the caller as INVALID_REQUEST.
             return builder.build();
         } finally { /* nothing to release */ }
     }
@@ -383,8 +432,20 @@ public final class RpcDispatcher {
         if (preset == null) throw new DomainError("NOT_FOUND");
         JobSpec spec;
         try {
-            spec = new JobSpec(preset.executable, preset.args, null, workspaceId, Collections.<String, String>emptyMap(), null,
-                preset.timeoutMillis, JobSpec.Presentation.BACKGROUND, clientRequestId);
+            // A preset's own policy wins, then the workspace's profile; neither means the historical, unrestricted run.
+            WorkspaceRepository.Workspace owner = workspaceCall(() -> workspaces.get(workspaceId));
+            JobResourcePolicy resources = preset.resources != null ? preset.resources :
+                owner.resourceProfile == null ? null : JobResourcePolicy.ofProfile(owner.resourceProfile);
+            List<String> arguments = preset.args;
+            if (resources != null && mServices.extras.resource != null && resources.processConcurrencyHint() == 0)
+                resources = withRecommendedWorkers(resources, mServices.extras.resource);
+            if (resources != null) {
+                // Stored presets are trusted state that opted into a profile, so known build tools get the worker recommendation.
+                arguments = BuildPresets.apply(preset.executable, arguments, Collections.<String>emptyList(), resources.effectiveConcurrencyHint(),
+                    Runtime.getRuntime().availableProcessors(), 0).arguments;
+            }
+            spec = new JobSpec(preset.executable, arguments, null, workspaceId, Collections.<String, String>emptyMap(), null,
+                preset.timeoutMillis, JobSpec.Presentation.BACKGROUND, clientRequestId, resources);
         } catch (IllegalArgumentException e) {
             throw new DomainError("INVALID_REQUEST");
         }
@@ -528,23 +589,28 @@ public final class RpcDispatcher {
     private Object workspaceCreate(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
         WorkspaceRepository workspaces = requireWorkspaces();
         requireWorkspaceScope(scopes, ControlCore.Scope.WORKSPACES_WRITE);
-        Map<?, ?> p = parameters(params, "name", "rootId", "path", "taskPresets");
+        Map<?, ?> p = parameters(params, "name", "rootId", "path", "taskPresets", "resourceProfile", "services");
         String name = string(p, "name"), rootId = string(p, "rootId"), path = string(p, "path");
         List<WorkspaceRepository.TaskPreset> presets = p.containsKey("taskPresets") ? presets(p.get("taskPresets")) : Collections.<WorkspaceRepository.TaskPreset>emptyList();
-        return Collections.singletonMap("workspace", workspace(workspaceCall(() -> workspaces.create(name, rootId, path, presets))));
+        JobResourcePolicy.Profile profile = profileOrNull(p.get("resourceProfile"));
+        List<WorkspaceRepository.ServiceDefinition> services = p.containsKey("services") ? serviceDefinitions(p.get("services")) : Collections.<WorkspaceRepository.ServiceDefinition>emptyList();
+        return Collections.singletonMap("workspace", workspace(workspaceCall(() -> workspaces.create(name, rootId, path, presets, profile, services))));
     }
 
     /** Absent fields keep their stored values. Present fields are validated before anything is written. */
     private Object workspaceUpdate(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
         WorkspaceRepository workspaces = requireWorkspaces();
         requireWorkspaceScope(scopes, ControlCore.Scope.WORKSPACES_WRITE);
-        Map<?, ?> p = parameters(params, "id", "name", "rootId", "path", "taskPresets");
+        Map<?, ?> p = parameters(params, "id", "name", "rootId", "path", "taskPresets", "resourceProfile", "services");
         String id = string(p, "id");
         String name = p.containsKey("name") ? string(p, "name") : null;
         String rootId = p.containsKey("rootId") ? string(p, "rootId") : null;
         String path = p.containsKey("path") ? string(p, "path") : null;
         List<WorkspaceRepository.TaskPreset> presets = p.containsKey("taskPresets") ? presets(p.get("taskPresets")) : null;
-        return Collections.singletonMap("workspace", workspace(workspaceCall(() -> workspaces.update(id, name, rootId, path, presets))));
+        boolean setProfile = p.containsKey("resourceProfile");
+        JobResourcePolicy.Profile profile = profileOrNull(p.get("resourceProfile"));
+        List<WorkspaceRepository.ServiceDefinition> services = p.containsKey("services") ? serviceDefinitions(p.get("services")) : null;
+        return Collections.singletonMap("workspace", workspace(workspaceCall(() -> workspaces.update(id, name, rootId, path, presets, setProfile, profile, services))));
     }
 
     private Object workspaceRemove(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
@@ -580,15 +646,49 @@ public final class RpcDispatcher {
         if (!(value instanceof List)) throw new BadParameters();
         List<WorkspaceRepository.TaskPreset> result = new ArrayList<>();
         for (Object item : (List<?>) value) {
-            Map<?, ?> p = parameters(item, "id", "label", "executable", "args", "timeoutMs");
+            Map<?, ?> p = parameters(item, "id", "label", "executable", "args", "timeoutMs", "resources");
             try {
                 result.add(new WorkspaceRepository.TaskPreset(string(p, "id"), string(p, "label"), string(p, "executable"),
-                    stringList(p, "args"), longNumberOrDefault(p, "timeoutMs", 0)));
+                    stringList(p, "args"), longNumberOrDefault(p, "timeoutMs", 0), resourcePolicyFrom(p.get("resources"), false)));
             } catch (WorkspaceRepository.WorkspaceException e) {
                 throw new DomainError(e.code);
+            } catch (IllegalArgumentException e) {
+                throw new DomainError("INVALID_REQUEST");
             }
         }
         return result;
+    }
+
+    private static List<WorkspaceRepository.ServiceDefinition> serviceDefinitions(Object value) throws BadParameters, DomainError {
+        if (!(value instanceof List)) throw new BadParameters();
+        List<WorkspaceRepository.ServiceDefinition> result = new ArrayList<>();
+        for (Object item : (List<?>) value) {
+            Map<?, ?> p = parameters(item, "id", "executable", "args", "restartPolicy", "resources", "ports");
+            try {
+                List<Integer> ports = new ArrayList<>();
+                if (p.containsKey("ports")) {
+                    if (!(p.get("ports") instanceof List)) throw new BadParameters();
+                    for (Object port : (List<?>) p.get("ports")) {
+                        if (!(port instanceof BigDecimal)) throw new BadParameters();
+                        try { ports.add(((BigDecimal) port).intValueExact()); } catch (ArithmeticException e) { throw new BadParameters(); }
+                    }
+                }
+                result.add(new WorkspaceRepository.ServiceDefinition(string(p, "id"), string(p, "executable"), stringList(p, "args"),
+                    p.containsKey("restartPolicy") ? WorkspaceRepository.RestartPolicy.parse(string(p, "restartPolicy")) : WorkspaceRepository.RestartPolicy.NEVER,
+                    resourcePolicyFrom(p.get("resources"), false), ports));
+            } catch (WorkspaceRepository.WorkspaceException e) {
+                throw new DomainError(e.code);
+            } catch (IllegalArgumentException e) {
+                throw new DomainError("INVALID_REQUEST");
+            }
+        }
+        return result;
+    }
+
+    private static JobResourcePolicy.Profile profileOrNull(Object value) throws BadParameters, DomainError {
+        if (value == null) return null;
+        if (!(value instanceof String)) throw new BadParameters();
+        try { return JobResourcePolicy.Profile.parse((String) value); } catch (IllegalArgumentException e) { throw new DomainError("INVALID_REQUEST"); }
     }
 
     private static Map<String, Object> workspace(WorkspaceRepository.Workspace workspace) {
@@ -603,7 +703,29 @@ public final class RpcDispatcher {
         List<Object> presets = new ArrayList<>();
         for (WorkspaceRepository.TaskPreset preset : workspace.taskPresets) presets.add(preset(preset));
         result.put("taskPresets", presets);
+        // Optional members appear only when set, so a workspace that never used them looks exactly as it always did.
+        if (workspace.resourceProfile != null) result.put("resourceProfile", workspace.resourceProfile.wireName());
+        if (!workspace.services.isEmpty()) {
+            List<Object> services = new ArrayList<>();
+            for (WorkspaceRepository.ServiceDefinition d : workspace.services) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("id", d.id); m.put("executable", d.executable); m.put("args", d.args); m.put("restartPolicy", d.restartPolicy.wireName);
+                m.put("ports", d.ports);
+                if (d.resources != null) m.put("resources", plainPolicy(d.resources));
+                services.add(m);
+            }
+            result.put("services", services);
+        }
         return result;
+    }
+
+    private static Map<String, Object> plainPolicy(JobResourcePolicy policy) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        for (Map.Entry<String, com.google.gson.JsonElement> e : policy.toJson().entrySet()) {
+            com.google.gson.JsonElement v = e.getValue();
+            m.put(e.getKey(), v.getAsJsonPrimitive().isBoolean() ? (Object) v.getAsBoolean() : v.getAsJsonPrimitive().isNumber() ? (Object) v.getAsLong() : v.getAsString());
+        }
+        return m;
     }
 
     private static Map<String, Object> preset(WorkspaceRepository.TaskPreset preset) {
@@ -613,6 +735,7 @@ public final class RpcDispatcher {
         result.put("executable", preset.executable);
         result.put("args", preset.args);
         result.put("timeoutMs", preset.timeoutMillis);
+        if (preset.resources != null) result.put("resources", plainPolicy(preset.resources));
         return result;
     }
 
@@ -1118,6 +1241,301 @@ public final class RpcDispatcher {
     }
 
     /** Domain failures use reserved v1 names inside the existing application-error family (-32001). */
+    // ---------------------------------------------------------------- resource, history and diagnostics
+
+    private com.termux.app.control.resource.ResourceService requireResource() throws UnknownMethod {
+        if (mServices.extras.resource == null) throw new UnknownMethod();
+        return mServices.extras.resource;
+    }
+
+    /** Every resource view first proves the caller may read this job's metadata under the current consent. */
+    private void requireReadableJob(String id, JobAuthority.Lease lease) throws DomainError, UnknownMethod {
+        JobCoordinator.GetResult result = requireJobs().get(id, lease);
+        if (result.status != JobCoordinator.ReadStatus.OK) throw new DomainError(result.status.name());
+    }
+
+    private Object resourceCapabilities(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
+        com.termux.app.control.resource.ResourceService resource = requireResource();
+        jobLease(scopes, ControlCore.Scope.JOBS_READ);
+        parameters(params);
+        return resource.capabilities();
+    }
+
+    private Object resourceSnapshot(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
+        com.termux.app.control.resource.ResourceService resource = requireResource();
+        jobLease(scopes, ControlCore.Scope.JOBS_READ);
+        parameters(params);
+        return resource.snapshot();
+    }
+
+    private Object jobResourceGet(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
+        com.termux.app.control.resource.ResourceService resource = requireResource();
+        JobAuthority.Lease lease = jobLease(scopes, ControlCore.Scope.JOBS_READ);
+        Map<?, ?> p = parameters(params, "id");
+        String id = string(p, "id");
+        requireReadableJob(id, lease);
+        Map<String, Object> result = resource.jobResource(id);
+        if (result == null) throw new DomainError("NOT_FOUND");
+        return Collections.singletonMap("resource", result);
+    }
+
+    private Object jobHistoryList(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
+        com.termux.app.control.resource.ResourceService resource = requireResource();
+        jobLease(scopes, ControlCore.Scope.JOBS_READ);
+        Map<?, ?> p = parameters(params, "limit");
+        int limit = p.containsKey("limit") ? number(p, "limit") : 20;
+        try { return resource.historyList(limit); }
+        catch (IllegalArgumentException e) { throw new BadParameters(); }
+    }
+
+    private Object jobHistoryGet(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
+        com.termux.app.control.resource.ResourceService resource = requireResource();
+        jobLease(scopes, ControlCore.Scope.JOBS_READ);
+        Map<String, Object> result = resource.historyGet(string(parameters(params, "id"), "id"));
+        if (result == null) throw new DomainError("NOT_FOUND");
+        return result;
+    }
+
+    /** The report is redacted. Output is added only for a caller that also holds output consent and asks for it. */
+    private Object jobDiagnosticsExport(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
+        com.termux.app.control.resource.ResourceService resource = requireResource();
+        JobAuthority.Lease lease = jobLease(scopes, ControlCore.Scope.JOBS_READ);
+        Map<?, ?> p = parameters(params, "id", "includeOutput");
+        String id = string(p, "id");
+        boolean includeOutput = p.containsKey("includeOutput") && booleanValue(p, "includeOutput");
+        requireReadableJob(id, lease);
+        byte[] stdout = null, stderr = null;
+        if (includeOutput) {
+            JobAuthority.Lease outputLease = jobLease(scopes, ControlCore.Scope.JOBS_OUTPUT);
+            stdout = outputTail(id, outputLease, JobOutputStore.Stream.STDOUT);
+            stderr = outputTail(id, outputLease, JobOutputStore.Stream.STDERR);
+        }
+        Map<String, Object> result = resource.exportDiagnostics(id, includeOutput, stdout, stderr);
+        if (Boolean.FALSE.equals(result.get("found"))) throw new DomainError("NOT_FOUND");
+        return result;
+    }
+
+    /** Newest 16 KiB of one stream, or null when no output is retained. */
+    private byte[] outputTail(String id, JobAuthority.Lease lease, JobOutputStore.Stream stream) throws UnknownMethod {
+        JobCoordinator jobs = requireJobs();
+        JobCoordinator.OutputResult probe = jobs.readOutput(id, lease, stream, 0, 1);
+        if (probe.status != JobCoordinator.ReadStatus.OK) return null;
+        long end = probe.output.endOffset;
+        JobCoordinator.OutputResult tail = jobs.readOutput(id, lease, stream, Math.max(0, end - 16 * 1024), 16 * 1024);
+        return tail.status == JobCoordinator.ReadStatus.OK ? tail.output.data : null;
+    }
+
+    private Object jobProcesses(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
+        com.termux.app.control.resource.ResourceService resource = requireResource();
+        JobAuthority.Lease lease = jobLease(scopes, ControlCore.Scope.JOBS_READ);
+        if (scopes == null || !scopes.contains(ControlCore.Scope.PROCESSES_READ)) throw new DomainError("DENIED");
+        String id = string(parameters(params, "id"), "id");
+        requireReadableJob(id, lease);
+        return resource.jobProcesses(id);
+    }
+
+    private static boolean booleanValue(Map<?, ?> p, String key) throws BadParameters {
+        Object value = p.get(key);
+        if (!(value instanceof Boolean)) throw new BadParameters();
+        return (Boolean) value;
+    }
+
+    // ---------------------------------------------------------------- workspace services
+
+    private com.termux.app.control.workspace.WorkspaceServiceController requireServices() throws UnknownMethod {
+        if (mServices.extras.services == null) throw new UnknownMethod();
+        return mServices.extras.services;
+    }
+
+    private Object serviceList(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
+        com.termux.app.control.workspace.WorkspaceServiceController services = requireServices();
+        requireWorkspaceScope(scopes, ControlCore.Scope.WORKSPACES_READ);
+        String ws = string(parameters(params, "workspaceId"), "workspaceId");
+        return Collections.singletonMap("services", workspaceCall(() -> new ArrayList<Object>(services.list(ws))));
+    }
+
+    private Object serviceStatus(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
+        com.termux.app.control.workspace.WorkspaceServiceController services = requireServices();
+        requireWorkspaceScope(scopes, ControlCore.Scope.WORKSPACES_READ);
+        Map<?, ?> p = parameters(params, "workspaceId", "serviceId");
+        String ws = string(p, "workspaceId"), svc = string(p, "serviceId");
+        return Collections.singletonMap("service", workspaceCall(() -> services.status(ws, svc)));
+    }
+
+    private Object serviceControl(String action, Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
+        com.termux.app.control.workspace.WorkspaceServiceController services = requireServices();
+        requireWorkspaceScope(scopes, ControlCore.Scope.WORKSPACES_READ);
+        JobAuthority.Lease lease = jobLease(scopes, ControlCore.Scope.JOBS_EXECUTE);
+        Map<?, ?> p = parameters(params, "workspaceId", "serviceId", "clientRequestId");
+        String clientRequestId = optionalString(p, "clientRequestId");
+        if (clientRequestId != null && !validRequestId(clientRequestId)) throw new DomainError("INVALID_REQUEST");
+        String ws = string(p, "workspaceId"), svc = string(p, "serviceId");
+        com.termux.app.control.workspace.WorkspaceServiceController.Outcome outcome;
+        switch (action) {
+            case "start": outcome = services.start(ws, svc, lease); break;
+            case "restart": outcome = services.restart(ws, svc, lease); break;
+            default: outcome = services.stop(ws, svc); break;
+        }
+        switch (outcome) {
+            case STARTED: case STOPPED: case RESTARTING: break;
+            case ALREADY_RUNNING: case STOPPING: case NOT_RUNNING: throw new DomainError("CONFLICT");
+            case NOT_FOUND: throw new DomainError("NOT_FOUND");
+            case DENIED: throw new DomainError("DENIED");
+            case LIMIT: throw new DomainError("RESOURCE_LIMITED");
+            case UNSUPPORTED: throw new DomainError("UNSUPPORTED");
+            case INVALID: throw new DomainError("INVALID_REQUEST");
+            default: throw new DomainError("UNAVAILABLE");
+        }
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("outcome", outcome.name().toLowerCase(java.util.Locale.ROOT));
+        response.put("service", workspaceCall(() -> services.status(ws, svc)));
+        return response;
+    }
+
+    private Object serviceLogs(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
+        com.termux.app.control.workspace.WorkspaceServiceController services = requireServices();
+        requireWorkspaceScope(scopes, ControlCore.Scope.WORKSPACES_READ);
+        jobLease(scopes, ControlCore.Scope.JOBS_OUTPUT);
+        Map<?, ?> p = parameters(params, "workspaceId", "serviceId", "stream", "offset", "limit");
+        String ws = string(p, "workspaceId"), svc = string(p, "serviceId");
+        workspaceCall(() -> services.status(ws, svc)); // unknown service: NOT_FOUND, not an empty log
+        int limit = number(p, "limit");
+        long offset = longNumber(p, "offset");
+        if (offset < 0 || limit < 1 || limit > OutputReplayBuffer.MAX_READ) throw new DomainError("INVALID_REQUEST");
+        JobCoordinator.OutputResult result = services.logs(ws, svc, stream(p), offset, limit);
+        if (result == null) throw new DomainError("NOT_FOUND");
+        OutputReplayBuffer.ReadResult value = result.output;
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("offset", value.offset); metadata.put("nextOffset", value.nextOffset); metadata.put("endOffset", value.endOffset);
+        metadata.put("gap", value.gap); metadata.put("length", value.data.length);
+        metadata.put("finished", result.finished); metadata.put("complete", result.complete);
+        return new OutputValue(metadata, value.data.length == 0 ? null : value.data);
+    }
+
+    private Object serviceHealth(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
+        com.termux.app.control.workspace.WorkspaceServiceController services = requireServices();
+        requireWorkspaceScope(scopes, ControlCore.Scope.WORKSPACES_READ);
+        Map<?, ?> p = parameters(params, "workspaceId", "serviceId");
+        String ws = string(p, "workspaceId"), svc = string(p, "serviceId");
+        return Collections.singletonMap("service", workspaceCall(() -> services.health(ws, svc, 300)));
+    }
+
+    private Object servicePorts(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
+        if (mServices.extras.ports == null) throw new UnknownMethod();
+        WorkspaceRepository workspaces = requireWorkspaces();
+        requireWorkspaceScope(scopes, ControlCore.Scope.WORKSPACES_READ);
+        String ws = string(parameters(params, "workspaceId"), "workspaceId");
+        WorkspaceRepository.Workspace workspace = workspaceCall(() -> workspaces.get(ws));
+        Map<String, List<Integer>> declared = new LinkedHashMap<>();
+        for (WorkspaceRepository.ServiceDefinition d : workspace.services) declared.put(d.id, d.ports);
+        Map<Integer, List<String>> byPort = new java.util.HashMap<>();
+        for (WorkspaceRepository.Workspace other : workspaces.list())
+            for (WorkspaceRepository.ServiceDefinition d : other.services)
+                for (Integer port : d.ports) byPort.computeIfAbsent(port, k -> new ArrayList<>()).add(other.id + "/" + d.id);
+        Set<String> running = new java.util.HashSet<>();
+        if (mServices.extras.services != null)
+            for (Map<String, Object> st : workspaceCall(() -> mServices.extras.services.list(ws))) if ("running".equals(st.get("state"))) running.add((String) st.get("serviceId"));
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("workspaceId", ws);
+        response.put("ports", new ArrayList<Object>(com.termux.app.control.workspace.WorkspacePortService.describe(ws, declared, running, byPort, 300)));
+        return response;
+    }
+
+    /** Opens, lists or closes a relay. Always explicit: nothing listens unless this is called, and LAN exposure needs confirmLan. */
+    private Object serviceProxy(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
+        com.termux.app.control.workspace.WorkspacePortService ports = mServices.extras.ports;
+        if (ports == null) throw new UnknownMethod();
+        requireWorkspaceScope(scopes, ControlCore.Scope.WORKSPACES_WRITE);
+        Map<?, ?> p = parameters(params, "action", "listenAddress", "listenPort", "targetPort", "id", "confirmLan");
+        switch (string(p, "action")) {
+            case "open": {
+                try {
+                    com.termux.app.control.workspace.WorkspacePortService.Proxy proxy = ports.open(optionalString(p, "listenAddress"), number(p, "listenPort"),
+                        number(p, "targetPort"), p.containsKey("confirmLan") && booleanValue(p, "confirmLan"));
+                    return Collections.singletonMap("proxy", proxy(proxy));
+                } catch (com.termux.app.control.workspace.WorkspacePortService.PortException e) { throw new DomainError(e.code); }
+            }
+            case "close": return Collections.singletonMap("closed", ports.closeProxy(string(p, "id")));
+            case "list": {
+                List<Object> items = new ArrayList<>();
+                for (com.termux.app.control.workspace.WorkspacePortService.Proxy proxy : ports.proxies()) items.add(proxy(proxy));
+                return Collections.singletonMap("proxies", items);
+            }
+            default: throw new BadParameters();
+        }
+    }
+
+    private static Map<String, Object> proxy(com.termux.app.control.workspace.WorkspacePortService.Proxy proxy) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", proxy.id); m.put("listenAddress", proxy.listenAddress); m.put("listenPort", proxy.listenPort);
+        m.put("targetAddress", "127.0.0.1"); m.put("targetPort", proxy.targetPort); m.put("lan", proxy.lan);
+        return m;
+    }
+
+    // ---------------------------------------------------------------- workspace backup
+
+    private com.termux.app.control.workspace.WorkspaceBackupService requireBackup() throws UnknownMethod {
+        if (mServices.extras.backup == null) throw new UnknownMethod();
+        return mServices.extras.backup;
+    }
+
+    private Object backupExport(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
+        com.termux.app.control.workspace.WorkspaceBackupService backup = requireBackup();
+        WorkspaceRepository workspaces = requireWorkspaces();
+        requireWorkspaceScope(scopes, ControlCore.Scope.WORKSPACES_WRITE);
+        requireWorkspaceScope(scopes, ControlCore.Scope.FILES_READ);
+        Map<?, ?> p = parameters(params, "workspaceId", "format", "includeSensitive");
+        String ws = string(p, "workspaceId");
+        com.termux.app.control.workspace.WorkspaceBackupService.Format format;
+        try { format = p.containsKey("format") ? com.termux.app.control.workspace.WorkspaceBackupService.Format.parse(string(p, "format")) : com.termux.app.control.workspace.WorkspaceBackupService.Format.ZIP; }
+        catch (IllegalArgumentException e) { throw new BadParameters(); }
+        boolean sensitive = p.containsKey("includeSensitive") && booleanValue(p, "includeSensitive");
+        if (!workspaceCall(() -> workspaces.get(ws)).available) throw new DomainError("UNAVAILABLE");
+        try {
+            byte[] config = workspaceCall(() -> workspaces.exportConfig(ws));
+            com.termux.app.control.workspace.WorkspaceBackupService.Summary s = backup.export(ws, workspaceCall(() -> workspaces.directory(ws)), config, format, sensitive,
+                new com.termux.app.control.workspace.WorkspaceBackupService.Control());
+            Map<String, Object> b = new LinkedHashMap<>();
+            b.put("id", s.backupId); b.put("format", s.format.wireName); b.put("files", s.files); b.put("bytes", s.bytes); b.put("archiveBytes", s.archiveBytes);
+            b.put("truncated", s.truncated);
+            Map<String, Object> skipped = new LinkedHashMap<>();
+            skipped.put("excluded", s.skippedExcluded); skipped.put("sensitive", s.skippedSensitive); skipped.put("links", s.skippedLinks); skipped.put("unsafe", s.skippedUnsafe);
+            b.put("skipped", skipped);
+            return Collections.singletonMap("backup", b);
+        } catch (java.io.IOException e) { throw new DomainError("UNAVAILABLE"); }
+    }
+
+    /** Restoring is destructive only with overwrite, and overwrite needs explicit confirmation from the caller. */
+    private Object backupImport(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
+        com.termux.app.control.workspace.WorkspaceBackupService backup = requireBackup();
+        WorkspaceRepository workspaces = requireWorkspaces();
+        requireWorkspaceScope(scopes, ControlCore.Scope.WORKSPACES_WRITE);
+        requireWorkspaceScope(scopes, ControlCore.Scope.FILES_WRITE);
+        Map<?, ?> p = parameters(params, "workspaceId", "backupId", "paths", "overwrite", "confirm", "applyConfig");
+        String ws = string(p, "workspaceId");
+        boolean overwrite = p.containsKey("overwrite") && booleanValue(p, "overwrite");
+        boolean confirm = p.containsKey("confirm") && booleanValue(p, "confirm");
+        if (overwrite && !confirm) throw new DomainError("PERMISSION_REQUIRED");
+        boolean apply = p.containsKey("applyConfig") && booleanValue(p, "applyConfig");
+        if (apply && !confirm) throw new DomainError("PERMISSION_REQUIRED"); // replaces tasks and services
+        List<String> paths = p.containsKey("paths") ? stringList(p, "paths") : null;
+        if (paths != null && paths.size() > 64) throw new BadParameters();
+        if (!workspaceCall(() -> workspaces.get(ws)).available) throw new DomainError("UNAVAILABLE");
+        java.io.File archive = backup.resolve(ws, string(p, "backupId"));
+        if (archive == null) throw new DomainError("NOT_FOUND");
+        final byte[][] config = new byte[1][];
+        try {
+            com.termux.app.control.workspace.WorkspaceBackupService.Summary s = backup.restore(archive.getName(), archive, workspaceCall(() -> workspaces.directory(ws)),
+                paths, overwrite, new com.termux.app.control.workspace.WorkspaceBackupService.Control(), c -> config[0] = c);
+            boolean applied = false;
+            if (apply && config[0] != null) { workspaceCall(() -> workspaces.applyConfig(ws, config[0])); applied = true; }
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("files", s.files); r.put("bytes", s.bytes); r.put("conflicts", s.conflicts); r.put("skippedUnsafe", s.skippedUnsafe);
+            r.put("truncated", s.truncated); r.put("configApplied", applied);
+            return Collections.singletonMap("restore", r);
+        } catch (java.io.IOException e) { throw new DomainError("INVALID_REQUEST"); }
+    }
+
     private static final class DomainError extends Exception {
         final String code;
         DomainError(String code) { super(code); this.code = code; }

@@ -578,6 +578,16 @@ static const char *domain_method(const char *group, const char *sub, int count) 
         if (!strcmp(sub, "cancel") && count == 1) return "job.cancel";
         if ((!strcmp(sub, "start") || !strcmp(sub, "run")) && count >= 2) return "job.start";
         if (!strcmp(sub, "logs") && count >= 1) return "job.output.read";
+        if (!strcmp(sub, "resource") && count == 1) return "job.resource.get";
+        if (!strcmp(sub, "history") && count == 0) return "job.history.list";
+        if (!strcmp(sub, "history-get") && count == 1) return "job.history.get";
+        if (!strcmp(sub, "diagnostics") && count == 1) return "job.diagnostics.export";
+        if (!strcmp(sub, "processes") && count == 1) return "job.processes";
+        return NULL;
+    }
+    if (!strcmp(group, "resources")) {
+        if (!strcmp(sub, "capabilities") && count == 0) return "resource.capabilities";
+        if (!strcmp(sub, "snapshot") && count == 0) return "resource.snapshot";
         return NULL;
     }
     if (!strcmp(group, "workspaces")) {
@@ -590,6 +600,13 @@ static const char *domain_method(const char *group, const char *sub, int count) 
         if (!strcmp(sub, "update") && count == 4) return "workspace.update";
         if (!strcmp(sub, "remove") && count == 1) return "workspace.remove";
         if (!strcmp(sub, "select") && count == 1) return "workspace.select";
+        if (!strcmp(sub, "services") && count == 1) return "workspace.service.list";
+        if (!strcmp(sub, "ports") && count == 1) return "workspace.service.ports";
+        if (!strcmp(sub, "service-status") && count == 2) return "workspace.service.status";
+        if (!strcmp(sub, "service-health") && count == 2) return "workspace.service.health";
+        if (!strcmp(sub, "service-start") && count == 2) return "workspace.service.start";
+        if (!strcmp(sub, "service-stop") && count == 2) return "workspace.service.stop";
+        if (!strcmp(sub, "service-restart") && count == 2) return "workspace.service.restart";
         return NULL;
     }
     return NULL;
@@ -604,7 +621,11 @@ static int domain_call(const char *path, const char *method, char **args, int co
         }
     }
     const char *keys[3] = {NULL, NULL, NULL};
-    if (!strcmp(method, "job.get") || !strcmp(method, "job.cancel") || !strcmp(method, "workspace.get") || !strcmp(method, "workspace.tasks")) keys[0] = "id";
+    if (!strcmp(method, "job.get") || !strcmp(method, "job.cancel") || !strcmp(method, "workspace.get") || !strcmp(method, "workspace.tasks") ||
+        !strcmp(method, "job.resource.get") || !strcmp(method, "job.history.get") || !strcmp(method, "job.diagnostics.export") ||
+        !strcmp(method, "job.processes")) keys[0] = "id";
+    else if (!strcmp(method, "workspace.service.list") || !strcmp(method, "workspace.service.ports")) keys[0] = "workspaceId";
+    else if (!strncmp(method, "workspace.service.", 18) && count == 2) { keys[0] = "workspaceId"; keys[1] = "serviceId"; }
     else if (!strcmp(method, "workspace.git")) { keys[0] = "workspaceId"; keys[1] = "subcommand"; }
     else if (!strcmp(method, "workspace.task.run")) { keys[0] = "workspaceId"; keys[1] = "taskId"; }
     else if (!strcmp(method, "workspace.remove") || !strcmp(method, "workspace.select")) keys[0] = "id";
@@ -623,7 +644,8 @@ static int domain_call(const char *path, const char *method, char **args, int co
     int result = exchange(fd, req, 2, 0, NULL, 0, NULL);
     int mutating = !strcmp(method, "job.cancel") || !strcmp(method, "workspace.git") || !strcmp(method, "workspace.task.run") ||
                    !strcmp(method, "workspace.create") || !strcmp(method, "workspace.update") || !strcmp(method, "workspace.remove") ||
-                   !strcmp(method, "workspace.select");
+                   !strcmp(method, "workspace.select") || !strcmp(method, "workspace.service.start") ||
+                   !strcmp(method, "workspace.service.stop") || !strcmp(method, "workspace.service.restart");
     if (result < 0 && mutating) fprintf(stderr, "termux-control: request outcome may be unknown; inspect job state before retrying\n");
     close(fd); return result == 0 ? 0 : 1;
 too_long:
@@ -777,7 +799,10 @@ static void usage(void) {
     fprintf(stderr, "Usage: termux-control [--socket PATH] [--resume] capabilities|list|create COLS ROWS [NAME]|rename ID NAME|resize ID COLS ROWS|focus ID|snapshot ID|close ID|write ID < FILE|follow ID|attach ID|bridge\n"
                     "       termux-control [--socket PATH] jobs list|get ID|cancel ID|logs ID [--stream stdout|stderr] [--follow]\n"
                     "       termux-control [--socket PATH] jobs start|run [--cwd DIR] [--workspace ID] [--timeout MS] -- EXECUTABLE [ARG...]\n"
-                    "       termux-control [--socket PATH] workspaces list|get ID|tasks ID|git ID status|branch|diff|log|run ID TASK|create NAME ROOT PATH|update ID NAME ROOT PATH|remove ID|select ID\n");
+                    "       termux-control [--socket PATH] workspaces list|get ID|tasks ID|git ID status|branch|diff|log|run ID TASK|create NAME ROOT PATH|update ID NAME ROOT PATH|remove ID|select ID\n"
+                    "       termux-control [--socket PATH] workspaces services ID|ports ID|service-status|service-health|service-start|service-stop|service-restart ID SERVICE\n"
+                    "       termux-control [--socket PATH] jobs resource ID|history|history-get ID|diagnostics ID|processes ID\n"
+                    "       termux-control [--socket PATH] resources capabilities|snapshot\n");
 }
 int main(int argc, char **argv) {
     const char *path = getenv("TERMUX_CONTROL_SOCKET"); char default_path[sizeof(((struct sockaddr_un *)0)->sun_path)];
@@ -796,7 +821,7 @@ int main(int argc, char **argv) {
     }
     if (i >= argc || strlen(path) >= sizeof(((struct sockaddr_un *)0)->sun_path)) { usage(); return 2; }
     const char *cmd = argv[i++]; int count = argc - i; char req[MAX_REQUEST] = ""; size_t used = 0;
-    if ((!strcmp(cmd, "jobs") || !strcmp(cmd, "workspaces")) && !resume) {
+    if ((!strcmp(cmd, "jobs") || !strcmp(cmd, "workspaces") || !strcmp(cmd, "resources")) && !resume) {
         if (i >= argc) { usage(); return 2; }
         const char *sub = argv[i++]; count = argc - i;
         const char *method = domain_method(cmd, sub, count);

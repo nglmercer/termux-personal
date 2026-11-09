@@ -72,7 +72,25 @@ final class ControlMethodRegistry {
         new Descriptor("workspace.tasks", false, "none", false, ControlCore.Scope.WORKSPACES_READ),
         new Descriptor("workspace.task.run", true, "none", false, ControlCore.Scope.WORKSPACES_READ, ControlCore.Scope.JOBS_EXECUTE),
         new Descriptor("workspace.git", true, "none", false, ControlCore.Scope.WORKSPACES_READ, ControlCore.Scope.JOBS_EXECUTE),
-        new Descriptor("workspace.git.change", true, "none", false, ControlCore.Scope.WORKSPACES_WRITE, ControlCore.Scope.JOBS_EXECUTE)
+        new Descriptor("workspace.git.change", true, "none", false, ControlCore.Scope.WORKSPACES_WRITE, ControlCore.Scope.JOBS_EXECUTE),
+        new Descriptor("resource.capabilities", false, "none", false, ControlCore.Scope.JOBS_READ),
+        new Descriptor("resource.snapshot", false, "none", false, ControlCore.Scope.JOBS_READ),
+        new Descriptor("job.resource.get", false, "none", false, ControlCore.Scope.JOBS_READ),
+        new Descriptor("job.history.list", false, "none", false, ControlCore.Scope.JOBS_READ),
+        new Descriptor("job.history.get", false, "none", false, ControlCore.Scope.JOBS_READ),
+        new Descriptor("job.diagnostics.export", false, "none", false, ControlCore.Scope.JOBS_READ),
+        new Descriptor("job.processes", false, "none", false, ControlCore.Scope.JOBS_READ, ControlCore.Scope.PROCESSES_READ),
+        new Descriptor("workspace.service.list", false, "none", false, ControlCore.Scope.WORKSPACES_READ),
+        new Descriptor("workspace.service.status", false, "none", false, ControlCore.Scope.WORKSPACES_READ),
+        new Descriptor("workspace.service.start", true, "none", false, ControlCore.Scope.WORKSPACES_READ, ControlCore.Scope.JOBS_EXECUTE),
+        new Descriptor("workspace.service.stop", true, "none", false, ControlCore.Scope.WORKSPACES_READ, ControlCore.Scope.JOBS_EXECUTE),
+        new Descriptor("workspace.service.restart", true, "none", false, ControlCore.Scope.WORKSPACES_READ, ControlCore.Scope.JOBS_EXECUTE),
+        new Descriptor("workspace.service.logs", false, "response", false, ControlCore.Scope.WORKSPACES_READ, ControlCore.Scope.JOBS_OUTPUT),
+        new Descriptor("workspace.service.health", false, "none", false, ControlCore.Scope.WORKSPACES_READ),
+        new Descriptor("workspace.service.ports", false, "none", false, ControlCore.Scope.WORKSPACES_READ),
+        new Descriptor("workspace.service.proxy", true, "none", false, ControlCore.Scope.WORKSPACES_WRITE),
+        new Descriptor("workspace.backup.export", true, "none", false, ControlCore.Scope.WORKSPACES_WRITE, ControlCore.Scope.FILES_READ),
+        new Descriptor("workspace.backup.import", true, "none", false, ControlCore.Scope.WORKSPACES_WRITE, ControlCore.Scope.FILES_WRITE)
     ));
 
     /** Feature names the server has actually wired: "output", "jobs", "processes" and "files". */
@@ -105,6 +123,12 @@ final class ControlMethodRegistry {
 
     /** Domain feature that gates a method, or null for core and session methods. */
     private static String featureOf(String method) {
+        // Methods that report resource, history or diagnostics need the resource service on top of the job coordinator.
+        if (method.startsWith("resource.") || method.equals("job.resource.get") || method.startsWith("job.history.") ||
+            method.equals("job.diagnostics.export") || method.equals("job.processes")) return "resource";
+        if (method.equals("workspace.service.proxy") || method.equals("workspace.service.ports")) return "workspace-ports";
+        if (method.startsWith("workspace.service.")) return "workspace-services";
+        if (method.startsWith("workspace.backup.")) return "workspace-backup";
         // process.signal acts on job handles, so the job coordinator gates it, not the /proc sampler.
         if (method.startsWith("job.") || method.equals("process.signal")) return "jobs";
         if (method.startsWith("process.")) return "processes";

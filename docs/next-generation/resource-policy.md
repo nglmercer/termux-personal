@@ -73,3 +73,25 @@ Executables are matched by exact basename; anything else is never rewritten, fla
 ## Legacy `RUN_COMMAND` output
 
 `StreamGobbler` now reads stdout/stderr as bytes and retains at most 4 MiB per stream (`ResultData.stdoutDroppedBytes`/`stderrDroppedBytes` count the rest; the plugin result's original-length extras include them). A single huge line, binary output and invalid UTF-8 no longer grow memory, and the pipe is drained to EOF so the child never blocks. Line terminators are normalized exactly as `BufferedReader.readLine()` did, so small outputs are unchanged. The head of the output is kept, not the tail.
+
+## Device policy and workspace configuration (PR 3)
+
+`DeviceResourcePolicy` holds the device-aware numbers in one place: heavy slots from total RAM and pressure, workers per job from the CPU count shared among concurrent jobs, and a memory observation threshold from total and available RAM. They are starting heuristics and none of them is a performance claim. Admission, build presets and the supervisor all use it, so they cannot disagree. A job without its own `memorySoftBytes` and with a profile gets a derived threshold at its first sample; that threshold is only observed and recorded unless the job chose `stop_job`.
+
+A workspace may carry an optional `resourceProfile`, a task preset may carry optional `resources`, and a workspace may define up to eight `services`. All are optional and absent by default: a v1 file written before they existed loads unchanged, is saved without them, and its tasks run exactly as before. A bad optional field is dropped when loading (the workspace and its tasks survive); it is never treated as file corruption. Running a task uses the preset's own policy, else the workspace profile, else nothing; a known build tool then gets the device-aware worker count.
+
+### Services
+
+A service is a managed job started from a stored definition (`workspace.service.*`). It uses the one coordinator, so limits, admission, history and ownership-safe stopping apply. State is in memory: nothing starts after a restart. Restart policy defaults to `never`; `on-failure` restarts after a non-zero exit, a signal or a failed start; `always` after any exit. Restarts back off from 1 s up to 30 s, at most five per ten minutes, then the service stays in `crash_loop`. A service whose last run ended by a resource-guard stop or a possible memory-pressure kill is `memory_stopped` and is not retried. An explicit stop, revoked consent or a removed definition beat any pending restart. `restart` waits for the old job to end and never runs two copies.
+
+### Ports and proxies
+
+`workspace.service.ports` observes each declared port by connecting: `listening` on loopback, `lanExposed` only if it also accepts connections on a non-loopback address of the device, and a `conflict` when another service declares it or something else holds it. `workspace.service.proxy` relays a local port to `127.0.0.1:targetPort` on request. It listens on loopback by default; any other address needs `confirmLan`. The target is always loopback, addresses must be IP literals, ports below 1024 are refused, and there are at most four proxies and 32 connections with an idle timeout.
+
+### Backups
+
+`workspace.backup.export` writes a ZIP or tar.gz to app-private storage and returns its ID; `workspace.backup.import` restores from that ID into the same workspace. Export skips `node_modules`, `.gradle`, `target`, `.git`, `cache`, temporary files, symbolic links and, unless `includeSensitive` is set, files that look like credentials. Restore treats the archive as hostile: unsafe names, links and devices are refused and counted, writes never go through a symbolic link, the size, file count, depth and compression ratio are bounded, and existing files are kept unless `overwrite` is set. `overwrite` and `applyConfig` (which replaces the workspace's tasks and services from the archive) need `confirm`. The service supports progress and cancellation, but the RPC has no asynchronous operation model yet, so both are not reachable over the protocol. It needs Android 8.0 (`java.nio.file`): below that the methods are not advertised.
+
+### Protocol additions
+
+`resource.capabilities`, `resource.snapshot`, `job.resource.get`, `job.history.list|get`, `job.diagnostics.export`, `job.processes` (all `JOBS_READ`; `job.processes` also `PROCESSES_READ`, and diagnostics output needs `JOBS_OUTPUT`), `workspace.service.list|status|health|ports` (`WORKSPACES_READ`), `.start|.stop|.restart` (`WORKSPACES_READ` and `JOBS_EXECUTE`), `.logs` (`WORKSPACES_READ` and `JOBS_OUTPUT`), `.proxy` (`WORKSPACES_WRITE`), `workspace.backup.export` (`WORKSPACES_WRITE`, `FILES_READ`) and `.import` (`WORKSPACES_WRITE`, `FILES_WRITE`). Each is advertised only when its service exists and its scopes are granted. Existing methods and the JSON-RPC envelope are unchanged. `process.list` still reports `managedJobId: null`; `job.processes` carries the association. The Python and TypeScript SDKs and the `termux-control` CLI expose all of them.

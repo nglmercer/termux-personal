@@ -5,10 +5,13 @@ import { Jobs } from "./jobs.ts";
 import { Files } from "./files.ts";
 import { Processes } from "./processes.ts";
 import { Workspaces } from "./workspaces.ts";
+import { Backups, Resources, Services } from "./resources.ts";
 
 const readOnly = new Set(["system.hello", "system.capabilities", "system.describe", "session.list", "session.snapshot", "session.output.read",
   "job.list", "job.get", "job.output.read", "process.list", "file.roots", "file.list", "file.stat", "file.read",
-  "workspace.list", "workspace.get", "workspace.tasks"]);
+  "workspace.list", "workspace.get", "workspace.tasks",
+  "resource.capabilities", "resource.snapshot", "job.resource.get", "job.history.list", "job.history.get", "job.diagnostics.export", "job.processes",
+  "workspace.service.list", "workspace.service.status", "workspace.service.health", "workspace.service.ports", "workspace.service.logs"]);
 type JsonObject = Record<string, unknown>;
 function object(value: unknown): value is JsonObject { return typeof value === "object" && value !== null && !Array.isArray(value); }
 
@@ -22,6 +25,9 @@ export class TermuxClient {
   readonly processes: Processes;
   readonly files: Files;
   readonly workspaces: Workspaces;
+  readonly resources: Resources;
+  readonly services: Services;
+  readonly backups: Backups;
   private constructor(transport: ByteTransport) {
     this.transport = transport;
     this.sessions = new Sessions(this);
@@ -29,6 +35,9 @@ export class TermuxClient {
     this.processes = new Processes(this);
     this.files = new Files(this);
     this.workspaces = new Workspaces(this);
+    this.resources = new Resources(this);
+    this.services = new Services(this);
+    this.backups = new Backups(this);
   }
 
   static async fromTransport(transport: ByteTransport): Promise<TermuxClient> {
@@ -86,7 +95,7 @@ export class TermuxClient {
         throw new RpcError(error.code as number, error.message, error.data);
       }
       let payload: Uint8Array = new Uint8Array(0);
-      if (method === "session.output.read" || method === "job.output.read" || method === "file.read") {
+      if (method === "session.output.read" || method === "job.output.read" || method === "file.read" || method === "workspace.service.logs") {
         if (!object(parsed.result) || !Number.isInteger(parsed.result.length) || (parsed.result.length as number) < 0 || (parsed.result.length as number) > MAX_CHUNK)
           throw new ProtocolError("Invalid binary response metadata");
         const length = parsed.result.length as number;
