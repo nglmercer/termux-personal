@@ -18,7 +18,11 @@ public final class AppShellJobAdapter {
         /** True only when every launched child is an {@link OwnedChildProcess} that can be signalled safely. */
         default boolean ownsChildIdentity() { return false; }
     }
-    interface Completion { void finished(Integer exitCode, boolean captureFailed); }
+    interface Completion {
+        void finished(Integer exitCode, boolean captureFailed);
+        /** As above, also reporting the signal that terminated an owned child, when known. */
+        default void finished(Integer exitCode, boolean captureFailed, Integer signal) { finished(exitCode, captureFailed); }
+    }
 
     /** A required resource limit could not be applied, so the job was not started. */
     static final class LimitApplyFailedException extends IllegalStateException {
@@ -62,8 +66,11 @@ public final class AppShellJobAdapter {
         if (state != JobRecord.State.STARTING && state != JobRecord.State.CANCELLING)
             throw new IllegalStateException("Job was not prepared for launch");
         AtomicBoolean completed = new AtomicBoolean();
-        Completion callback = (exitCode, captureFailed) -> {
+        Completion callback = new Completion() {
+            @Override public void finished(Integer exitCode, boolean captureFailed) { finished(exitCode, captureFailed, null); }
+            @Override public void finished(Integer exitCode, boolean captureFailed, Integer signal) {
             if (!completed.compareAndSet(false, true)) return;
+            record.observedSignal(signal);
             // An accepted stop request decides the outcome even if the child exited first.
             JobRecord.StopReason reason = record.snapshot().stopReason;
             if (reason == JobRecord.StopReason.CANCEL || reason == JobRecord.StopReason.RESOURCE_GUARD)
@@ -74,6 +81,7 @@ public final class AppShellJobAdapter {
                 record.complete(JobRecord.State.FAILED, exitCode, JobRecord.Failure.CAPTURE_FAILED, System.currentTimeMillis());
             else record.complete(JobRecord.State.EXITED, exitCode, null, System.currentTimeMillis());
             if (control != null) control.completed();
+            }
         };
         try {
             Process process = mBackend.launch(spec, executable, cwd, entry.capture(), callback);
@@ -155,7 +163,9 @@ public final class AppShellJobAdapter {
             };
             AppShell shell = AppShell.executeManaged(mContext, command, finished -> {
                 ExecutionCommand result = finished.getExecutionCommand();
-                completion.finished(result.resultData.exitCode, result.isStateFailed());
+                Process child = finished.getProcess();
+                completion.finished(result.resultData.exitCode, result.isStateFailed(),
+                    child instanceof OwnedChildProcess ? ((OwnedChildProcess) child).terminationSignal() : null);
             }, environment, new HashMap<>(spec.environment()), capture, launcher);
             if (shell == null && limitFailure.get()) throw new LimitApplyFailedException();
             return shell == null ? null : shell.getProcess();

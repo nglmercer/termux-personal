@@ -19,7 +19,7 @@ public final class OwnedProcessControl {
     private Process mProcess;
     private ScheduledFuture<?> mEscalation, mTimeout;
     private boolean mDone, mAttached;
-    private Runnable mCompletionHook;
+    private java.util.List<Runnable> mCompletionHooks = new java.util.ArrayList<>();
     private Status mStatus = Status.NOT_REQUESTED;
 
     /** The owner must provide a bounded, service-owned scheduler and invoke stop off the main thread. */
@@ -46,6 +46,16 @@ public final class OwnedProcessControl {
     }
 
     boolean owns(JobRecord record) { return mRecord == record; }
+
+    /**
+     * PID of the attached owned child while it is unfinished, for observation only (process views, supervision). Never use
+     * it to signal: signals go through {@link #requestStop} and {@link #signal}. Null when not attached, finished, or the
+     * handle is not an owned child.
+     */
+    synchronized Integer ownedPid() {
+        if (mDone || mProcess == null || !(mProcess instanceof OwnedChildProcess) || !alive(mProcess)) return null;
+        return ((OwnedChildProcess) mProcess).pid();
+    }
 
     /** Stop while launch is in progress; the request is applied when the owned handle arrives. */
     public synchronized Request requestStop(JobRecord.StopReason reason) {
@@ -96,7 +106,7 @@ public final class OwnedProcessControl {
     }
 
     /**
-     * Registers work to run exactly once when this job completes, whichever path completes it (exit, failed launch,
+     * Registers work to run once, in registration order, when this job completes, whichever path completes it (exit, failed launch,
      * cancellation while queued). Runs on the completing thread with no lock held. Runs immediately if already complete.
      */
     void onCompleted(Runnable hook) {
@@ -104,24 +114,23 @@ public final class OwnedProcessControl {
         boolean runNow;
         synchronized (this) {
             runNow = mDone;
-            if (!runNow) {
-                if (mCompletionHook != null) throw new IllegalStateException("Completion hook already set");
-                mCompletionHook = hook;
-            }
+            if (!runNow) mCompletionHooks.add(hook);
         }
         if (runNow) hook.run();
     }
 
     /** Called after the process result is observed; an already queued escalation becomes a no-op. */
     void completed() {
-        Runnable hook;
+        java.util.List<Runnable> hooks;
         synchronized (this) {
             mDone = true; mProcess = null;
             if (mEscalation != null) { mEscalation.cancel(false); mEscalation = null; }
             if (mTimeout != null) { mTimeout.cancel(false); mTimeout = null; }
-            hook = mCompletionHook; mCompletionHook = null;
+            hooks = mCompletionHooks; mCompletionHooks = new java.util.ArrayList<>();
         }
-        if (hook != null) hook.run();
+        for (Runnable hook : hooks) {
+            try { hook.run(); } catch (RuntimeException e) { /* one failing hook must not skip the others, nor job completion */ }
+        }
     }
 
     public synchronized Status status() { return mStatus; }

@@ -24,12 +24,15 @@ public class JobCoordinatorResourceTest {
     private final CountDownLatch finishJobs = new CountDownLatch(1);
     private JobRegistry registry;
     private JobCoordinator coordinator;
+    private JobHistoryStore history;
+    private java.io.File historyRoot;
+    private final java.util.concurrent.atomic.AtomicInteger exitSignal = new java.util.concurrent.atomic.AtomicInteger();
     private ResourceAdmissionController admission;
     private final JobAuthority authority = new JobAuthority();
     private final JobAuthority.Lease lease = authority.grant(EnumSet.of(JobAuthority.Permission.EXECUTE, JobAuthority.Permission.CANCEL,
         JobAuthority.Permission.READ));
 
-    private void create(int maxQueued) {
+    private void create(int maxQueued) throws Exception {
         registry = new JobRegistry(new JobIoPool(4), new JobOutputStore(1024, 8, 32 * 1024), 8);
         admission = new ResourceAdmissionController(new ResourceAdmissionController.Config(maxQueued, 0, 0, 256L << 20, 0), 4, clock::get);
         admission.update(PressureTracker.Level.NORMAL, 10 * GIB, 12 * GIB);
@@ -44,7 +47,7 @@ public class JobCoordinatorResourceTest {
                     @Override public int reap(int pid, int[] out) { out[0] = 1; out[1] = 0; return 0; }
                     @Override public int signal(int pid, int signal) { finishJobs.countDown(); return 0; }
                 }, new ByteArrayOutputStream(), new ByteArrayInputStream(new byte[0]), new ByteArrayInputStream(new byte[0]));
-                Thread waiter = new Thread(() -> done.finished(child.waitFor(), false));
+                Thread waiter = new Thread(() -> { int code = child.waitFor(); int sig = exitSignal.get(); done.finished(sig == 0 ? code : 128 + sig, false, sig == 0 ? null : sig); });
                 waiter.setDaemon(true); waiter.start();
                 return child;
             }
@@ -54,7 +57,10 @@ public class JobCoordinatorResourceTest {
             @Override public JobCoordinator.Resolution authorizeAndResolve(JobSpec job, long epoch) { return new JobCoordinator.Resolution("/bin/echo", "/home"); }
             @Override public boolean authorizeReplay(JobSpec job, long epoch) { return true; }
         };
-        coordinator = new JobCoordinator(registry, adapter, policy, authority, 4, admission, null);
+        historyRoot = java.nio.file.Files.createTempDirectory("coord-history").toFile();
+        history = new JobHistoryStore(historyRoot);
+        history.open();
+        coordinator = new JobCoordinator(registry, adapter, policy, authority, 4, admission, null, new JobDiagnostics(history, null, 34));
     }
 
     @After public void tearDown() throws Exception {
@@ -181,5 +187,44 @@ public class JobCoordinatorResourceTest {
         JobCoordinator.StartResult conflict = coordinator.start(spec("same", JobResourcePolicy.ofProfile(JobResourcePolicy.Profile.PROTECTED)), lease);
         assertEquals("different resources under the same key conflict", JobCoordinator.StartStatus.CONFLICT, conflict.status);
         assertEquals(1, admission.queuedCount());
+    }
+
+    @Test public void everyJobGetsEvidenceAndAPersistentRecordIncludingUnrestrictedOnes() throws Exception {
+        create(4);
+        JobCoordinator.StartResult plain = coordinator.start(spec("plain", null), lease);
+        assertTrue(until(() -> record(plain).snapshot().state == JobRecord.State.RUNNING));
+        assertTrue("an unfinished job is already on disk so that a restart can recognise it", until(() -> {
+            JobHistoryStore.Record r = history.get(plain.job.id); return r != null && !r.finished();
+        }));
+        finishJobs.countDown();
+        assertTrue(until(() -> { JobHistoryStore.Record r = history.get(plain.job.id); return r != null && r.finished(); }));
+        JobHistoryStore.Record done = history.get(plain.job.id);
+        assertEquals(JobTerminationEvidence.Reason.NORMAL_EXIT, done.evidence.reason);
+        assertTrue("no supervisor was involved, so the evidence says it is incomplete", done.evidence.observationsIncomplete);
+    }
+
+    @Test public void aSignalledChildIsNeverLabelledAsConfirmedOom() throws Exception {
+        create(4);
+        exitSignal.set(9);
+        JobCoordinator.StartResult killed = coordinator.start(spec("killed", balanced()), lease);
+        assertTrue(until(() -> record(killed).snapshot().state == JobRecord.State.RUNNING));
+        finishJobs.countDown();
+        assertTrue(until(() -> { JobHistoryStore.Record r = history.get(killed.job.id); return r != null && r.finished(); }));
+        JobHistoryStore.Record r = history.get(killed.job.id);
+        assertEquals(Integer.valueOf(9), r.signal);
+        assertEquals(JobTerminationEvidence.Reason.UNKNOWN_SIGKILL, r.evidence.reason);
+        assertNotEquals(JobTerminationEvidence.Confidence.CONFIRMED, r.evidence.confidence);
+        assertEquals("balanced", r.resourceProfile);
+        assertTrue(until(() -> admission.activeCount() == 0));
+    }
+
+    @Test public void aCancelledQueuedJobStillLeavesAnHonestRecord() throws Exception {
+        create(4);
+        admission.update(PressureTracker.Level.CRITICAL, 100L << 20, 12 * GIB);
+        JobCoordinator.StartResult queued = coordinator.start(spec("q", balanced()), lease);
+        assertEquals(JobCoordinator.CancelStatus.ACCEPTED, coordinator.cancel(queued.job.id, lease));
+        assertTrue(until(() -> { JobHistoryStore.Record r = history.get(queued.job.id); return r != null && r.finished(); }));
+        assertEquals("a job that never ran has no stored start", null, history.get(queued.job.id).startedAtWall);
+        assertEquals(JobTerminationEvidence.Reason.USER_CANCELLED, history.get(queued.job.id).evidence.reason);
     }
 }

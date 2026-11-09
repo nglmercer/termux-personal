@@ -225,4 +225,19 @@ public class JobResourceSupervisorTest {
         assertNull(supervisor.metrics("job_d"));
         assertEquals(0, deviceReads.get());
     }
+
+    @Test public void aSurvivorThatLeftTheTreeIsReportedAsPossiblyDetachedNotAsMemberAndNeverSignalled() throws Exception {
+        process(100, 1, 500, 100, 1); process(101, 100, 501, 100, 1);
+        Job job = new Job("job_o", 100, jobTimers);
+        supervisor.track(job.record, job.control, job.process, policy(JobResourcePolicy.PressureAction.STOP_JOB, null));
+        assertTrue(await(() -> supervisor.metrics("job_o").processCount != null && supervisor.metrics("job_o").processCount == 2));
+        assertTrue(supervisor.metrics("job_o").orphanPossiblePids.isEmpty());
+        process(101, 1, 501, 100, 1); // reparented to init: same process (same start time), no longer under the root
+        assertTrue(await(() -> supervisor.metrics("job_o").orphanPossiblePids.contains(101)));
+        assertEquals(Integer.valueOf(1), supervisor.metrics("job_o").processCount);
+        // The same PID reused by a different process is not a survivor.
+        process(101, 1, 999, 100, 1);
+        assertTrue(await(() -> supervisor.metrics("job_o").orphanPossiblePids.isEmpty()));
+        assertEquals("nothing was signalled", 0, job.signals.get());
+    }
 }

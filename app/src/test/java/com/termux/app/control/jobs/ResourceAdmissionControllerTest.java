@@ -54,6 +54,7 @@ public class ResourceAdmissionControllerTest {
         ResourceAdmissionController.Ticket overflow = c.newTicket(balanced());
         assertEquals(ResourceAdmissionController.Result.QUEUE_FULL, c.submit(overflow, () -> { }));
         assertEquals(3, c.queuedCount());
+        assertEquals("a refused ticket may retry without a new one", ResourceAdmissionController.Result.QUEUE_FULL, c.submit(overflow, () -> { }));
         c.release(overflow); // releasing a refused ticket is harmless
         assertEquals(3, c.queuedCount());
     }

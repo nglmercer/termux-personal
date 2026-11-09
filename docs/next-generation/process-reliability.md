@@ -2,7 +2,7 @@
 
 ## Failure modes this work separates
 
-Exit 137 / `SIGKILL` has several unrelated causes and this code does not label all of them out-of-memory: the Android phantom-process killer, the low-memory killer, an app-level kill, a child that hit its own `RLIMIT_CPU`, and a deliberate stop. Evidence-based classification (`JobTerminationEvidence`, `CrashReasonClassifier`) is **not part of this change**; until it exists a signalled job only reports the signal it died from.
+Exit 137 / `SIGKILL` has several unrelated causes and this code does not label all of them out-of-memory: the Android phantom-process killer, the low-memory killer, an app-level kill, a child that hit its own `RLIMIT_CPU`, and a deliberate stop. Evidence-based classification is described below.
 
 ## Scope of protection
 
@@ -18,12 +18,23 @@ Exit 137 / `SIGKILL` has several unrelated causes and this code does not label a
 * `JobResourcePolicy`, native `RLIMIT_AS`/`RLIMIT_CPU`/`nice` in the owned child (`managed-child.c`, JNI ABI marker 3).
 * `ResourceAdmissionController`, `PressureTracker`, `JobResourceSupervisor`.
 * Opt-in build presets, `resources` on `job.start`, `failureCode: limit_apply_failed`, `RESOURCE_LIMITED`.
+* Termination evidence, persistent history with recovery, registry eviction, diagnostics (see below).
 
 See [resource-policy.md](resource-policy.md) for semantics.
 
+## Diagnostics, history and recovery
+
+* `JobTerminationEvidence` and `CrashReasonClassifier` state why a job ended and how sure that is. Causes the app itself performed or saw (cancel, timeout, resource-guard stop, exit code, failed launch, a restart that lost the job) are `confirmed`. A bare `SIGKILL` is `UNKNOWN_SIGKILL`. Sampled evidence can raise it to `POSSIBLE_MEMORY_PRESSURE` (medium only when Android's own low-memory flag was set, otherwise low) or `POSSIBLE_PHANTOM_PROCESS_POLICY` (low; only on Android 12+, with ample free memory and complete observations). A possible cause is never confirmed: the constructor rejects it. Every record lists what was observed, what is inferred and what is unavailable (the app cannot read system logcat, and `ApplicationExitInfo` does not describe a native child).
+* `JobHistoryStore` keeps a bounded record per job in `files/resource-jobs/v1/history` (200 records, 4 MiB, oldest finished first; unfinished records are not trimmed). Writes are temp file, fsync, rename; unreadable records are moved aside as `.corrupt-<time>`. On open, every record that was unfinished becomes `LOST` with `SERVICE_LOST` evidence and no exit code: nothing is reattached, no PID is stored and nothing is signalled. A store with a newer layout version disables itself rather than overwrite. No command line, environment, stdin or output is persisted.
+* `JobRegistry` no longer exhausts after 32 finished jobs: when full, the oldest finished record whose pipe workers have stopped is evicted with its output. A running or queued record is never evicted. The request key of an evicted record becomes a tombstone (final metadata only) for 10 minutes, at most 256, so a retry still returns the original result and a different request under the same key still conflicts. After that window the key is forgotten and a retry runs as a new request. This is the finite replay policy.
+* `ProcessService` task roots are now the running managed-job children (observation only). `process.list` still reports `managedJobId: null`: both SDKs reject anything else, so the association is left for a new method. The supervisor reports processes that left a job's tree but still exist as `orphanPossiblePids`; it never signals them.
+* `DeviceCompatibilityAdvisor` derives capabilities from measured inputs. It lists read-only ADB diagnostics and, separately, settings-changing commands for the user to run themselves; Termux never runs them and no universal phantom-process limit is claimed.
+* `DiagnosticBundleExporter` builds a bounded, redacted bundle. Output is included only on explicit consent. The UI shares the text report through the Android share sheet.
+* The existing jobs dialog shows queue position, live resources, the termination reason and its uncertainty, the persistent history and a stop button that uses the owned handle.
+
 ## Not implemented yet
 
-Persistent job history and `LOST` recovery after restart; the 32-completed-jobs registry exhaustion (a finished job still holds its record and output slot for the service lifetime); termination evidence; trusted task roots for `ProcessService`; the process manager UI; diagnostic export; workspace profiles and services; backup; port tools; CLI/SDK helpers for `resources`; the optional VM backend.
+Workspace profiles and services, backup, port tools, `resource.*`/`job.history.*` methods and CLI/SDK helpers, the optional VM backend. The UI has not been run on a device.
 
 ## Known limits
 

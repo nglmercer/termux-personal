@@ -917,17 +917,20 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
             jobs == null ? java.util.Collections.emptyList() : jobs.localJobs();
         if (views.isEmpty()) {
             new AlertDialog.Builder(this).setTitle(R.string.action_jobs).setMessage(R.string.jobs_empty)
-                .setPositiveButton(android.R.string.ok, null).show();
+                .setPositiveButton(android.R.string.ok, null)
+                .setNeutralButton(R.string.jobs_history, (dialog, which) -> showJobHistory()).show();
             return;
         }
         String[] rows = new String[views.size()];
         for (int i = 0; i < rows.length; i++) {
             // Newest first; the coordinator returns oldest first.
             com.termux.app.control.jobs.JobRecord.Snapshot job = views.get(views.size() - 1 - i).job;
-            rows[i] = job.id + "  " + jobStateLabel(job);
+            int queued = jobs.queuePosition(job.id);
+            rows[i] = job.id + "  " + jobStateLabel(job) + (queued > 0 ? "  #" + queued : "");
         }
         new AlertDialog.Builder(this).setTitle(R.string.action_jobs)
             .setItems(rows, (dialog, which) -> showJob(jobs, views.get(views.size() - 1 - which).job.id))
+            .setNeutralButton(R.string.jobs_history, (dialog, which) -> showJobHistory())
             .setNegativeButton(android.R.string.cancel, null).show();
     }
 
@@ -937,12 +940,24 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     }
 
     private void showJob(com.termux.app.control.jobs.JobCoordinator jobs, String id) {
+        TermuxService service = getTermuxService();
+        boolean finished = false;
+        for (com.termux.app.control.jobs.JobCoordinator.JobView view : jobs.localJobs())
+            if (view.job.id.equals(id)) finished = com.termux.app.control.jobs.JobRecord.isTerminal(view.job.state);
+        if (service == null || !finished) { renderJobDetail(jobs, id, null); return; }
+        // The stored evidence is a file read, so it is loaded off the main thread.
+        loadInBackground(() -> service.jobHistoryForUi().get(id), record -> renderJobDetail(jobs, id, record));
+    }
+
+    private void renderJobDetail(com.termux.app.control.jobs.JobCoordinator jobs, String id,
+                                 com.termux.app.control.jobs.JobHistoryStore.Record stored) {
         com.termux.app.control.jobs.JobRecord.Snapshot job = null;
         for (com.termux.app.control.jobs.JobCoordinator.JobView view : jobs.localJobs())
             if (view.job.id.equals(id)) job = view.job;
         if (job == null) return;
         StringBuilder text = new StringBuilder(getString(R.string.jobs_detail_state, jobStateLabel(job)));
         if (job.failure != null) text.append("\n").append(getString(R.string.jobs_detail_failure, job.failure.name()));
+        appendJobResources(text, jobs, id, stored);
         appendJobOutput(text, jobs, id, com.termux.app.control.jobs.JobOutputStore.Stream.STDOUT, R.string.jobs_detail_stdout);
         appendJobOutput(text, jobs, id, com.termux.app.control.jobs.JobOutputStore.Stream.STDERR, R.string.jobs_detail_stderr);
         android.widget.TextView body = new android.widget.TextView(this);
@@ -956,8 +971,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
         AlertDialog.Builder builder = new AlertDialog.Builder(this).setTitle(id).setView(scroll)
             .setPositiveButton(R.string.jobs_refresh, (dialog, which) -> showJob(jobs, id))
             .setNegativeButton(android.R.string.cancel, null);
+        // Stop is offered only for a job that is still running or waiting; the coordinator cancels through the owned handle.
         if (!com.termux.app.control.jobs.JobRecord.isTerminal(job.state))
             builder.setNeutralButton(R.string.jobs_cancel, (dialog, which) -> confirmJobCancel(jobs, id));
+        else builder.setNeutralButton(R.string.jobs_export, (dialog, which) -> confirmDiagnosticsExport(jobs, id));
         builder.show();
     }
 
@@ -984,6 +1001,133 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                 showJob(jobs, id);
             })
             .setNegativeButton(android.R.string.cancel, null).show();
+    }
+
+    /** Live metrics (from the supervisor, in memory) and, for a finished job, the stored termination evidence. */
+    private void appendJobResources(StringBuilder text, com.termux.app.control.jobs.JobCoordinator jobs, String id,
+                                    com.termux.app.control.jobs.JobHistoryStore.Record stored) {
+        TermuxService service = getTermuxService();
+        int queued = jobs.queuePosition(id);
+        if (queued > 0) text.append("\n").append(getString(R.string.jobs_detail_queue, queued));
+        com.termux.app.control.jobs.JobResourceSupervisor supervisor = service == null ? null : service.getJobSupervisorIfCreated();
+        com.termux.app.control.jobs.JobResourceSupervisor.Metrics m = supervisor == null ? null : supervisor.metrics(id);
+        String unknown = getString(R.string.jobs_unknown);
+        if (m != null)
+            text.append("\n").append(getString(R.string.jobs_detail_resources, stored != null && stored.resourceProfile != null ? stored.resourceProfile : unknown,
+                formatBytes(m.rssBytes, unknown), formatBytes(m.peakRssBytes, unknown),
+                m.cpuPercent == null ? unknown : String.format(java.util.Locale.ROOT, "%.0f%%", m.cpuPercent),
+                m.processCount == null ? unknown : String.valueOf(m.processCount)));
+        if (m != null && !m.orphanPossiblePids.isEmpty()) text.append("\n").append(getString(R.string.jobs_detail_detached, m.orphanPossiblePids.size()));
+        if (stored != null) appendEvidence(text, stored);
+    }
+
+    private void appendEvidence(StringBuilder text, com.termux.app.control.jobs.JobHistoryStore.Record record) {
+        com.termux.app.control.jobs.JobTerminationEvidence e = record.evidence;
+        if (e == null) return;
+        text.append("\n").append(getString(R.string.jobs_detail_reason, e.reason.name(), e.confidence.wireName()));
+        for (String line : e.inferred) text.append("\n").append(getString(R.string.jobs_detail_inferred, line));
+        for (String line : e.unavailable) text.append("\n").append(getString(R.string.jobs_detail_unavailable, line));
+    }
+
+    private static String formatBytes(Long bytes, String unknown) {
+        if (bytes == null) return unknown;
+        return bytes >= (1L << 30) ? String.format(java.util.Locale.ROOT, "%.1f GiB", bytes / (double) (1L << 30)) :
+            String.format(java.util.Locale.ROOT, "%d MiB", bytes >> 20);
+    }
+
+    /** Persistent history, read off the main thread: it survives service restarts. */
+    private void showJobHistory() {
+        TermuxService service = getTermuxService();
+        if (service == null) return;
+        loadInBackground(() -> service.jobHistoryForUi().list(50), records -> {
+            if (records == null || records.isEmpty()) {
+                new AlertDialog.Builder(this).setTitle(R.string.jobs_history_title).setMessage(R.string.jobs_history_empty)
+                    .setPositiveButton(android.R.string.ok, null).show();
+                return;
+            }
+            String[] rows = new String[records.size()];
+            for (int i = 0; i < rows.length; i++) {
+                com.termux.app.control.jobs.JobHistoryStore.Record r = records.get(i);
+                rows[i] = r.jobId + "  " + r.state.toLowerCase(java.util.Locale.ROOT) + (r.evidence == null ? "" : "  " + r.evidence.reason.name());
+            }
+            new AlertDialog.Builder(this).setTitle(R.string.jobs_history_title)
+                .setItems(rows, (dialog, which) -> showHistoryRecord(records.get(which)))
+                .setNegativeButton(android.R.string.cancel, null).show();
+        });
+    }
+
+    private void showHistoryRecord(com.termux.app.control.jobs.JobHistoryStore.Record record) {
+        StringBuilder text = new StringBuilder(record.jobId).append("\n").append(record.state.toLowerCase(java.util.Locale.ROOT));
+        if (record.exitCode != null) text.append(" (exit ").append(record.exitCode).append(")");
+        if (record.signal != null) text.append(" signal ").append(record.signal);
+        if (record.resourceProfile != null) text.append("\nprofile ").append(record.resourceProfile);
+        if (record.peakRssBytes != null) text.append("\npeak ").append(formatBytes(record.peakRssBytes, getString(R.string.jobs_unknown)));
+        appendEvidence(text, record);
+        android.widget.TextView body = new android.widget.TextView(this);
+        body.setText(text); body.setTextIsSelectable(true);
+        int padding = (int) (16 * getResources().getDisplayMetrics().density);
+        body.setPadding(padding, padding, padding, padding);
+        android.widget.ScrollView scroll = new android.widget.ScrollView(this);
+        scroll.addView(body);
+        com.termux.app.control.jobs.JobCoordinator jobs = getTermuxService() == null ? null : getTermuxService().getJobCoordinatorIfCreated();
+        AlertDialog.Builder builder = new AlertDialog.Builder(this).setTitle(R.string.jobs_history_title).setView(scroll)
+            .setNegativeButton(android.R.string.cancel, null);
+        builder.setNeutralButton(R.string.jobs_export, (dialog, which) -> confirmDiagnosticsExport(jobs, record.jobId));
+        builder.show();
+    }
+
+    /** Output can hold private data, so including it is a separate, explicit choice. */
+    private void confirmDiagnosticsExport(com.termux.app.control.jobs.JobCoordinator jobs, String id) {
+        new AlertDialog.Builder(this).setTitle(R.string.jobs_export_title).setMessage(R.string.jobs_export_message)
+            .setPositiveButton(R.string.jobs_export_without_output, (dialog, which) -> exportDiagnostics(jobs, id, false))
+            .setNeutralButton(R.string.jobs_export_with_output, (dialog, which) -> exportDiagnostics(jobs, id, true))
+            .setNegativeButton(android.R.string.cancel, null).show();
+    }
+
+    private void exportDiagnostics(com.termux.app.control.jobs.JobCoordinator jobs, String id, boolean includeOutput) {
+        final TermuxService service = getTermuxService();
+        if (service == null) return;
+        final android.content.Context app = getApplicationContext();
+        loadInBackground(() -> {
+            com.termux.app.monitor.DiagnosticBundleExporter.Input in = new com.termux.app.monitor.DiagnosticBundleExporter.Input();
+            in.device = com.termux.app.monitor.DeviceCompatibilityAdvisor.advise(com.termux.app.monitor.DeviceCompatibilityAdvisor.collect(app,
+                com.termux.app.control.jobs.ManagedNative.isLibraryAvailable()));
+            in.systemSummary = "Android " + android.os.Build.VERSION.RELEASE + " (API " + android.os.Build.VERSION.SDK_INT + "), " + android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL;
+            in.homePath = com.termux.shared.termux.TermuxConstants.TERMUX_HOME_DIR_PATH;
+            in.prefixPath = com.termux.shared.termux.TermuxConstants.TERMUX_PREFIX_DIR_PATH;
+            in.generatedAtWall = System.currentTimeMillis();
+            com.termux.app.control.jobs.JobHistoryStore.Record record = service.jobHistoryForUi().get(id);
+            if (record != null) in.jobs.add(record);
+            com.termux.app.control.jobs.JobResourceSupervisor supervisor = service.getJobSupervisorIfCreated();
+            if (supervisor != null) {
+                com.termux.app.control.jobs.JobResourceSupervisor.Metrics m = supervisor.metrics(id);
+                if (m != null) in.liveMetrics.put(id, m);
+                in.events = new java.util.ArrayList<>(supervisor.events(id));
+            }
+            in.includeOutput = includeOutput;
+            if (includeOutput && jobs != null) {
+                in.stdoutTail = outputTail(jobs, id, com.termux.app.control.jobs.JobOutputStore.Stream.STDOUT);
+                in.stderrTail = outputTail(jobs, id, com.termux.app.control.jobs.JobOutputStore.Stream.STDERR);
+            }
+            return com.termux.app.monitor.DiagnosticBundleExporter.build(in).get("report.txt");
+        }, report -> {
+            if (report == null) { showToast(getString(R.string.jobs_export_failed), true); return; }
+            android.content.Intent send = new android.content.Intent(android.content.Intent.ACTION_SEND);
+            send.setType("text/plain");
+            send.putExtra(android.content.Intent.EXTRA_SUBJECT, "Termux diagnostic report");
+            send.putExtra(android.content.Intent.EXTRA_TEXT, report);
+            startActivity(android.content.Intent.createChooser(send, getString(R.string.jobs_export_title)));
+        });
+    }
+
+    /** Newest retained bytes of one stream, at most 16 KiB; empty when the job's output is no longer in memory. */
+    private static byte[] outputTail(com.termux.app.control.jobs.JobCoordinator jobs, String id, com.termux.app.control.jobs.JobOutputStore.Stream stream) {
+        final int window = 16 * 1024;
+        com.termux.app.control.jobs.JobCoordinator.OutputResult probe = jobs.localOutput(id, stream, 0, 1);
+        if (probe == null) return null;
+        long end = probe.output.endOffset;
+        com.termux.app.control.jobs.JobCoordinator.OutputResult tail = jobs.localOutput(id, stream, Math.max(0, end - window), window);
+        return tail == null ? null : tail.output.data;
     }
 
     /** java.util.function.Consumer needs API 24; the app supports API 21. */
