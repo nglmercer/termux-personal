@@ -225,6 +225,31 @@ public class ResourcePressureInstrumentedTest {
         assertEquals("sampling stops once no supervised job remains", settled, deviceSamples.get());
     }
 
+    /**
+     * Orientative cost of one supervisor sample on this phone: the real device reading (ActivityManager/PowerManager) and
+     * the real /proc scan for a running job, timed in the test process. It is logged, not asserted.
+     */
+    @Test public void oneRealSampleCostIsMeasuredAndLogged() throws Exception {
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        String id = start("balanced", null, "sleep 20");
+        awaitState(id, "running");
+        assertTrue(until(() -> ok(rpcq("job.processes", "{\"id\":\"" + id + "\"}")).getAsJsonArray("processes").size() > 0, 100));
+        Set<Integer> roots = Collections.singleton(ok(rpc("job.processes", "{\"id\":\"" + id + "\"}")).getAsJsonArray("processes").get(0).getAsJsonObject().get("pid").getAsInt());
+        int uid = android.os.Process.myUid();
+        for (int i = 0; i < 5; i++) { com.termux.app.monitor.DeviceSnapshot.collect(context); ProcessSnapshot.collect(new File("/proc"), uid, roots); }
+        int rounds = 50;
+        long deviceNanos = 0, procNanos = 0, cpuBefore = android.os.Debug.threadCpuTimeNanos();
+        for (int i = 0; i < rounds; i++) {
+            long t0 = System.nanoTime(); com.termux.app.monitor.DeviceSnapshot.collect(context);
+            long t1 = System.nanoTime(); ProcessSnapshot.collect(new File("/proc"), uid, roots);
+            long t2 = System.nanoTime(); deviceNanos += t1 - t0; procNanos += t2 - t1;
+        }
+        long cpu = android.os.Debug.threadCpuTimeNanos() - cpuBefore;
+        android.util.Log.i("ResourcePressureTest", String.format(java.util.Locale.ROOT,
+            "sample cost over %d rounds: device reading %.2f ms, /proc scan %.2f ms, thread CPU %.2f ms per sample; at one sample every 2 s that is about %.2f%% of one core",
+            rounds, deviceNanos / 1e6 / rounds, procNanos / 1e6 / rounds, cpu / 1e6 / rounds, cpu / 1e6 / rounds / 2000 * 100));
+    }
+
     // ---- preview fingerprint ----
 
     @Test public void aStartPinnedToAPreviewIsRefusedWhenInjectedPressureChangedThePlan() throws Exception {
