@@ -64,6 +64,7 @@ public class RpcExtrasDispatcherTest {
     private JobHistoryStore history;
     private WorkspaceRepository repository;
     private int ids = 100;
+    private ResourceAdmissionController admission;
 
     @Before public void setUp() throws Exception {
         base = Files.createTempDirectory("rpc-extras").toFile();
@@ -74,7 +75,7 @@ public class RpcExtrasDispatcherTest {
         history = new JobHistoryStore(new File(base, "resource-jobs")); history.open();
 
         JobRegistry registry = new JobRegistry(new JobIoPool(4), new JobOutputStore(1024, 8, 32 * 1024), 8);
-        ResourceAdmissionController admission = new ResourceAdmissionController(ResourceAdmissionController.Config.defaults(), 4, System::nanoTime);
+        admission = new ResourceAdmissionController(ResourceAdmissionController.Config.defaults(), 4, System::nanoTime);
         JobResourceSupervisor supervisor = new JobResourceSupervisor(new JobResourceSupervisor.Sampler() {
             @Override public PressureTracker.Reading device() { return new PressureTracker.Reading(6L << 30, 8L << 30, false, 0); }
             @Override public ProcessSnapshot processes(Set<Integer> r) { return ProcessSnapshot.collect(proc, 1000, r); }
@@ -412,6 +413,61 @@ public class RpcExtrasDispatcherTest {
             "{\"executable\":\"cargo\",\"args\":[\"build\",\"-j\",\"9\"],\"resources\":{\"profile\":\"balanced\",\"applyBuildPreset\":true}}", scopes(JR))).getAsJsonArray("arguments").toString());
         assertEquals("DENIED", err(rpc("job.preview", "{\"executable\":\"cargo\",\"args\":[]}", scopes(WR))));
         assertEquals("INVALID_REQUEST", err(rpc("job.preview", "{\"executable\":\"bad name\",\"args\":[]}", scopes(JR))));
+    }
+
+    @Test public void aPreviewReportsTheWorkerCountItWroteAndAFingerprintAStartCanPin() throws Exception {
+        String params = "{\"executable\":\"cargo\",\"args\":[\"test\"],\"resources\":{\"profile\":\"balanced\",\"applyBuildPreset\":true,\"testConcurrency\":1}}";
+        JsonObject preview = ok(rpc("job.preview", params, scopes(JR)));
+        String fingerprint = preview.get("previewFingerprint").getAsString();
+        assertTrue(fingerprint, fingerprint.matches("[0-9a-f]{64}"));
+        int workers = Integer.parseInt(preview.getAsJsonArray("arguments").get(2).getAsString());
+        assertEquals("the reported policy holds the count really written", workers, preview.getAsJsonObject("resources").get("processConcurrencyHint").getAsInt());
+        assertEquals("[\"test\",\"-j\",\"" + workers + "\",\"--\",\"--test-threads=1\"]", preview.getAsJsonArray("arguments").toString());
+        assertEquals("a repeated preview under the same conditions is identical", fingerprint, ok(rpc("job.preview", params, scopes(JR))).get("previewFingerprint").getAsString());
+        assertEquals(0, launched.size());
+
+        ok(rpc("job.start", params.replace("{\"executable\"", "{\"expectedPreviewFingerprint\":\"" + fingerprint + "\",\"clientRequestId\":\"fp1\",\"executable\""), ALL));
+        assertTrue(until(() -> launched.size() == 1));
+        assertEquals(preview.getAsJsonArray("arguments").toString(), new com.google.gson.Gson().toJsonTree(launched.get(0).arguments()).toString());
+        assertEquals(workers, launched.get(0).resources().processConcurrencyHint());
+    }
+
+    @Test public void aPlanThatChangedAfterThePreviewIsRefusedBeforeAnythingIsLaunched() throws Exception {
+        String params = "{\"executable\":\"cargo\",\"args\":[\"build\"],\"resources\":{\"profile\":\"balanced\",\"applyBuildPreset\":true}}";
+        JsonObject preview = ok(rpc("job.preview", params, scopes(JR)));
+        String fingerprint = preview.get("previewFingerprint").getAsString();
+        String reviewed = preview.getAsJsonArray("arguments").toString();
+        // More heavy slots on this 8 GiB device: the recommendation per job drops.
+        admission.update(PressureTracker.Level.NORMAL, 6L << 30, 8L << 30);
+        assertNotEquals("the recommendation moved", reviewed, ok(rpc("job.preview", params, scopes(JR))).getAsJsonArray("arguments").toString());
+        String pinned = params.replace("{\"executable\"", "{\"expectedPreviewFingerprint\":\"" + fingerprint + "\",\"executable\"");
+        assertEquals("CONFLICT", err(rpc("job.start", pinned, ALL)));
+        assertEquals("nothing was admitted", 0, launched.size());
+        // Pinning the observed count reproduces exactly the reviewed command, so the same fingerprint now matches.
+        int workers = preview.getAsJsonObject("resources").get("processConcurrencyHint").getAsInt();
+        ok(rpc("job.start", pinned.replace("\"applyBuildPreset\":true", "\"applyBuildPreset\":true,\"processConcurrencyHint\":" + workers), ALL));
+        assertTrue(until(() -> launched.size() == 1));
+        assertEquals(reviewed, new com.google.gson.Gson().toJsonTree(launched.get(0).arguments()).toString());
+        assertEquals("INVALID_REQUEST", err(rpc("job.start", params.replace("{\"executable\"", "{\"expectedPreviewFingerprint\":\"XYZ\",\"executable\""), ALL)));
+        assertEquals("preview takes no expected fingerprint", -32602,
+            rpc("job.preview", pinned, scopes(JR)).getAsJsonObject("error").get("code").getAsInt());
+    }
+
+    @Test public void startsWithoutAFingerprintOrTheNewOptionKeepTheirContract() throws Exception {
+        JsonObject plain = ok(rpc("job.preview", "{\"executable\":\"cargo\",\"args\":[\"test\"]}", scopes(JR)));
+        assertTrue(plain.get("resources").isJsonNull());
+        assertEquals("[\"test\"]", plain.getAsJsonArray("arguments").toString());
+        // A caller's own hint is reported as given; testConcurrency needs the preset and a bounded value.
+        JsonObject own = ok(rpc("job.preview", "{\"executable\":\"/usr/bin/true\",\"args\":[],\"resources\":{\"profile\":\"protected\",\"processConcurrencyHint\":3,\"applyBuildPreset\":true}}", scopes(JR)));
+        assertEquals(3, own.getAsJsonObject("resources").get("processConcurrencyHint").getAsInt());
+        JsonObject untouched = ok(rpc("job.preview", "{\"executable\":\"/usr/bin/true\",\"args\":[],\"resources\":{\"profile\":\"protected\",\"applyBuildPreset\":true}}", scopes(JR)));
+        assertFalse("no count was written for an unknown tool", untouched.getAsJsonObject("resources").has("processConcurrencyHint"));
+        assertEquals("INVALID_REQUEST", err(rpc("job.preview", "{\"executable\":\"cargo\",\"args\":[\"test\"],\"resources\":{\"profile\":\"protected\",\"testConcurrency\":1}}", scopes(JR))));
+        for (String bad : new String[] {"0", "17", "-1"})
+            assertEquals(bad, "INVALID_REQUEST", err(rpc("job.preview", "{\"executable\":\"cargo\",\"args\":[\"test\"],\"resources\":{\"applyBuildPreset\":true,\"testConcurrency\":" + bad + "}}", scopes(JR))));
+        JsonObject nulled = ok(rpc("job.preview", "{\"executable\":\"cargo\",\"args\":[\"test\"],\"resources\":{\"profile\":\"protected\",\"applyBuildPreset\":true,\"testConcurrency\":null}}", scopes(JR)));
+        assertEquals("null keeps the previous behavior", "[\"test\",\"-j\",\"1\"]", nulled.getAsJsonArray("arguments").toString());
+        assertEquals(0, launched.size());
     }
 
     @Test public void nodeHeapIsAnExplicitBoundedOptInThatNeedsThePreset() throws Exception {

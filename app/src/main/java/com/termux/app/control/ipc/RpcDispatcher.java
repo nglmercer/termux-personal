@@ -313,17 +313,32 @@ public final class RpcDispatcher {
         return lease;
     }
 
-    private static final String[] JOB_START_KEYS = {"executable", "args", "cwd", "workspaceId", "env", "stdin", "timeoutMs", "presentation", "clientRequestId", "resources"};
+    private static final String[] JOB_PREVIEW_KEYS = {"executable", "args", "cwd", "workspaceId", "env", "stdin", "timeoutMs", "presentation", "clientRequestId", "resources"};
+    private static final String[] JOB_START_KEYS = {"executable", "args", "cwd", "workspaceId", "env", "stdin", "timeoutMs", "presentation", "clientRequestId", "resources",
+        "expectedPreviewFingerprint"};
 
+    /**
+     * Plans once and hands that materialized spec to the coordinator; nothing transforms it again while queued or launched.
+     * With {@code expectedPreviewFingerprint}, a plan that no longer matches the reviewed preview (for example because the
+     * worker recommendation followed a pressure change) is refused as CONFLICT before anything is admitted. Without it the
+     * historical contract is unchanged. The comparison detects change only; authorization is still the lease and the policy.
+     */
     private Object jobStart(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
         JobCoordinator jobs = requireJobs();
         JobAuthority.Lease lease = jobLease(scopes, ControlCore.Scope.JOBS_EXECUTE);
-        return startedJob(jobs.start(planJob(parameters(params, JOB_START_KEYS)).spec, lease));
+        Map<?, ?> p = parameters(params, JOB_START_KEYS);
+        String expected = p.get("expectedPreviewFingerprint") == null ? null : string(p, "expectedPreviewFingerprint");
+        if (expected != null && !expected.matches("[0-9a-f]{64}")) throw new DomainError("INVALID_REQUEST");
+        Planned plan = planJob(p);
+        if (expected != null && !java.security.MessageDigest.isEqual(expected.getBytes(StandardCharsets.US_ASCII),
+                plan.spec.previewFingerprint().getBytes(StandardCharsets.US_ASCII))) throw new DomainError("CONFLICT");
+        return startedJob(jobs.start(plan.spec, lease));
     }
 
     /**
      * What a job would run: the validated spec plus how a build preset changed it. {@code job.start} and {@code job.preview} share
-     * {@link #planJob}, so a preview can never differ from what a start would really launch.
+     * {@link #planJob}. Sharing the code is not enough on its own: the worker recommendation follows pressure and free slots, so
+     * two calls may plan differently. A start that must run exactly what was previewed passes the preview's fingerprint.
      */
     private static final class Planned {
         final JobSpec spec; final BuildPresets.Preview preview; final boolean presetApplied;
@@ -339,14 +354,20 @@ public final class RpcDispatcher {
             boolean preset = resources != null && presetRequested(p);
             int nodeHeap = nodeHeapMiB(p);
             if (nodeHeap > 0 && !preset) throw new IllegalArgumentException("nodeHeapMiB needs applyBuildPreset");
+            int testConcurrency = testConcurrency(p);
+            if (testConcurrency > 0 && !preset) throw new IllegalArgumentException("testConcurrency needs applyBuildPreset");
             BuildPresets.Preview preview = null;
             // Opt-in only: a known build tool gets a worker-count recommendation, and nothing the caller set is overridden.
             if (preset) {
                 JobResourcePolicy sized = resources.processConcurrencyHint() == 0 && mServices.extras.resource != null ?
                     withRecommendedWorkers(resources, mServices.extras.resource) : resources;
                 preview = BuildPresets.apply(executable, args, new ArrayList<>(env.keySet()), sized.effectiveConcurrencyHint(),
-                    Runtime.getRuntime().availableProcessors(), nodeHeap);
+                    Runtime.getRuntime().availableProcessors(), nodeHeap, testConcurrency);
                 args = preview.arguments;
+                // Report and keep the count really written into the command, not the request's unset hint. A hint the caller
+                // gave stays exactly as given. Pinning it back on a later start reproduces the same command.
+                if (resources.processConcurrencyHint() == 0 && preview.workersApplied > 0)
+                    resources = JobResourcePolicy.fromJson(withHint(resources, preview.workersApplied));
             }
             JobSpec spec = new JobSpec(executable, args, optionalString(p, "cwd"), optionalString(p, "workspaceId"), env, optionalStdin(p),
                 longNumberOrDefault(p, "timeoutMs", 0), presentation(p), optionalString(p, "clientRequestId"), resources);
@@ -354,6 +375,15 @@ public final class RpcDispatcher {
         } catch (IllegalArgumentException e) {
             throw new DomainError("INVALID_REQUEST");
         }
+    }
+
+    /** {@code resources.testConcurrency}: explicit test-runner limit a preset may add (1..16). Zero when absent or null. */
+    private static int testConcurrency(Map<?, ?> p) throws BadParameters {
+        Object resources = p.get("resources");
+        if (!(resources instanceof Map) || ((Map<?, ?>) resources).get("testConcurrency") == null) return 0;
+        long value = longNumber((Map<?, ?>) resources, "testConcurrency");
+        if (value < 1 || value > BuildPresets.MAX_TEST_CONCURRENCY) throw new IllegalArgumentException("testConcurrency out of range");
+        return (int) value;
     }
 
     /** {@code resources.nodeHeapMiB}: the Node.js old-space limit a preset may add. Zero when absent. */
@@ -379,11 +409,17 @@ public final class RpcDispatcher {
         return result;
     }
 
+    private static Map<String, Object> jobPreviewResult(Planned plan) {
+        Map<String, Object> result = previewResult(plan);
+        result.put("previewFingerprint", plan.spec.previewFingerprint());
+        return result;
+    }
+
     /** The effective command of a start, without starting anything. */
     private Object jobPreview(Object params, Set<ControlCore.Scope> scopes) throws BadParameters, DomainError, UnknownMethod {
         requireJobs();
         jobLease(scopes, ControlCore.Scope.JOBS_READ);
-        return previewResult(planJob(parameters(params, JOB_START_KEYS)));
+        return jobPreviewResult(planJob(parameters(params, JOB_PREVIEW_KEYS)));
     }
 
     /** The effective command of a stored task, exactly as {@code workspace.task.run} would launch it. */
@@ -464,7 +500,7 @@ public final class RpcDispatcher {
     private static JobResourcePolicy resourcePolicyFrom(Object value, boolean allowPreset) throws BadParameters {
         if (value == null) return null;
         Map<?, ?> r = allowPreset ?
-            parameters(value, "profile", "memorySoftBytes", "addressSpaceBytes", "cpuTimeSeconds", "maxOutputBytes", "processConcurrencyHint", "niceLevel", "onPressure", "requireNice", "applyBuildPreset", "nodeHeapMiB") :
+            parameters(value, "profile", "memorySoftBytes", "addressSpaceBytes", "cpuTimeSeconds", "maxOutputBytes", "processConcurrencyHint", "niceLevel", "onPressure", "requireNice", "applyBuildPreset", "nodeHeapMiB", "testConcurrency") :
             parameters(value, "profile", "memorySoftBytes", "addressSpaceBytes", "cpuTimeSeconds", "maxOutputBytes", "processConcurrencyHint", "niceLevel", "onPressure", "requireNice");
         JobResourcePolicy.Builder builder = JobResourcePolicy.builder();
         try {

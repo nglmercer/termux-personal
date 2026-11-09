@@ -14,8 +14,16 @@ export interface JobSpec {
   timeoutMs?: number;
   presentation?: "foreground" | "background";
   clientRequestId?: string;
-  /** Optional resource handling. Without it the job behaves exactly as before. */
+  /**
+   * Optional resource handling. Without it the job behaves exactly as before. With applyBuildPreset, testConcurrency (1..16)
+   * opts into --test-threads for cargo test (libtest) and --test-concurrency for node --test; it is not a global cap.
+   */
   resources?: Record<string, unknown>;
+  /**
+   * start only: the previewFingerprint of a reviewed preview. If the plan changed, start fails with CONFLICT and launches
+   * nothing. A CONFLICT does not prove that an earlier request with the same clientRequestId never started.
+   */
+  expectedPreviewFingerprint?: string;
 }
 export interface JobRecord {
   id: string;
@@ -45,6 +53,7 @@ type Params = Record<string, unknown>;
 const STATES = new Set<string>(["queued", "starting", "running", "cancelling", "exited", "failed", "cancelled", "timed_out", "lost"]);
 const TERMINAL = new Set<string>(["exited", "failed", "cancelled", "timed_out", "lost"]);
 const SPEC_KEYS = ["cwd", "workspaceId", "env", "stdin", "timeoutMs", "presentation", "clientRequestId", "resources"] as const;
+const FINGERPRINT = /^[0-9a-f]{64}$/;
 const isObject = (value: unknown): value is Params => typeof value === "object" && value !== null && !Array.isArray(value);
 const nonNegative = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
 const nullableInteger = (value: unknown) => value === null || Number.isSafeInteger(value);
@@ -59,10 +68,21 @@ export function jobRecord(value: unknown): JobRecord {
   return value as unknown as JobRecord;
 }
 
-function startParams(spec: JobSpec): Params {
+/** The fields that shape the planned execution, shared by start and preview so both describe the same request. */
+function planParams(spec: JobSpec): Params {
   if (!isObject(spec) || typeof spec.executable !== "string" || !Array.isArray(spec.args)) throw new TypeError("Invalid job specification");
   const params: Params = { executable: spec.executable, args: spec.args };
   for (const key of SPEC_KEYS) if (spec[key] !== undefined) params[key] = spec[key];
+  return params;
+}
+
+function startParams(spec: JobSpec): Params {
+  const params = planParams(spec);
+  if (spec.expectedPreviewFingerprint !== undefined) {
+    if (typeof spec.expectedPreviewFingerprint !== "string" || !FINGERPRINT.test(spec.expectedPreviewFingerprint))
+      throw new TypeError("Invalid expectedPreviewFingerprint");
+    params.expectedPreviewFingerprint = spec.expectedPreviewFingerprint;
+  }
   return params;
 }
 
@@ -107,7 +127,7 @@ export class Jobs {
 
   /** The effective command of a start, without starting anything. It uses the same planning as start. */
   async preview(spec: JobSpec, signal?: AbortSignal): Promise<CommandPreview> {
-    const { result } = await this.call("job.preview", startParams(spec), signal);
+    const { result } = await this.call("job.preview", planParams(spec), signal);
     return commandPreview(result);
   }
 

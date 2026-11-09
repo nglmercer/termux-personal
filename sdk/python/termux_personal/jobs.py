@@ -1,4 +1,5 @@
 """Managed noninteractive jobs. Start and cancel are mutations and are never retried by the SDK."""
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Iterator, List, Mapping, Optional
@@ -63,12 +64,32 @@ class JobOutputChunk:
     data: bytes
 
 
+_FINGERPRINT = re.compile(r"[0-9a-f]{64}")
+
+
+def _fingerprint(value) -> bool:
+    return isinstance(value, str) and _FINGERPRINT.fullmatch(value) is not None
+
+
 def _preview(result) -> dict:
     if (not isinstance(result, dict) or not isinstance(result.get("executable"), str) or not isinstance(result.get("arguments"), list) or
             not all(isinstance(a, str) for a in result["arguments"]) or not isinstance(result.get("presetApplied"), bool) or
-            not isinstance(result.get("changed"), bool) or not isinstance(result.get("notes"), list)):
+            not isinstance(result.get("changed"), bool) or not isinstance(result.get("notes"), list) or
+            not ("previewFingerprint" not in result or _fingerprint(result["previewFingerprint"]))):
         raise ProtocolError("Invalid command preview")
     return result
+
+
+def _plan_params(executable, args, cwd, workspace_id, env, stdin, timeout_ms, presentation, client_request_id, resources) -> dict:
+    """The fields that shape the planned execution, shared by start and preview so both describe the same request."""
+    if not isinstance(executable, str) or not isinstance(args, (list, tuple)) or not all(isinstance(item, str) for item in args):
+        raise ValueError("executable must be a string and args a list of strings")
+    params: dict = {"executable": executable, "args": list(args)}
+    optional = {"cwd": cwd, "workspaceId": workspace_id, "env": None if env is None else dict(env), "stdin": stdin,
+                "timeoutMs": timeout_ms, "presentation": presentation, "clientRequestId": client_request_id,
+                "resources": None if resources is None else dict(resources)}
+    params.update({key: value for key, value in optional.items() if value is not None})
+    return params
 
 
 class Jobs:
@@ -84,14 +105,15 @@ class Jobs:
     def start(self, executable: str, args, *, cwd: Optional[str] = None, workspace_id: Optional[str] = None,
               env: Optional[Mapping[str, str]] = None, stdin: Optional[str] = None, timeout_ms: Optional[int] = None,
               presentation: Optional[str] = None, client_request_id: Optional[str] = None,
-              resources: Optional[Mapping[str, object]] = None) -> JobRecord:
-        if not isinstance(executable, str) or not isinstance(args, (list, tuple)) or not all(isinstance(item, str) for item in args):
-            raise ValueError("executable must be a string and args a list of strings")
-        params: dict = {"executable": executable, "args": list(args)}
-        optional = {"cwd": cwd, "workspaceId": workspace_id, "env": None if env is None else dict(env), "stdin": stdin,
-                    "timeoutMs": timeout_ms, "presentation": presentation, "clientRequestId": client_request_id,
-                    "resources": None if resources is None else dict(resources)}
-        params.update({key: value for key, value in optional.items() if value is not None})
+              resources: Optional[Mapping[str, object]] = None, expected_preview_fingerprint: Optional[str] = None) -> JobRecord:
+        """``expected_preview_fingerprint`` is the ``previewFingerprint`` of a reviewed preview: if the plan changed, the
+        server answers CONFLICT and launches nothing. A CONFLICT does not prove an earlier request with the same
+        ``client_request_id`` never started; inspect state before sending again."""
+        params = _plan_params(executable, args, cwd, workspace_id, env, stdin, timeout_ms, presentation, client_request_id, resources)
+        if expected_preview_fingerprint is not None:
+            if not _fingerprint(expected_preview_fingerprint):
+                raise ValueError("expected_preview_fingerprint must be 64 lowercase hex digits")
+            params["expectedPreviewFingerprint"] = expected_preview_fingerprint
         result, _ = self._call("job.start", params)
         try:
             if not isinstance(result, dict):
@@ -101,15 +123,12 @@ class Jobs:
             # The job may have been admitted even though its response was unusable.
             raise ProtocolError("Invalid job start response", outcome_unknown=True) from exc
 
-    def preview(self, executable: str, args, *, env: Optional[Mapping[str, str]] = None, resources: Optional[Mapping[str, object]] = None) -> dict:
-        """The effective command of a start, without starting anything. Uses the same planning as ``start``."""
-        if not isinstance(executable, str) or not isinstance(args, (list, tuple)) or not all(isinstance(item, str) for item in args):
-            raise ValueError("executable must be a string and args a list of strings")
-        params: dict = {"executable": executable, "args": list(args)}
-        if env is not None:
-            params["env"] = dict(env)
-        if resources is not None:
-            params["resources"] = dict(resources)
+    def preview(self, executable: str, args, *, cwd: Optional[str] = None, workspace_id: Optional[str] = None,
+                env: Optional[Mapping[str, str]] = None, stdin: Optional[str] = None, timeout_ms: Optional[int] = None,
+                presentation: Optional[str] = None, resources: Optional[Mapping[str, object]] = None) -> dict:
+        """The effective command of a start, without starting anything. Uses the same planning as ``start`` and accepts the
+        same fields that shape the execution, so its ``previewFingerprint`` can match a later start of the same request."""
+        params = _plan_params(executable, args, cwd, workspace_id, env, stdin, timeout_ms, presentation, None, resources)
         result, _ = self._call("job.preview", params)
         return _preview(result)
 

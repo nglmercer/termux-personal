@@ -81,6 +81,22 @@ public final class JobSpec {
     public boolean sameExecution(JobSpec other) { return other != null && MessageDigest.isEqual(mFingerprint, other.mFingerprint); }
     byte[] fingerprintCopy() { return mFingerprint.clone(); }
 
+    /**
+     * Lowercase hex digest that changes whenever the execution would change: executable, cwd, workspace, arguments,
+     * environment, stdin, timeout, presentation and resource policy. It is derived from the idempotency fingerprint with
+     * a separate domain, so it never equals that internal value. It only detects a changed plan; it grants nothing.
+     */
+    public String previewFingerprint() {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            digest.update("termux-personal.job-preview.v1\0".getBytes(StandardCharsets.UTF_8));
+            byte[] hash = digest.digest(mFingerprint);
+            StringBuilder hex = new StringBuilder(hash.length * 2);
+            for (byte b : hash) hex.append(Character.forDigit((b >> 4) & 0xf, 16)).append(Character.forDigit(b & 0xf, 16));
+            return hex.toString();
+        } catch (NoSuchAlgorithmException e) { throw new IllegalStateException("Cannot fingerprint job specification", e); }
+    }
+
     private static void requireAbsolutePath(String path) {
         if (!path.startsWith("/") || (path.length() > 1 && path.endsWith("/"))) throw new IllegalArgumentException("Path must be absolute and normalized");
         if (path.length() > 1) for (String component : path.substring(1).split("/", -1))

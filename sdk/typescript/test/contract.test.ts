@@ -44,6 +44,12 @@ test("method schemas reject traversal of the contract boundary", () => {
   assert.equal(valid("job.start", { executable: "/bin/true", args: [], cwd: "relative" }), false);
   assert.equal(valid("job.start", { executable: "/bin/true", args: [], env: { "1BAD": "x" } }), false);
   assert.equal(valid("job.start", { executable: "/bin/true", args: [], scope: "JOBS_EXECUTE" }), false);
+  assert.equal(valid("job.start", { executable: "/bin/true", args: [], expectedPreviewFingerprint: "ABC" }), false);
+  assert.equal(valid("job.start", { executable: "/bin/true", args: [], expectedPreviewFingerprint: "0".repeat(64) }), true);
+  assert.equal(valid("job.preview", { executable: "/bin/true", args: [], expectedPreviewFingerprint: "0".repeat(64) }), false);
+  assert.equal(valid("job.preview", { executable: "cargo", args: ["test"], resources: { applyBuildPreset: true, testConcurrency: 0 } }), false);
+  assert.equal(valid("job.preview", { executable: "cargo", args: ["test"], resources: { applyBuildPreset: true, testConcurrency: 17 } }), false);
+  assert.equal(valid("job.preview", { executable: "cargo", args: ["test"], resources: { applyBuildPreset: true, testConcurrency: null } }), true);
   assert.equal(valid("job.output.read", { id: "job_1", stream: "pty", offset: 0, limit: 4 }), false);
   assert.equal(valid("job.cancel", { id: "job_1", scope: "JOBS_CANCEL" }), false);
   assert.equal(valid("file.stat", { rootId: "home", path: "../secret" }), false);
