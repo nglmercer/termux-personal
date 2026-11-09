@@ -192,6 +192,26 @@ argv_with_spaces = ["test", "--workspace", "a b", "quote\"d", ""]
 result = run_case(["jobs", "start", "--cwd", "/home", "--timeout", "5000", "--", "/usr/bin/cargo"] + argv_with_spaces, job_result,
                   expect_request("job.start", {"executable": "/usr/bin/cargo", "args": argv_with_spaces, "cwd": "/home", "timeoutMs": 5000}))
 assert result.returncode == 0, result.stderr
+# preview builds exactly the start request (argv kept as separate elements) and only ever calls job.preview.
+preview_reply = {"jsonrpc": "2.0", "id": 2, "result": {"executable": "/usr/bin/cargo", "arguments": ["test"], "presetApplied": True, "changed": False,
+                                                       "notes": [], "resources": None, "previewFingerprint": "c" * 64}}
+plan_flags = ["--cwd", "/home", "--profile", "protected", "--build-preset", "--workers", "2", "--test-concurrency", "1", "--"]
+plan_params = {"executable": "/usr/bin/cargo", "args": argv_with_spaces, "cwd": "/home",
+               "resources": {"profile": "protected", "processConcurrencyHint": 2, "applyBuildPreset": True, "testConcurrency": 1}}
+result = run_case(["jobs", "preview"] + plan_flags + ["/usr/bin/cargo"] + argv_with_spaces, preview_reply, expect_request("job.preview", plan_params))
+assert result.returncode == 0 and "previewFingerprint" in result.stdout, result
+result = run_case(["jobs", "start", "--expect-fingerprint", "c" * 64] + plan_flags + ["/usr/bin/cargo"] + argv_with_spaces, job_result,
+                  expect_request("job.start", dict(plan_params, expectedPreviewFingerprint="c" * 64)))
+assert result.returncode == 0, result.stderr
+result = run_case(["jobs", "start", "--workers", "3", "--", "/usr/bin/make"], job_result,
+                  expect_request("job.start", {"executable": "/usr/bin/make", "args": [], "resources": {"profile": "balanced", "processConcurrencyHint": 3}}))
+assert result.returncode == 0, result.stderr
+for usage_args in (["jobs", "preview", "--expect-fingerprint", "c" * 64, "--", "x"], ["jobs", "start", "--test-concurrency", "1", "--", "x"],
+                   ["jobs", "start", "--workers", "0", "--", "x"], ["jobs", "start", "--workers", "+3", "--", "x"],
+                   ["jobs", "start", "--workers", "17", "--", "x"], ["jobs", "start", "--build-preset", "--test-concurrency", "03", "--", "x"],
+                   ["jobs", "start", "--expect-fingerprint", "C" * 64, "--", "x"], ["jobs", "preview", "--", ], ["jobs", "preview", "cargo"]):
+    result = subprocess.run([binary, "--socket", missing] + usage_args, capture_output=True, text=True, timeout=10)
+    assert result.returncode == 2 and "Usage" in result.stderr, (usage_args, result.returncode, result.stderr)
 for usage_args in (["jobs", "start", "--", ], ["jobs", "start", "cargo"], ["jobs", "start", "--timeout", "0", "--", "x"],
                    ["jobs", "start", "--bogus", "x", "--", "y"], ["jobs", "logs"], ["jobs", "logs", "job_1", "--stream", "both"],
                    ["workspaces", "update", ws, "name"]):

@@ -74,9 +74,11 @@ These commands call fixed v1 methods. Each one needs the matching local consent 
 termux-control jobs list
 termux-control jobs get ID
 termux-control jobs cancel ID              # TERM to the job's process group, KILL after 10 s
-termux-control jobs start [--cwd DIR] [--workspace ID] [--timeout MS] -- EXECUTABLE [ARG...]
-termux-control jobs run   [--cwd DIR] [--workspace ID] [--timeout MS] -- EXECUTABLE [ARG...]
+termux-control jobs start   [OPTIONS] -- EXECUTABLE [ARG...]
+termux-control jobs run     [OPTIONS] -- EXECUTABLE [ARG...]
+termux-control jobs preview [OPTIONS] -- EXECUTABLE [ARG...]   # job.preview: prints the planned command as JSON, starts nothing
 termux-control jobs logs ID [--stream stdout|stderr] [--follow]
+termux-control jobs resource ID | processes ID | history | history-get ID | diagnostics ID
 termux-control workspaces list
 termux-control workspaces get ID
 termux-control workspaces tasks ID
@@ -88,6 +90,73 @@ termux-control workspaces select ID
 termux-control workspaces remove ID
 ```
 
-`jobs start` and `jobs run` send the executable and each argument as separate JSON strings; nothing is joined into a shell string, so run a shell explicitly (`-- $PREFIX/bin/sh -c '...'`) when you want one. `EXECUTABLE` is an absolute path under the Termux prefix or a server-approved name such as `git`. `start` prints the accepted job record. `run` also copies the job's stdout and stderr to its own, then exits with the job's exit code. A job that did not exit normally gives a fixed status instead: 124 timed out, 130 cancelled, 125 failed or lost. `--timeout` and cancelling a running job need `jobStopAvailable` in `system.describe`. `jobs logs` prints the output available now, or with `--follow` polls until the stream is finished; a gap message on stderr means older bytes were overwritten.
+`OPTIONS` for `start`, `run` and `preview`:
+
+| Option | Request field | Meaning |
+|---|---|---|
+| `--cwd DIR` | `cwd` | Absolute working directory inside an authorized root (the Termux home). |
+| `--workspace ID` | `workspaceId` | Run in a workspace directory. |
+| `--timeout MS` | `timeoutMs` | Wall-clock limit; needs `jobStopAvailable`. |
+| `--profile NAME` | `resources.profile` | `unrestricted`, `protected`, `balanced`, `performance` or `custom`. |
+| `--build-preset` | `resources.applyBuildPreset` | Opt in to adding worker flags to a known build tool (see [resource-policy.md](../../docs/next-generation/resource-policy.md#build-presets)). Without `--profile` it uses `balanced`. |
+| `--workers N` | `resources.processConcurrencyHint` | 1–16. The worker count a preset writes; advice, not a process cap. |
+| `--test-concurrency N` | `resources.testConcurrency` | 1–16, needs `--build-preset`. Adds `--test-threads=N` to `cargo test` (libtest) or `--test-concurrency=N` to `node --test`. Not a global cap. |
+| `--expect-fingerprint HEX` | `expectedPreviewFingerprint` | `start`/`run` only: the `previewFingerprint` printed by `jobs preview`. A changed plan is refused as `CONFLICT` and nothing starts. |
+
+Without `--profile`, `--build-preset` and `--workers` the request carries no `resources`, exactly as before. There is no `--env` option and the CLI does not copy the calling shell's environment into the job: a variable you `export` before running `termux-control` is not guaranteed to reach the job. Use the Python or TypeScript SDK (or raw JSON-RPC) when a job needs explicit `env`.
+
+`jobs start`, `jobs run` and `jobs preview` send the executable and each argument as separate JSON strings; nothing is joined into a shell string, so run a shell explicitly (`-- $PREFIX/bin/sh -c '...'`) when you want one. `EXECUTABLE` is an absolute path under the Termux prefix or a server-approved name such as `git`. `start` prints the accepted job record. `run` also copies the job's stdout and stderr to its own, then exits with the job's exit code. A job that did not exit normally gives a fixed status instead: 124 timed out, 130 cancelled, 125 failed or lost. `--timeout` and cancelling a running job need `jobStopAvailable` in `system.describe`. `jobs logs` prints the output available now, or with `--follow` polls until the stream is finished; a gap message on stderr means older bytes were overwritten.
+
+### Walkthrough: a long build as a protected managed job
+
+This moves a heavy build out of an interactive session into a managed job that waits for admission, runs at lower priority and can be observed and stopped. It is a mitigation, not a guarantee: Android can still end any process (low-memory killer, phantom-process limits, the app being stopped), and the `protected` profile controls only the admission of managed jobs that use it. It does not limit interactive sessions, other jobs without a profile or anything else in Termux.
+
+1. **Enable Local control** (Settings → Local control, or the terminal's context menu) with the Jobs options *See jobs* (`preview`, `get`, `resource`, `history-get`), *Run commands* (`start`, `run`), *Read job output* (`logs`, `run`) and *Cancel jobs*, plus *List processes* for `jobs processes`. *Run commands* gives full Termux access to any client running as the app. The listener stops with the service; enable it again after a restart.
+2. **Have the client and the tools.** `termux-control` is not shipped in the APK or a Termux package: build it with `make -C tools/termux-control` (see above) and put it on your `PATH`. Install the toolchain you will run (`pkg install rust`, `pkg install nodejs`). Executables are given as absolute paths: in the shipped configuration only `git` has a short alias, so write `"$PREFIX/bin/cargo"`, not `cargo`. The project must be inside the authorized root (the Termux home); do not widen roots for this.
+3. **Check what is available**: `termux-control capabilities` lists the methods your consent allows; `termux-control resources capabilities` reports what this device can enforce and measure.
+4. **Preview** the effective command. Nothing is started:
+
+   ```sh
+   termux-control jobs preview --cwd "$PWD" --profile protected --build-preset --test-concurrency 1 -- \
+     "$PREFIX/bin/cargo" test
+   ```
+
+   `arguments` shows what would run (here `test -j 1 -- --test-threads=1`), `notes` explains every addition or skip, `resources.processConcurrencyHint` is the worker count really written, and `previewFingerprint` identifies this exact plan.
+5. **Start** it. Either write the limits yourself, which works with any version of the app that has `jobs start`:
+
+   ```sh
+   termux-control jobs run --cwd "$PWD" --profile protected -- \
+     "$PREFIX/bin/cargo" test -j 1 -- --test-threads=1
+   ```
+
+   or start exactly what you previewed. The worker recommendation follows pressure and free slots, so pin the count you saw and pass the fingerprint; if anything else changed, the start fails with `CONFLICT` and nothing is launched:
+
+   ```sh
+   termux-control jobs start --expect-fingerprint FINGERPRINT --workers 1 \
+     --cwd "$PWD" --profile protected --build-preset --test-concurrency 1 -- "$PREFIX/bin/cargo" test
+   ```
+
+   `run` streams the output and exits with the job's status. `start` prints the job record and returns; keep its `id`.
+6. **Observe** from another terminal (replace `JOB_ID`):
+
+   ```sh
+   termux-control jobs get JOB_ID                       # state and exit code
+   termux-control jobs resource JOB_ID                  # applied limits, sampled RSS/CPU, events
+   termux-control jobs processes JOB_ID                 # the job's process tree, as visible in /proc
+   termux-control jobs logs JOB_ID --stream stdout --follow
+   termux-control jobs logs JOB_ID --stream stderr
+   ```
+
+7. **Cancel** if needed: `termux-control jobs cancel JOB_ID` (TERM to the job's process group, KILL after 10 s).
+8. **Recover metadata later**: `termux-control jobs history-get JOB_ID` returns the end state and termination evidence after the job left memory or the service restarted. History keeps metadata only; output lives in a bounded in-memory buffer and is lost with the service or when overwritten (a gap is reported).
+
+If a response to `start` is lost, the outcome is unknown: check `jobs list`/`jobs get` before sending it again. A `CONFLICT` from a later start does not prove that an earlier request never started.
+
+**Without a managed job**, limit the tools by hand in an ordinary session. These commands are not supervised, queued or recorded just because they carry these flags:
+
+```sh
+cargo test -j 1 -- --test-threads=1     # -j: build jobs; --test-threads: libtest harness threads
+node --test --test-concurrency=1        # Node 18.19+, 20.10+ or 21+
+```
 
 Other commands send only identifiers and the subcommand; the server supplies the executable, arguments and directory. A lost response to a mutating command (`cancel`, `start`, `run`, `git`, workspace changes) prints that the outcome may be unknown, and the client never retries it. Exit status 2 means a usage error that never reached the socket; 1 means a transport, protocol or server error.

@@ -577,6 +577,7 @@ static const char *domain_method(const char *group, const char *sub, int count) 
         if (!strcmp(sub, "get") && count == 1) return "job.get";
         if (!strcmp(sub, "cancel") && count == 1) return "job.cancel";
         if ((!strcmp(sub, "start") || !strcmp(sub, "run")) && count >= 2) return "job.start";
+        if (!strcmp(sub, "preview") && count >= 2) return "job.preview";
         if (!strcmp(sub, "logs") && count >= 1) return "job.output.read";
         if (!strcmp(sub, "resource") && count == 1) return "job.resource.get";
         if (!strcmp(sub, "history") && count == 0) return "job.history.list";
@@ -736,9 +737,20 @@ static int terminal_exit(struct span state, struct span exit_code) {
     if (equals(state, "\"failed\"") || equals(state, "\"lost\"")) return JOB_EXIT_FAILED;
     return -1;
 }
-/* jobs start|run [--cwd DIR] [--workspace ID] [--timeout MS] [--profile unrestricted|protected|balanced|performance|custom] [--build-preset] -- EXECUTABLE [ARG...] */
-static int job_start(const char *path, char **args, int count, int run) {
-    const char *cwd = NULL, *workspace = NULL, *timeout = NULL, *profile = NULL; int n = 0, build_preset = 0, step = 2;
+/* A decimal written exactly as JSON needs it: no sign, spaces or leading zero, so it can be copied into the request. */
+static int json_number(const char *s, int min, int max) { return s[0] >= '1' && s[0] <= '9' && number(s, min, max); }
+static int fingerprint_text(const char *s) {
+    size_t n = 0;
+    for (; s[n]; ++n) if (!((s[n] >= '0' && s[n] <= '9') || (s[n] >= 'a' && s[n] <= 'f'))) return 0;
+    return n == 64;
+}
+/* jobs start|run|preview [--cwd DIR] [--workspace ID] [--timeout MS] [--profile unrestricted|protected|balanced|performance|custom]
+ *   [--build-preset] [--workers N] [--test-concurrency N] [--expect-fingerprint HEX] -- EXECUTABLE [ARG...]
+ * preview and start share this one request builder, so both describe the same plan; preview only calls job.preview. */
+enum job_mode { JOB_START, JOB_RUN, JOB_PREVIEW };
+static int job_start(const char *path, char **args, int count, enum job_mode mode) {
+    const char *cwd = NULL, *workspace = NULL, *timeout = NULL, *profile = NULL, *workers = NULL, *tests = NULL, *expected = NULL;
+    int n = 0, build_preset = 0, step = 2;
     for (; n < count && strcmp(args[n], "--"); n += step) {
         step = 2;
         if (!strcmp(args[n], "--build-preset")) { build_preset = 1; step = 1; continue; } /* a flag without a value */
@@ -747,14 +759,19 @@ static int job_start(const char *path, char **args, int count, int run) {
             !strcmp(args[n + 1], "balanced") || !strcmp(args[n + 1], "performance") || !strcmp(args[n + 1], "custom"))) profile = args[n + 1];
         else if (!strcmp(args[n], "--cwd")) cwd = args[n + 1];
         else if (!strcmp(args[n], "--workspace")) workspace = args[n + 1];
-        else if (!strcmp(args[n], "--timeout") && number(args[n + 1], 1, 86400000)) timeout = args[n + 1];
+        else if (!strcmp(args[n], "--timeout") && json_number(args[n + 1], 1, 86400000)) timeout = args[n + 1];
+        else if (!strcmp(args[n], "--workers") && json_number(args[n + 1], 1, 16)) workers = args[n + 1];
+        else if (!strcmp(args[n], "--test-concurrency") && json_number(args[n + 1], 1, 16)) tests = args[n + 1];
+        else if (!strcmp(args[n], "--expect-fingerprint") && mode != JOB_PREVIEW && fingerprint_text(args[n + 1])) expected = args[n + 1];
         else return -2;
     }
     if (n >= count || n + 1 >= count) return -2;
+    if (tests && !build_preset) { fprintf(stderr, "termux-control: --test-concurrency needs --build-preset\n"); return -2; }
     char *req = malloc(MAX_JOB_REQUEST); size_t used = 0;
     if (!req) { fprintf(stderr, "termux-control: out of memory\n"); return 1; }
     req[0] = 0;
-    if (append(req, MAX_JOB_REQUEST, &used, "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"job.start\",\"params\":{\"executable\":") ||
+    if (append(req, MAX_JOB_REQUEST, &used, mode == JOB_PREVIEW ? "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"job.preview\",\"params\":{\"executable\":" :
+                                                "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"job.start\",\"params\":{\"executable\":") ||
         quoted(req, MAX_JOB_REQUEST, &used, args[n + 1]) || append(req, MAX_JOB_REQUEST, &used, ",\"args\":[")) goto too_long;
     for (int a = n + 2; a < count; ++a)
         if ((a > n + 2 && append(req, MAX_JOB_REQUEST, &used, ",")) || quoted(req, MAX_JOB_REQUEST, &used, args[a])) goto too_long;
@@ -762,17 +779,22 @@ static int job_start(const char *path, char **args, int count, int run) {
     if (cwd && (append(req, MAX_JOB_REQUEST, &used, ",\"cwd\":") || quoted(req, MAX_JOB_REQUEST, &used, cwd))) goto too_long;
     if (workspace && (append(req, MAX_JOB_REQUEST, &used, ",\"workspaceId\":") || quoted(req, MAX_JOB_REQUEST, &used, workspace))) goto too_long;
     if (timeout && (append(req, MAX_JOB_REQUEST, &used, ",\"timeoutMs\":") || append(req, MAX_JOB_REQUEST, &used, timeout))) goto too_long;
-    /* Resource handling is opt-in; without --profile the request is exactly what it always was. */
-    if ((profile || build_preset) && (append(req, MAX_JOB_REQUEST, &used, ",\"resources\":{\"profile\":") ||
+    /* Resource handling is opt-in; without --profile, --build-preset or --workers the request is exactly what it always was. */
+    if ((profile || build_preset || workers) && (append(req, MAX_JOB_REQUEST, &used, ",\"resources\":{\"profile\":") ||
         quoted(req, MAX_JOB_REQUEST, &used, profile ? profile : "balanced") ||
-        (build_preset && append(req, MAX_JOB_REQUEST, &used, ",\"applyBuildPreset\":true")) || append(req, MAX_JOB_REQUEST, &used, "}"))) goto too_long;
+        (workers && (append(req, MAX_JOB_REQUEST, &used, ",\"processConcurrencyHint\":") || append(req, MAX_JOB_REQUEST, &used, workers))) ||
+        (build_preset && append(req, MAX_JOB_REQUEST, &used, ",\"applyBuildPreset\":true")) ||
+        (tests && (append(req, MAX_JOB_REQUEST, &used, ",\"testConcurrency\":") || append(req, MAX_JOB_REQUEST, &used, tests))) ||
+        append(req, MAX_JOB_REQUEST, &used, "}"))) goto too_long;
+    if (expected && (append(req, MAX_JOB_REQUEST, &used, ",\"expectedPreviewFingerprint\":") || quoted(req, MAX_JOB_REQUEST, &used, expected))) goto too_long;
     if (append(req, MAX_JOB_REQUEST, &used, "}}")) goto too_long;
     int fd = connect_control(path);
     if (fd < 0) { free(req); return 1; }
     char *response = NULL;
+    int run = mode == JOB_RUN;
     int result = exchange(fd, req, 2, 0, NULL, 0, run ? &response : NULL);
     free(req);
-    if (result < 0) fprintf(stderr, "termux-control: request outcome may be unknown; inspect job state before retrying\n");
+    if (result < 0 && mode != JOB_PREVIEW) fprintf(stderr, "termux-control: request outcome may be unknown; inspect job state before retrying\n");
     if (result != 0 || !run) { free(response); close(fd); return result == 0 ? 0 : 1; }
     char id[129]; struct span state, exit_code;
     if (job_state(response, id, sizeof(id), &state, &exit_code)) {
@@ -807,7 +829,10 @@ too_long:
 static void usage(void) {
     fprintf(stderr, "Usage: termux-control [--socket PATH] [--resume] capabilities|list|create COLS ROWS [NAME]|rename ID NAME|resize ID COLS ROWS|focus ID|snapshot ID|close ID|write ID < FILE|follow ID|attach ID|bridge\n"
                     "       termux-control [--socket PATH] jobs list|get ID|cancel ID|logs ID [--stream stdout|stderr] [--follow]\n"
-                    "       termux-control [--socket PATH] jobs start|run [--cwd DIR] [--workspace ID] [--timeout MS] -- EXECUTABLE [ARG...]\n"
+                    "       termux-control [--socket PATH] jobs start|run|preview [--cwd DIR] [--workspace ID] [--timeout MS]\n"
+                    "              [--profile unrestricted|protected|balanced|performance|custom] [--build-preset] [--workers N]\n"
+                    "              [--test-concurrency N] [--expect-fingerprint HEX] -- EXECUTABLE [ARG...]\n"
+                    "              (--test-concurrency needs --build-preset; --expect-fingerprint is for start|run only)\n"
                     "       termux-control [--socket PATH] workspaces list|get ID|tasks ID|git ID status|branch|diff|log|run ID TASK|create NAME ROOT PATH|update ID NAME ROOT PATH|remove ID|select ID\n"
                     "       termux-control [--socket PATH] workspaces task-preview ID TASK|services ID|ports ID|service-status|service-health|service-start|service-stop|service-restart ID SERVICE\n"
                     "       termux-control [--socket PATH] jobs resource ID|history|history-get ID|diagnostics ID|processes ID\n"
@@ -835,8 +860,8 @@ int main(int argc, char **argv) {
         const char *sub = argv[i++]; count = argc - i;
         const char *method = domain_method(cmd, sub, count);
         if (!method) { usage(); return 2; }
-        if (!strcmp(method, "job.start")) {
-            int result = job_start(path, &argv[i], count, !strcmp(sub, "run"));
+        if (!strcmp(method, "job.start") || !strcmp(method, "job.preview")) {
+            int result = job_start(path, &argv[i], count, !strcmp(sub, "preview") ? JOB_PREVIEW : !strcmp(sub, "run") ? JOB_RUN : JOB_START);
             if (result == -2) { usage(); return 2; }
             return result;
         }
