@@ -596,6 +596,7 @@ static const char *domain_method(const char *group, const char *sub, int count) 
         if (!strcmp(sub, "tasks") && count == 1) return "workspace.tasks";
         if (!strcmp(sub, "git") && count == 2) return "workspace.git";
         if (!strcmp(sub, "run") && count == 2) return "workspace.task.run";
+        if (!strcmp(sub, "task-preview") && count == 2) return "workspace.task.preview";
         if (!strcmp(sub, "create") && count == 3) return "workspace.create";
         if (!strcmp(sub, "update") && count == 4) return "workspace.update";
         if (!strcmp(sub, "remove") && count == 1) return "workspace.remove";
@@ -627,7 +628,7 @@ static int domain_call(const char *path, const char *method, char **args, int co
     else if (!strcmp(method, "workspace.service.list") || !strcmp(method, "workspace.service.ports")) keys[0] = "workspaceId";
     else if (!strncmp(method, "workspace.service.", 18) && count == 2) { keys[0] = "workspaceId"; keys[1] = "serviceId"; }
     else if (!strcmp(method, "workspace.git")) { keys[0] = "workspaceId"; keys[1] = "subcommand"; }
-    else if (!strcmp(method, "workspace.task.run")) { keys[0] = "workspaceId"; keys[1] = "taskId"; }
+    else if (!strcmp(method, "workspace.task.run") || !strcmp(method, "workspace.task.preview")) { keys[0] = "workspaceId"; keys[1] = "taskId"; }
     else if (!strcmp(method, "workspace.remove") || !strcmp(method, "workspace.select")) keys[0] = "id";
     else if (!strcmp(method, "workspace.create")) { keys[0] = "name"; keys[1] = "rootId"; keys[2] = "path"; }
     const char *update_keys[4] = {"id", "name", "rootId", "path"};
@@ -800,7 +801,7 @@ static void usage(void) {
                     "       termux-control [--socket PATH] jobs list|get ID|cancel ID|logs ID [--stream stdout|stderr] [--follow]\n"
                     "       termux-control [--socket PATH] jobs start|run [--cwd DIR] [--workspace ID] [--timeout MS] -- EXECUTABLE [ARG...]\n"
                     "       termux-control [--socket PATH] workspaces list|get ID|tasks ID|git ID status|branch|diff|log|run ID TASK|create NAME ROOT PATH|update ID NAME ROOT PATH|remove ID|select ID\n"
-                    "       termux-control [--socket PATH] workspaces services ID|ports ID|service-status|service-health|service-start|service-stop|service-restart ID SERVICE\n"
+                    "       termux-control [--socket PATH] workspaces task-preview ID TASK|services ID|ports ID|service-status|service-health|service-start|service-stop|service-restart ID SERVICE\n"
                     "       termux-control [--socket PATH] jobs resource ID|history|history-get ID|diagnostics ID|processes ID\n"
                     "       termux-control [--socket PATH] resources capabilities|snapshot\n");
 }

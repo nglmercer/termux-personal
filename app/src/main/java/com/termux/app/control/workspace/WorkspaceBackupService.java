@@ -106,6 +106,16 @@ public final class WorkspaceBackupService {
 
     private final File mBackupDirectory;
     private final Limits mLimits;
+    private BackupOperations mOperations;
+
+    /** Background operations with progress and cancellation; created on first use. */
+    public synchronized BackupOperations operations() {
+        if (mOperations == null) mOperations = new BackupOperations();
+        return mOperations;
+    }
+
+    /** Cancels a running background operation and stops accepting new ones. */
+    public synchronized void close() { if (mOperations != null) mOperations.close(); }
 
     public WorkspaceBackupService(File backupDirectory, Limits limits) {
         if (backupDirectory == null || limits == null) throw new IllegalArgumentException("Missing backup configuration");

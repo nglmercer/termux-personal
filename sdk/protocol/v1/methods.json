@@ -62,6 +62,10 @@
     {"name": "workspace.service.ports", "scopes": ["WORKSPACES_READ"], "mutates": false, "binaryDirection": "none", "outputService": false},
     {"name": "workspace.service.proxy", "scopes": ["WORKSPACES_WRITE"], "mutates": true, "binaryDirection": "none", "outputService": false},
     {"name": "workspace.backup.export", "scopes": ["WORKSPACES_WRITE", "FILES_READ"], "mutates": true, "binaryDirection": "none", "outputService": false},
-    {"name": "workspace.backup.import", "scopes": ["WORKSPACES_WRITE", "FILES_WRITE"], "mutates": true, "binaryDirection": "none", "outputService": false}
+    {"name": "workspace.backup.import", "scopes": ["WORKSPACES_WRITE", "FILES_WRITE"], "mutates": true, "binaryDirection": "none", "outputService": false},
+    {"name": "workspace.backup.status", "scopes": ["WORKSPACES_READ"], "mutates": false, "binaryDirection": "none", "outputService": false},
+    {"name": "workspace.backup.cancel", "scopes": ["WORKSPACES_WRITE"], "mutates": true, "binaryDirection": "none", "outputService": false},
+    {"name": "job.preview", "scopes": ["JOBS_READ"], "mutates": false, "binaryDirection": "none", "outputService": false},
+    {"name": "workspace.task.preview", "scopes": ["WORKSPACES_READ"], "mutates": false, "binaryDirection": "none", "outputService": false}
   ]
 }

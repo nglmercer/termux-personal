@@ -334,6 +334,11 @@ public class RpcExtrasDispatcherTest {
         }
     }
 
+    private String operationState(String operationId) {
+        try { return ok(rpc("workspace.backup.status", "{\"operationId\":\"" + operationId + "\"}", scopes(WR))).getAsJsonObject("operation").get("state").getAsString(); }
+        catch (Exception e) { throw new AssertionError(e); }
+    }
+
     private static int freePort() throws Exception { try (java.net.ServerSocket s = new java.net.ServerSocket(0)) { return s.getLocalPort(); } }
 
     @Test public void proxiesAreExplicitLoopbackByDefaultAndLanNeedsConfirmation() throws Exception {
@@ -379,5 +384,92 @@ public class RpcExtrasDispatcherTest {
             assertEquals(bad, "NOT_FOUND", err(rpc("workspace.backup.import", "{\"workspaceId\":\"" + id + "\",\"backupId\":\"" + bad + "\"}", scopes(WW, FW))));
         String other = workspace("");
         assertEquals("a backup belongs to its own workspace", "NOT_FOUND", err(rpc("workspace.backup.import", "{\"workspaceId\":\"" + other + "\",\"backupId\":\"" + backupId + "\"}", scopes(WW, FW))));
+    }
+
+    // ---- previews, node heap and background backups ----
+
+    @Test public void aPreviewShowsExactlyWhatAStartWouldLaunchAndLaunchesNothing() throws Exception {
+        String params = "{\"executable\":\"cargo\",\"args\":[\"build\",\"--release\"],\"resources\":{\"profile\":\"balanced\",\"applyBuildPreset\":true}}";
+        JsonObject preview = ok(rpc("job.preview", params, scopes(JR)));
+        assertTrue(preview.get("presetApplied").getAsBoolean()); assertTrue(preview.get("changed").getAsBoolean());
+        java.util.List<String> args = new ArrayList<>();
+        for (int i = 0; i < preview.getAsJsonArray("arguments").size(); i++) args.add(preview.getAsJsonArray("arguments").get(i).getAsString());
+        assertEquals("build", args.get(0)); assertEquals("-j", args.get(1)); assertEquals("--release", args.get(3));
+        assertEquals("balanced", preview.getAsJsonObject("resources").get("profile").getAsString());
+        assertEquals("a preview starts nothing", 0, launched.size());
+        // The same request really started produces the same arguments.
+        ok(rpc("job.start", params.replace("{\"executable\"", "{\"clientRequestId\":\"p1\",\"executable\""), ALL));
+        assertTrue(until(() -> launched.size() == 1));
+        assertEquals(args, launched.get(0).arguments());
+    }
+
+    @Test public void aPreviewWithoutAPresetReportsTheCommandUnchanged() throws Exception {
+        JsonObject preview = ok(rpc("job.preview", "{\"executable\":\"cargo\",\"args\":[\"build\"]}", scopes(JR)));
+        assertFalse(preview.get("presetApplied").getAsBoolean()); assertFalse(preview.get("changed").getAsBoolean());
+        assertEquals(1, preview.getAsJsonArray("arguments").size());
+        assertTrue(preview.get("resources").isJsonNull());
+        assertEquals("a user's own flag is respected", "[\"build\",\"-j\",\"9\"]", ok(rpc("job.preview",
+            "{\"executable\":\"cargo\",\"args\":[\"build\",\"-j\",\"9\"],\"resources\":{\"profile\":\"balanced\",\"applyBuildPreset\":true}}", scopes(JR))).getAsJsonArray("arguments").toString());
+        assertEquals("DENIED", err(rpc("job.preview", "{\"executable\":\"cargo\",\"args\":[]}", scopes(WR))));
+        assertEquals("INVALID_REQUEST", err(rpc("job.preview", "{\"executable\":\"bad name\",\"args\":[]}", scopes(JR))));
+    }
+
+    @Test public void nodeHeapIsAnExplicitBoundedOptInThatNeedsThePreset() throws Exception {
+        String ok = "{\"executable\":\"node\",\"args\":[\"app.js\"],\"resources\":{\"profile\":\"custom\",\"applyBuildPreset\":true,\"nodeHeapMiB\":1024}}";
+        JsonObject preview = ok(rpc("job.preview", ok, scopes(JR)));
+        assertEquals("[\"--max-old-space-size=1024\",\"app.js\"]", preview.getAsJsonArray("arguments").toString());
+        for (String bad : new String[] {"\"nodeHeapMiB\":10", "\"nodeHeapMiB\":99999", "\"nodeHeapMiB\":-5"})
+            assertEquals(bad, "INVALID_REQUEST", err(rpc("job.preview", "{\"executable\":\"node\",\"args\":[],\"resources\":{\"applyBuildPreset\":true," + bad + "}}", scopes(JR))));
+        assertEquals("a heap limit without the preset is refused, not ignored", "INVALID_REQUEST",
+            err(rpc("job.preview", "{\"executable\":\"node\",\"args\":[],\"resources\":{\"profile\":\"custom\",\"nodeHeapMiB\":512}}", scopes(JR))));
+        assertEquals(-32602, rpc("job.preview", "{\"executable\":\"node\",\"args\":[],\"resources\":{\"applyBuildPreset\":true,\"nodeHeapMiB\":\"1024\"}}", scopes(JR)).getAsJsonObject("error").get("code").getAsInt());
+        // Stored task presets cannot carry the job.start-only members.
+        assertEquals(-32602, rpc("workspace.create", "{\"name\":\"x\",\"rootId\":\"home\",\"path\":\"projects/app\",\"taskPresets\":[{\"id\":\"t\",\"label\":\"T\",\"executable\":\"node\",\"args\":[],\"timeoutMs\":0,\"resources\":{\"nodeHeapMiB\":512}}]}", ALL)
+            .getAsJsonObject("error").get("code").getAsInt());
+    }
+
+    @Test public void aTaskPreviewMatchesTheRunAndNeedsOnlyWorkspaceReadConsent() throws Exception {
+        String id = workspace(",\"resourceProfile\":\"balanced\",\"taskPresets\":[{\"id\":\"build\",\"label\":\"Build\",\"executable\":\"cargo\",\"args\":[\"build\"],\"timeoutMs\":0}]");
+        JsonObject preview = ok(rpc("workspace.task.preview", "{\"workspaceId\":\"" + id + "\",\"taskId\":\"build\"}", scopes(WR)));
+        assertEquals(0, launched.size());
+        ok(rpc("workspace.task.run", "{\"workspaceId\":\"" + id + "\",\"taskId\":\"build\",\"clientRequestId\":\"tp\"}", ALL));
+        assertTrue(until(() -> launched.size() == 1));
+        assertEquals(preview.getAsJsonArray("arguments").toString(), new com.google.gson.Gson().toJsonTree(launched.get(0).arguments()).toString());
+        assertEquals("NOT_FOUND", err(rpc("workspace.task.preview", "{\"workspaceId\":\"" + id + "\",\"taskId\":\"nope\"}", scopes(WR))));
+        assertEquals("DENIED", err(rpc("workspace.task.preview", "{\"workspaceId\":\"" + id + "\",\"taskId\":\"build\"}", scopes(JR))));
+    }
+
+    @Test public void backgroundBackupsReportProgressRefuseAConcurrentOneAndCancelCleanly() throws Exception {
+        String id = workspace("");
+        for (int i = 0; i < 20; i++) Files.write(new File(home, "projects/app/f" + i).toPath(), new byte[200_000]);
+        JsonObject op = ok(rpc("workspace.backup.export", "{\"workspaceId\":\"" + id + "\",\"async\":true}", scopes(WW, FR))).getAsJsonObject("operation");
+        String opId = op.get("id").getAsString();
+        assertEquals(id, op.get("workspaceId").getAsString());
+        assertTrue(until(() -> "completed".equals(operationState(opId))));
+        JsonObject done = ok(rpc("workspace.backup.status", "{\"operationId\":\"" + opId + "\"}", scopes(WR))).getAsJsonObject("operation");
+        assertEquals(20, done.get("files").getAsInt());
+        assertEquals(20 * 200_000, done.get("bytes").getAsLong());
+        assertEquals(20, done.getAsJsonObject("result").getAsJsonObject("backup").get("files").getAsInt());
+        assertEquals("a finished operation cannot be cancelled", "CONFLICT", err(rpc("workspace.backup.cancel", "{\"operationId\":\"" + opId + "\"}", scopes(WW))));
+        assertEquals("NOT_FOUND", err(rpc("workspace.backup.status", "{\"operationId\":\"bk_999\"}", scopes(WR))));
+        assertEquals("NOT_FOUND", err(rpc("workspace.backup.cancel", "{\"operationId\":\"bk_999\"}", scopes(WW))));
+        assertEquals("DENIED", err(rpc("workspace.backup.cancel", "{\"operationId\":\"" + opId + "\"}", scopes(WR))));
+        assertEquals("DENIED", err(rpc("workspace.backup.status", "{\"operationId\":\"" + opId + "\"}", scopes(WW))));
+        assertEquals("an id that is not one of ours is just not found", "NOT_FOUND", err(rpc("workspace.backup.status", "{\"operationId\":\"../x\"}", scopes(WR))));
+        // The archive made in the background restores like any other, also in the background.
+        String backupId = done.getAsJsonObject("result").getAsJsonObject("backup").get("id").getAsString();
+        assertTrue(new File(home, "projects/app/f0").delete());
+        JsonObject restore = ok(rpc("workspace.backup.import", "{\"workspaceId\":\"" + id + "\",\"backupId\":\"" + backupId + "\",\"async\":true}", scopes(WW, FW))).getAsJsonObject("operation");
+        String restoreId = restore.get("id").getAsString();
+        assertTrue(until(() -> "completed".equals(operationState(restoreId))));
+        assertTrue(new File(home, "projects/app/f0").exists());
+    }
+
+    @Test public void asyncOperationsStillEnforceTheSameConsentAndConfirmationRules() throws Exception {
+        String id = workspace("");
+        assertEquals("DENIED", err(rpc("workspace.backup.export", "{\"workspaceId\":\"" + id + "\",\"async\":true}", scopes(WW))));
+        assertEquals("PERMISSION_REQUIRED", err(rpc("workspace.backup.import", "{\"workspaceId\":\"" + id + "\",\"backupId\":\"x\",\"async\":true,\"overwrite\":true}", scopes(WW, FW))));
+        assertEquals("NOT_FOUND", err(rpc("workspace.backup.import", "{\"workspaceId\":\"" + id + "\",\"backupId\":\"../x\",\"async\":true}", scopes(WW, FW))));
+        assertEquals(-32602, rpc("workspace.backup.export", "{\"workspaceId\":\"" + id + "\",\"async\":\"yes\"}", scopes(WW, FR)).getAsJsonObject("error").get("code").getAsInt());
     }
 }

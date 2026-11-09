@@ -15,7 +15,8 @@ _READ_ONLY = frozenset({"system.hello", "system.capabilities", "system.describe"
                         "workspace.list", "workspace.get", "workspace.tasks",
                         "resource.capabilities", "resource.snapshot", "job.resource.get", "job.history.list", "job.history.get",
                         "job.diagnostics.export", "job.processes", "workspace.service.list", "workspace.service.status",
-                        "workspace.service.health", "workspace.service.ports", "workspace.service.logs"})
+                        "workspace.service.health", "workspace.service.ports", "workspace.service.logs",
+                        "workspace.backup.status", "job.preview", "workspace.task.preview"})
 
 
 def _object(pairs):

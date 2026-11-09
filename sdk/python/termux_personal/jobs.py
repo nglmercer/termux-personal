@@ -63,6 +63,14 @@ class JobOutputChunk:
     data: bytes
 
 
+def _preview(result) -> dict:
+    if (not isinstance(result, dict) or not isinstance(result.get("executable"), str) or not isinstance(result.get("arguments"), list) or
+            not all(isinstance(a, str) for a in result["arguments"]) or not isinstance(result.get("presetApplied"), bool) or
+            not isinstance(result.get("changed"), bool) or not isinstance(result.get("notes"), list)):
+        raise ProtocolError("Invalid command preview")
+    return result
+
+
 class Jobs:
     def __init__(self, client):
         self._client = client
@@ -92,6 +100,18 @@ class Jobs:
         except ProtocolError as exc:
             # The job may have been admitted even though its response was unusable.
             raise ProtocolError("Invalid job start response", outcome_unknown=True) from exc
+
+    def preview(self, executable: str, args, *, env: Optional[Mapping[str, str]] = None, resources: Optional[Mapping[str, object]] = None) -> dict:
+        """The effective command of a start, without starting anything. Uses the same planning as ``start``."""
+        if not isinstance(executable, str) or not isinstance(args, (list, tuple)) or not all(isinstance(item, str) for item in args):
+            raise ValueError("executable must be a string and args a list of strings")
+        params: dict = {"executable": executable, "args": list(args)}
+        if env is not None:
+            params["env"] = dict(env)
+        if resources is not None:
+            params["resources"] = dict(resources)
+        result, _ = self._call("job.preview", params)
+        return _preview(result)
 
     def list(self, *, workspace_id: Optional[str] = None, cursor: Optional[int] = None, limit: Optional[int] = None) -> tuple:
         params: dict = {}

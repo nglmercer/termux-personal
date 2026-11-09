@@ -38,7 +38,11 @@ Device-aware resource policy, workspace profiles and per-task resources, managed
 
 ## Not implemented yet
 
-A working isolated execution backend: only the abstraction and capability detection exist, and the VM is reported as unsupported (see [execution-backend.md](execution-backend.md)). A preview API for the effective command of a build preset, Node heap limits through `job.start`, and progress or cancellation of backups over RPC. The UI and everything native have not been run on a device.
+A working isolated execution backend: only the abstraction and capability detection exist, and the VM is reported as unsupported (see [execution-backend.md](execution-backend.md)). The UI and everything native have not been run on a physical Android device.
+
+## Test environment
+
+The unit suite passes in full (0 failures) on JDK 21. On JDK 27 the 35 Robolectric tests fail to start (`ClassReader`), identically with and without these changes, because Robolectric 4.10 cannot instrument classes with that JDK. Run Gradle with `-Dorg.gradle.java.home=<JDK 21>` to run them.
 
 ## Known limits
 
