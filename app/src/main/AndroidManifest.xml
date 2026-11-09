@@ -123,6 +123,13 @@
             android:label="@string/title_activity_termux_settings"
             android:theme="@style/Theme.TermuxApp.DayNight.NoActionBar" />
 
+        <!-- Opt-in viewer for a workspace service's own web interface; reachable only from inside the app. -->
+        <activity
+            android:name=".app.viewer.ServiceViewerActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode"
+            android:label="@string/service_viewer_title" />
+
         <activity
             android:name=".app.activities.LocalControlActivity"
             android:exported="false"

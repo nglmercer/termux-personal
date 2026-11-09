@@ -1155,6 +1155,20 @@ public final class TermuxService extends Service implements AppShell.AppShellCli
     }
 
     /** The workspace store for the app's own UI. Loads from disk on first use, so call it off the main thread. */
+    /**
+     * The endpoint of a workspace service for the in-app viewer, exactly as {@code workspace.service.endpoint} reports it,
+     * or null when services are not running in this service lifetime (local control with workspaces was never started).
+     * The viewer is in this process, so the credential never crosses an intent, a URL or a log. Off the main thread.
+     */
+    public java.util.Map<String, Object> serviceEndpointForUi(String workspaceId, String serviceId)
+            throws com.termux.app.control.workspace.WorkspaceRepository.WorkspaceException {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
+            throw new IllegalStateException("The endpoint probe must run off the main thread");
+        com.termux.app.control.workspace.WorkspaceServiceController services;
+        synchronized (mJobLock) { services = mServiceController; }
+        return services == null ? null : services.endpoint(workspaceId, serviceId, 300);
+    }
+
     public com.termux.app.control.workspace.WorkspaceRepository workspaceRepositoryForUi() throws java.io.IOException {
         if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
             throw new IllegalStateException("Workspace store must load off the main thread");

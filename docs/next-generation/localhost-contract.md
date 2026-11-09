@@ -71,4 +71,19 @@ The reference backend, `tools/termux-service-example/server.mjs` (Node.js 18+, n
 | the old credential against the new run | 401 |
 | the port on the device's non-loopback IPv4 address | connection refused |
 
-Not covered: an Android frontend app other than the tests, Android versions other than 16, and the WebView viewer (issue #14).
+Correction found while testing the viewer (issue #14): the first version of the reference backend used a mistyped WebSocket GUID, so its `Sec-WebSocket-Accept` was wrong and real clients refused the connection; the raw-socket check above only looked at the `101` status line. The backend now uses the RFC 6455 GUID (it answers the RFC's sample key with `s3pPLMBiTxaQ9kYGzzhZRbK+xOo=`), and the viewer test below exchanges a real WebSocket message on the phone.
+
+Not covered: Android versions other than 16 and other ROMs.
+
+## In-app viewer (issue #14)
+
+From the Workspaces dialog, *Services* lists every service that declares a port, and each offers two explicit choices:
+
+* **Open in browser** hands the plain `http://127.0.0.1:PORT/` to the user's browser. The browser never receives the credential: a backend that requires it must offer its own login, or be opened in the viewer. This is the simplest option and needs nothing new from the app.
+* **Open in Termux viewer** opens `ServiceViewerActivity`, which is not exported and receives only the workspace and service IDs. It reads the endpoint inside the app process and sends the credential once, as the `Authorization` header of the first page load; the backend turns it into its session cookie for the page's own requests and WebSocket. The credential is never in a URL, intent, title or log.
+
+The viewer shows one origin. Pages of that origin load inside; other `http(s)` links open in the browser; every other scheme (`file:`, `content:`, `intent:`, `javascript:`, URLs with user info) is refused (`ServiceViewerPolicy`). It has no JavaScript bridge, no file or content access, no mixed content, no third-party cookies and no saved form data, and permits cleartext only through the `127.0.0.1` network security rule above.
+
+Lifecycle: nothing reloads automatically. On every resume the viewer compares the shown run with the current one: if the service restarted it says that the page belongs to the previous run and that anything being sent may or may not have been done; if it stopped it says so. *Reload* is a fresh GET of the root, never a resubmission. After the app process dies the page is not restored. If Android System WebView is missing, the viewer says so and the browser option remains.
+
+On the phone (POCO X3 Pro, Android 16, Android System WebView as installed, Node v24.18.0), `ServiceViewerInstrumentedTest` passed twice: the page loaded with the header, its `fetch` of `/__termux/instance` and its WebSocket `ping`/`pong` worked through the session cookie alone; the credential was not in the URL, `document.cookie` (HttpOnly) or the title; a `file:` navigation did not load (Chromium refuses it from an http page) and the viewer's own client refused `intent:` and `file:` while loading same-origin pages; after the backend was restarted with a new instance the viewer reported the restart and kept the old page until the user reloads. `ServiceViewerPolicyTest` covers the navigation rules on the JVM. Not exercised: the dialog entry by hand, other WebView versions, Android versions other than 16.
