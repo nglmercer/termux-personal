@@ -18,6 +18,60 @@ Requires: this fork's debuggable `com.termux` build installed on the device
 (release-signed Termux rejects `run-as`), at least one authorized adb device
 (`adb devices`), and a bootstrapped Termux (open the app once after install).
 
+## ALWAYS start here (adaptive, ROM-safe)
+
+Before any device work, run:
+
+```bash
+tools/termux-control/mobile info
+```
+
+It probes the device and returns a `path` field:
+
+- `run-as` → normal path; use `mobile exec '<script>'` (or `termux-adb exec`).
+- `instrumented` → **preferred on ROMs that refuse run-as** (POCO M2102J20SG).
+  The androidTest APK is installed and runs a command as the Termux UID via
+  `am instrument`. No user interaction, no root. Use `mobile exec` normally.
+- `local-control-on-device` → Local control is enabled; run the on-device client
+  from inside Termux (`device_jobs_e2e.py --local`).
+- `blocked-by-rom` → neither path is available. **Do not keep retrying.**
+  Run `mobile guide`, show the one-time UI steps, and wait for confirmation.
+
+`mobile` has a root shim that picks a runtime; each language also has its own
+implementation (same CLI, same behaviour):
+
+```sh
+tools/termux-control/mobile info
+python3 tools/termux-control/python/mobile info
+node    tools/termux-control/js/mobile.mjs info
+sh      tools/termux-control/sh/mobile.sh info
+```
+
+The instrumented bridge is `app/src/androidTest/.../AgentCommandInstrumentedTest.java`.
+It runs `/system/bin/sh -c <base64 cmd>` as the app UID and writes a JSON result
+to `/sdcard/termux-agent/result.json`, which the host ADB shell reads. Build and
+install it once with:
+
+```sh
+./gradlew :app:assembleDebugAndroidTest
+adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+```
+
+Why this matters: some production ROMs (e.g. POCO M2102J20SG / HyperOS,
+Android 16) omit the platform `seapp_contexts` rule `fromRunAs=true →
+domain=runas_app`. Then even a *debuggable* Termux fails with:
+
+```
+run-as: couldn't set SELinux security context
+  'default:targetSdkVersion=28:fromRunAs': Permission denied
+```
+
+That is a ROM/platform sepolicy bug. It cannot be fixed from the app, from
+`adb root` (ro.debuggable=0), or by rebuilding the APK. Bumping
+`targetSdkVersion` does not help: the generic `fromRunAs=true` rule is also
+missing. The only fix is a vendor ROM update/root; the practical workaround is
+Local control from inside Termux. `mobile info` detects all of this for you.
+
 ## Run a command in Termux
 
 ```bash

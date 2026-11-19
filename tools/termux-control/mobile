@@ -1,0 +1,17 @@
+#!/bin/sh
+# Unified entry point for the adaptive mobile automation helper.
+# Implementations live in each language directory; this shim picks one.
+set -eu
+
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+if command -v python3 >/dev/null 2>&1; then
+  exec python3 "$here/python/mobile" "$@"
+elif command -v node >/dev/null 2>&1; then
+  exec node "$here/js/mobile.mjs" "$@"
+elif command -v sh >/dev/null 2>&1; then
+  exec sh "$here/sh/mobile.sh" "$@"
+fi
+
+echo "no supported runtime (python3/node/sh) found" >&2
+exit 3

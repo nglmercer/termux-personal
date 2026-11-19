@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+"""Adaptive mobile automation helper for agents.
+
+One command surface that works across ROMs, choosing the best available path:
+
+  info              probe the device and print a JSON capability report
+  exec <script>     run a shell script in Termux (or explain the one-time step)
+  guide             print the minimal user interaction needed on this ROM
+  device            print the chosen adb serial
+
+Design goal: an agent never guesses. It runs `mobile info`, reads `path`, and
+uses `mobile exec`. Only when the ROM forces a user opt-in does the tool emit
+an exact, minimal instruction for the human.
+
+No run-as is required when a path other than `run-as` is selected.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import shlex
+import subprocess
+import sys
+
+
+TERMUX_ROOT = "/data/data/com.termux/files"
+SOCKET = f"{TERMUX_ROOT}/control-ipc/control.sock"
+ADB_HELPER = "tools/termux-control/python/termux-adb"
+
+
+def adb(serial: str | None, *args: str) -> subprocess.CompletedProcess[str]:
+    cmd = ["adb"] + (["-s", serial] if serial else []) + list(args)
+    return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+
+def pick_serial(explicit: str | None) -> str | None:
+    if explicit:
+        return explicit
+    result = adb(None, "devices")
+    devices = []
+    for line in result.stdout.splitlines()[1:]:
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == "device":
+            devices.append(parts[0])
+    return devices[0] if len(devices) == 1 else None
+
+
+def shell(serial: str, script: str) -> tuple[int, str]:
+    result = adb(serial, "shell", "-T", script)
+    return result.returncode, (result.stdout + result.stderr).strip()
+
+
+def probe(serial: str) -> dict:
+    report: dict = {"serial": serial}
+    _, out = shell(serial, "getprop ro.product.model")
+    report["model"] = out
+    _, out = shell(serial, "getprop ro.build.version.release")
+    report["android"] = out
+    _, out = shell(serial, "getprop ro.debuggable")
+    report["debuggable"] = out == "1"
+
+    _, out = shell(serial, "pm path com.termux")
+    report["termux_installed"] = out.startswith("package:")
+
+    code, out = shell(serial, "run-as com.termux id")
+    report["run_as_works"] = code == 0 and "uid=" in out
+    report["run_as_error"] = "" if report["run_as_works"] else out.splitlines()[-1] if out else ""
+
+    code, out = shell(serial, f"test -S {SOCKET} && echo yes || echo no")
+    report["control_socket_exists"] = out == "yes"
+
+    code, out = shell(serial, "pm path com.termux.test")
+    report["instrumentation_available"] = out.startswith("package:")
+
+    if report["run_as_works"]:
+        report["path"] = "run-as"
+        report["interaction"] = "none"
+    elif report["instrumentation_available"]:
+        report["path"] = "instrumented"
+        report["interaction"] = "none (androidTest APK already installed)"
+    elif report["control_socket_exists"] and report["termux_installed"]:
+        report["path"] = "local-control-on-device"
+        report["interaction"] = "one-time UI opt-in + on-device client"
+    else:
+        report["path"] = "blocked-by-rom"
+        report["interaction"] = "one-time UI opt-in required (see guide)"
+
+    return report
+
+
+def guide() -> str:
+    return "\n".join(
+        [
+            "Mobile interaction guide (minimal, one-time, no root):",
+            "",
+            "1. On the phone, open Termux and enable Local control with read/write",
+            "   scopes from the terminal context menu (or Settings).",
+            "2. Build the on-device client once, inside Termux:",
+            "   make -C tools/termux-control",
+            "3. Then the agent can act without further interaction:",
+            "   python3 tools/termux-control/mobile exec '<script>'",
+            "",
+            "Why: this ROM's SELinux policy has no fromRunAs rule, so run-as cannot",
+            "work even for a debuggable app. It is a platform/ROM issue, not an app bug.",
+        ]
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("-s", "--serial", help="adb device serial")
+    sub = parser.add_subparsers(dest="mode", required=True)
+    sub.add_parser("info")
+    sub.add_parser("guide")
+    sub.add_parser("device")
+    run = sub.add_parser("exec")
+    run.add_argument("script")
+    args = parser.parse_args()
+
+    serial = pick_serial(args.serial)
+    if not serial:
+        print("no authorized adb device found", file=sys.stderr)
+        return 3
+
+    if args.mode == "device":
+        print(serial)
+        return 0
+    if args.mode == "guide":
+        print(guide())
+        return 0
+
+    report = probe(serial)
+    if args.mode == "info":
+        print(json.dumps(report, indent=2))
+        return 0
+
+    # exec
+    if report["path"] == "instrumented":
+        import base64
+        encoded = base64.b64encode(args.script.encode()).decode().rstrip("=")
+        result_path = "/sdcard/termux-agent/result.json"
+        adb(serial, "shell", f"rm -f {result_path}")
+        adb(
+            serial,
+            "shell",
+            "am instrument -w -r "
+            "-e class com.termux.app.control.AgentCommandInstrumentedTest "
+            f"-e cmd {encoded} "
+            "com.termux.test/androidx.test.runner.AndroidJUnitRunner",
+        )
+        _, output = shell(serial, f"cat {result_path}")
+        if not output:
+            print("instrumented exec produced no result", file=sys.stderr)
+            return 1
+        print(output)
+        try:
+            return 0 if json.loads(output).get("ok") else 1
+        except ValueError:
+            return 1
+
+    if report["path"] == "run-as":
+        result = subprocess.run(
+            ["python3", ADB_HELPER, "-s", serial, "exec", args.script]
+        )
+        return result.returncode
+
+    print(guide(), file=sys.stderr)
+    print(
+        f"ERROR: automatic exec unavailable on {report['model']} "
+        f"(path={report['path']}). Run `mobile info` for details.",
+        file=sys.stderr,
+    )
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
