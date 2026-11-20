@@ -18,6 +18,7 @@ No run-as is required when a path other than `run-as` is selected.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import shlex
 import subprocess
@@ -116,6 +117,8 @@ def main() -> int:
     sub.add_parser("device")
     run = sub.add_parser("exec")
     run.add_argument("script")
+    tty = sub.add_parser("tty")
+    tty.add_argument("script")
     args = parser.parse_args()
 
     serial = pick_serial(args.serial)
@@ -130,6 +133,19 @@ def main() -> int:
         print(guide())
         return 0
 
+    if args.mode == "tty":
+        # Type the command into Termux's live terminal so it runs in the app
+        # session and survives after this bridge call ends.
+        import time
+        adb(serial, "shell", "am start -n com.termux/.app.TermuxActivity")
+        time.sleep(1.5)
+        encoded = base64.b64encode(args.script.encode()).decode()
+        payload = f'echo {encoded} | base64 -d | bash'
+        adb(serial, "shell", "input text " + shlex.quote(payload))
+        adb(serial, "shell", "input keyevent 66")
+        print("command typed into Termux terminal")
+        return 0
+
     report = probe(serial)
     if args.mode == "info":
         print(json.dumps(report, indent=2))
@@ -137,7 +153,6 @@ def main() -> int:
 
     # exec
     if report["path"] == "instrumented":
-        import base64
         encoded = base64.b64encode(args.script.encode()).decode().rstrip("=")
         result_path = "/sdcard/termux-agent/result.json"
         adb(serial, "shell", f"rm -f {result_path}")
