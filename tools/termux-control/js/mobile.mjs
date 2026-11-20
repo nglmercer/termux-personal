@@ -41,6 +41,22 @@ const mode = args[0];
 const serial = pickSerial(process.env.ADB_SERIAL);
 if (!serial) { console.error('no authorized adb device found'); process.exit(3); }
 
+if (mode === 'tty') {
+  // Type into Termux's live terminal so the command runs in the app session
+  // and survives after this tool call ends (long-lived services: bun run dev).
+  const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  adb(serial, ['shell', 'am start -n com.termux/.app.TermuxActivity']);
+  sleep(1000);
+  // Tap the terminal area so the extra-keys bar does not steal focus.
+  adb(serial, ['shell', 'input tap 540 400']);
+  sleep(500);
+  const script = args.slice(1).join(' ');
+  const encoded = Buffer.from(script, 'utf8').toString('base64');
+  adb(serial, ['shell', 'input text ' + JSON.stringify(`echo ${encoded} | base64 -d | bash`)]);
+  adb(serial, ['shell', 'input keyevent 66']);
+  console.log('command typed into Termux terminal');
+  process.exit(0);
+}
 if (mode === 'device') { console.log(serial); process.exit(0); }
 if (mode === 'info') { console.log(JSON.stringify(probe(serial), null, 2)); process.exit(0); }
 if (mode === 'exec') {
@@ -66,5 +82,5 @@ if (mode === 'exec') {
   console.error(`automatic exec unavailable on ${report.model} (path=${report.path})`);
   process.exit(2);
 }
-console.error('usage: mobile.mjs <info|device|exec> [script]');
+console.error('usage: mobile.mjs <info|device|exec|tty> [script]');
 process.exit(2);

@@ -37,6 +37,20 @@ It probes the device and returns a `path` field:
 - `blocked-by-rom` → neither path is available. **Do not keep retrying.**
   Run `mobile guide`, show the one-time UI steps, and wait for confirmation.
 
+### Long-lived services
+
+`mobile exec` (instrumented bridge) kills child processes when the bridge exits.
+For services that must survive across tool calls (`bun run dev`, servers), use
+`mobile tty` — it types the command into Termux's live terminal, where it runs
+in the app session and persists. The helper taps the terminal area first so the
+extra-keys bar does not steal focus.
+
+```sh
+tools/termux-control/mobile tty 'cd $HOME/TikTools-app && bun run dev'
+```
+
+All three implementations (python/js/sh) support `tty` with identical behaviour.
+
 `mobile` has a root shim that picks a runtime; each language also has its own
 implementation (same CLI, same behaviour):
 

@@ -138,7 +138,10 @@ def main() -> int:
         # session and survives after this bridge call ends.
         import time
         adb(serial, "shell", "am start -n com.termux/.app.TermuxActivity")
-        time.sleep(1.5)
+        time.sleep(1.0)
+        # Tap the terminal area so the extra-keys bar does not steal focus.
+        adb(serial, "shell", "input tap 540 400")
+        time.sleep(0.5)
         encoded = base64.b64encode(args.script.encode()).decode()
         payload = f'echo {encoded} | base64 -d | bash'
         adb(serial, "shell", "input text " + shlex.quote(payload))

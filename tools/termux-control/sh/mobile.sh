@@ -14,6 +14,23 @@ MODE="${1:-}"
 shift || true
 
 case "$MODE" in
+  tty)
+    # Type into Termux's live terminal so long-lived services survive.
+    SCRIPT="$*"
+    [ -n "$SCRIPT" ] || { echo "empty script" >&2; exit 2; }
+    $ADB shell 'am start -n com.termux/.app.TermuxActivity' >/dev/null 2>&1
+    sleep 1
+    # Tap the terminal area so the extra-keys bar does not steal focus.
+    $ADB shell 'input tap 540 400' >/dev/null 2>&1
+    sleep 0.5
+    ENCODED=$(printf '%s' "$SCRIPT" | base64 | tr -d '\n')
+    # Single-quote the payload for the Android shell.
+    PAYLOAD="echo $ENCODED | base64 -d | bash"
+    Q=$(printf '%s' "$PAYLOAD" | sed "s/'/'\\''/g")
+    $ADB shell "input text '$Q'" >/dev/null 2>&1
+    $ADB shell 'input keyevent 66' >/dev/null 2>&1
+    echo "command typed into Termux terminal"
+    ;;
   device) echo "$SERIAL" ;;
   info)
     model=$($ADB shell getprop ro.product.model | tr -d '\r')
@@ -45,7 +62,7 @@ case "$MODE" in
     exit 2
     ;;
   *)
-    echo "usage: mobile.sh <info|device|exec> [script]" >&2
+    echo "usage: mobile.sh <info|device|exec|tty> [script]" >&2
     exit 2
     ;;
 esac
