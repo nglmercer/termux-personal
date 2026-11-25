@@ -169,7 +169,8 @@ stop)
 			sleep 0.1
 		done
 		kill -9 "$pulse_pid" 2>/dev/null
-		rm -f "$RUNTIME_DIR/pulse/pid"
+		# A client may have autospawned a new daemon meanwhile; keep its pid file.
+		[ "$(cat "$RUNTIME_DIR/pulse/pid" 2>/dev/null)" = "$pulse_pid" ] && rm -f "$RUNTIME_DIR/pulse/pid"
 	fi
 	unset pulse_pid
 	for server_pid in $(x11_server_pids); do
