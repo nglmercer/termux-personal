@@ -159,12 +159,19 @@ status)
 	XDG_RUNTIME_DIR=$RUNTIME_DIR pulseaudio --check 2>/dev/null && echo "audio: $PULSE_SOCKET" || echo "audio: not running"
 	;;
 stop)
+	# --kill only sends SIGTERM, which the daemon sometimes catches without ever
+	# exiting; wait for it and fall back to SIGKILL so the next start is clean.
+	pulse_pid=$(cat "$RUNTIME_DIR/pulse/pid" 2>/dev/null)
 	XDG_RUNTIME_DIR=$RUNTIME_DIR pulseaudio --kill 2>/dev/null
-	# --kill only signals the daemon; wait so an immediate start does not see it.
-	for _ in $(seq 50); do
-		XDG_RUNTIME_DIR=$RUNTIME_DIR pulseaudio --check 2>/dev/null || break
-		sleep 0.1
-	done
+	if [ -n "$pulse_pid" ] && [ "$(cat "/proc/$pulse_pid/comm" 2>/dev/null)" = pulseaudio ]; then
+		for _ in $(seq 50); do
+			kill -0 "$pulse_pid" 2>/dev/null || break
+			sleep 0.1
+		done
+		kill -9 "$pulse_pid" 2>/dev/null
+		rm -f "$RUNTIME_DIR/pulse/pid"
+	fi
+	unset pulse_pid
 	for server_pid in $(x11_server_pids); do
 		kill "$server_pid" 2>/dev/null
 	done
