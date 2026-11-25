@@ -69,6 +69,24 @@ start_x11() {
 	echo "x11: started on :$DISPLAY_NUMBER"
 }
 
+start_wm() {
+	# Without a window manager no one assigns X input focus: pointer events reach
+	# windows, but keyboard input never does. fluxbox/openbox are small and focus
+	# windows on click; TERMUX_X11_WM overrides the autodetected one.
+	[ "${TERMUX_X11_NO_WM:-0}" = 1 ] && return 0
+	local wm=${TERMUX_X11_WM:-}
+	if [ -z "$wm" ]; then
+		for wm in fluxbox openbox jwm; do
+			command -v "$wm" >/dev/null && break
+			wm=
+		done
+	fi
+	[ -n "$wm" ] || { echo "wm: none installed, keyboard focus will not work (pkg install fluxbox)"; return 0; }
+	pgrep -x "$wm" >/dev/null 2>&1 && return 0
+	DISPLAY=:$DISPLAY_NUMBER XDG_RUNTIME_DIR=$RUNTIME_DIR nohup "$wm" >"$LOG_DIR/wm.log" 2>&1 &
+	echo "wm: $wm started"
+}
+
 start_pulse() {
 	command -v pulseaudio >/dev/null || { echo "audio: install with: pkg install pulseaudio" >&2; return 1; }
 	if XDG_RUNTIME_DIR=$RUNTIME_DIR pulseaudio --check 2>/dev/null; then
@@ -101,6 +119,7 @@ start)
 	mkdir -p "$LOG_DIR"
 	rc=0
 	start_x11 || rc=1
+	[ "$rc" = 0 ] && start_wm
 	start_pulse || rc=1
 	[ "${TERMUX_X11_NO_ACTIVITY:-0}" = 1 ] || open_activity
 	echo "run: eval \"\$(termux-x11-session env)\""
@@ -117,6 +136,10 @@ stop)
 		kill "$server_pid" 2>/dev/null
 	done
 	unset server_pid
+	for wm_proc in ${TERMUX_X11_WM:-} fluxbox openbox jwm; do
+		[ -n "$wm_proc" ] && pkill -x "$wm_proc" 2>/dev/null
+	done
+	unset wm_proc
 	rm -f "$X_SOCKET" "$TMPDIR/.X$DISPLAY_NUMBER-lock"
 	echo "stopped"
 	;;

@@ -51,7 +51,7 @@ downside: the patched tree can no longer build real Android APK backends — use
 
 ```sh
 pkg install x11-repo
-pkg install termux-x11-nightly pulseaudio alsa-lib gtk3 webkit2gtk-4.1 rust clang pkg-config python
+pkg install termux-x11-nightly fluxbox pulseaudio alsa-lib gtk3 webkit2gtk-4.1 rust clang pkg-config python
 cp tools/termux-x11/termux-x11-session $PREFIX/bin/
 termux-x11-session start
 eval "$(termux-x11-session env)"
@@ -63,6 +63,10 @@ eval "$(termux-x11-session env)"
   `@/tmp/.X11-unix/X0`, so `DISPLAY=:0` works for every client. The Termux:X11
   *companion app* (APK from the `termux/termux-x11` `nightly` release, opened via
   `am start -n com.termux.x11/.MainActivity` or manually) provides the actual screen.
+* a window manager (first of `fluxbox`, `openbox`, `jwm` found; override with
+  `TERMUX_X11_WM`, disable with `TERMUX_X11_NO_WM=1`). Without one nothing assigns
+  X input focus: pointer events reach windows but keyboard input never does.
+  Prefer `fluxbox`: `openbox` pulls in Qt 6 via `obconf-qt` (hundreds of MB).
 * `pulseaudio` with `module-aaudio-sink` on Android 8+ (falling back to
   `module-sles-sink`), `module-native-protocol-unix` and `module-always-sink`.
   Clients find it through `$XDG_RUNTIME_DIR/pulse/native` (the session exports
@@ -77,13 +81,17 @@ rustc 1.100 (`x86_64-linux-android`) and ran without proot:
 
 | Example | Result |
 | --- | --- |
-| `winit-window` (winit 0.30.13) | X11 window created and mapped; `xwininfo` shows `winit on Termux:X11` 480x320 under the root window; event loop runs and exits on the deadline |
+| `winit-window` (winit 0.30.13) | X11 window created and mapped; `xwininfo` shows `winit on Termux:X11` 480x320 under the root window; event loop runs and exits on the deadline. With the session's fluxbox the window gets focus on map and Android key events arrive (`focused: true`, `key: Character("a") Pressed/Released`); taps inside the window deliver `mouse: Left Pressed/Released` |
 | `tao-wry` (tao 0.37.3 + wry 0.57.3) | GTK window mapped; WebKitGTK 2.54.3 rendered the page (visually confirmed); JavaScript ran and IPC reported the user agent `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15` |
 | `rodio-tone` (rodio 0.23 + cpal 0.18.2) | `cpal host: PulseAudio`, `output device: AAudio Output`, a 2 s 440 Hz tone played through the stream without error |
 
-Not verified yet: keyboard/pointer input delivery into winit windows (the event
-logging is in place; `input tap` coordinates did not hit the test window), GPU/EGL
-acceleration, aarch64 hardware, winit 0.31 (the multi-crate 0.31 series), PipeWire
+Input notes: Termux:X11 starts in *Trackpad* touch mode, where a tap clicks at the
+current X cursor position rather than at the touched point; use *Simulated
+touchscreen* in the Termux:X11 preferences for absolute taps. In *Direct touch*
+mode taps move the pointer but produce no winit `MouseInput` (raw touch events
+were not checked).
+
+Not verified yet: GPU/EGL acceleration, aarch64 hardware, winit 0.31 (the multi-crate 0.31 series), PipeWire
 as a PulseAudio replacement, and the `oboe` backend.
 
 ## Audio background
