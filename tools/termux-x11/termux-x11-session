@@ -5,9 +5,10 @@
 #   termux-x11-session status | stop
 set -u
 
-# This script manages its own PulseAudio daemon; an inherited PULSE_SERVER would
-# make `pulseaudio --start` believe a server already exists and skip startup.
-unset PULSE_SERVER
+# This script manages its own PulseAudio daemon in $XDG_RUNTIME_DIR/pulse; an
+# inherited PULSE_SERVER would make `pulseaudio --start` believe a server already
+# exists, and PULSE_RUNTIME_PATH would point start/stop at another daemon.
+unset PULSE_SERVER PULSE_RUNTIME_PATH
 
 PREFIX=${PREFIX:-/data/data/com.termux/files/usr}
 TMPDIR=${TMPDIR:-$PREFIX/tmp}
