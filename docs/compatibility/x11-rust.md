@@ -98,6 +98,8 @@ as a PulseAudio replacement, and the `oboe` backend.
   applications using `rodio` need no changes. The AAudio panic path is compiled out
   entirely.
 
+![wry + WebKitGTK rendering on Termux:X11](x11-wry-screenshot.png)
+
 ## Reproducing
 
 ```sh
