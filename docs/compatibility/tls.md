@@ -20,3 +20,11 @@ NODE_EXTRA_CA_CERTS="$HOME/path/to/verified-extra-ca.pem" node your-program.js
 ```
 
 See [Node's CLI documentation](https://nodejs.org/api/cli.html#node_extra_ca_certsfile). Confirm semantics for the actual executable and version before using any environment variable; `SSL_CERT_FILE`, `SSL_CERT_DIR`, and `CURL_CA_BUNDLE` do not have universal semantics across all runtimes. A CA directory may also require a format or index specific to its TLS library. These examples do not configure unrelated tools or disable certificate verification.
+
+Statically linked Linux executables present a different path problem: they do not use Android's `LD_PRELOAD` execution shims and may look for `/etc/resolv.conf`, `/etc/hosts`, `/tmp`, or a distribution-specific CA path that Android does not provide. For an explicitly selected command, the app-owned helper can create those paths through proot without editing shell or package configuration:
+
+```sh
+"$TERMUX_APP__FILES_DIR/compat-v2/termux-glibc-run" -- /path/to/static-program [arguments]
+```
+
+When `SSL_CERT_FILE` is unset, the helper selects the readable Termux bundle for that child and also maps it at several common Linux CA-file locations. An existing `SSL_CERT_FILE` is preserved and disables those bundle mappings. The helper still does not merge CA stores, validate a particular program's use of them, or disable verification. It requires the `proot` package and does not establish architecture, kernel, NSS, subprocess, or network compatibility; see [the compatibility baseline](baseline.md) for exact bindings and limits.

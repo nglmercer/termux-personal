@@ -50,6 +50,7 @@ public class ExecutableInspectorTest {
         ExecutableInspector.Report nativeAbi = ExecutableInspector.inspect(binary, new String[]{"x86_64"}, null);
         assertEquals(ExecutableInspector.Status.UNTESTED, nativeAbi.status);
         assertTrue(nativeAbi.detail.contains("possibly static"));
+        assertTrue(nativeAbi.detail.contains("termux-glibc-run"));
     }
     @Test public void matchingLoaderDoesNotImplyShimCanReadDistantHeaders() throws Exception {
         String interpreter = "/does-not-exist/ld-linux-aarch64.so.1";

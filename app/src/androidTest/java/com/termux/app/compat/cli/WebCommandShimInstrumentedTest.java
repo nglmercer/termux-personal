@@ -30,6 +30,7 @@ public class WebCommandShimInstrumentedTest {
         File v2 = new File(base, "compat-v2");
         new File(v2, "termux-run-clean").delete();
         new File(v2, "termux-compat").delete();
+        new File(v2, "termux-glibc-run").delete();
         v2.delete();
         new File(base, "sentinel").delete();
         base.delete();
@@ -65,6 +66,13 @@ public class WebCommandShimInstrumentedTest {
         assertEquals(WebCommandShim.Status.READY, WebCommandShim.install(base, "compat-v2", "termux-run-clean", new byte[]{42}));
         assertEquals(WebCommandShim.Status.CONFLICT, WebCommandShim.install(base, "compat-v2", "termux-run-clean", adapter));
         assertEquals(WebCommandShim.Status.UNAVAILABLE, WebCommandShim.install(base, "../compat-v2", "termux-run-clean", adapter));
+    }
+    @Test public void glibcRunnerIsInstalledWithoutReplacingExistingFiles() {
+        byte[] runner = "runner".getBytes(StandardCharsets.UTF_8);
+        assertEquals(WebCommandShim.Status.READY, WebCommandShim.install(base, "compat-v2", "termux-glibc-run", runner));
+        assertEquals(WebCommandShim.Status.READY, WebCommandShim.install(base, "compat-v2", "termux-glibc-run", runner));
+        assertEquals(WebCommandShim.Status.CONFLICT, WebCommandShim.install(base, "compat-v2", "termux-glibc-run", new byte[]{42}));
+        assertEquals(WebCommandShim.Status.UNAVAILABLE, WebCommandShim.install(base, "../compat-v2", "termux-glibc-run", runner));
     }
     @Test public void refusesSymlinkForShimFile() throws Exception {
         File directory = new File(base, "compat-v1"); assertTrue(directory.mkdir());
