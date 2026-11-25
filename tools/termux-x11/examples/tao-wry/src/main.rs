@@ -10,9 +10,21 @@ const PAGE: &str = r#"<!doctype html>
 <html><body style="font-family:sans-serif;background:#1e293b;color:#f8fafc">
 <h1>wry + WebKitGTK on Termux:X11</h1>
 <p id="ua"></p>
+<button id="btn" style="font-size:24px;padding:12px">click me</button>
+<p id="clicked">no clicks yet</p>
 <script>
   document.getElementById('ua').textContent = navigator.userAgent;
   window.ipc.postMessage('loaded ' + navigator.userAgent);
+  var r = document.getElementById('btn').getBoundingClientRect();
+  window.ipc.postMessage('button rect ' + Math.round(r.left + r.width / 2) + ',' + Math.round(r.top + r.height / 2));
+  document.addEventListener('click', function (e) {
+    document.getElementById('clicked').textContent =
+      'click at ' + e.clientX + ',' + e.clientY + ' on ' + e.target.tagName;
+    window.ipc.postMessage('click ' + e.clientX + ',' + e.clientY + ' on ' + e.target.tagName);
+  });
+  document.getElementById('btn').addEventListener('click', function () {
+    window.ipc.postMessage('button clicked');
+  });
 </script>
 </body></html>"#;
 
