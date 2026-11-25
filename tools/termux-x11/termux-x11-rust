@@ -1,0 +1,191 @@
+#!/usr/bin/env python3
+"""Build Rust GUI/audio crates for Termux:X11 instead of the Android app model.
+
+Crates such as winit, tao, wry and cpal treat every `*-linux-android` target as an
+Android APK (NativeActivity, JNI, android.webkit.WebView, AAudio).  A Termux
+process is a plain bionic Linux process that can talk to an X server and a
+PulseAudio server, so this tool vendors those crates into the project and
+rewrites their target cfgs so Android selects the Linux backends
+(X11/GTK/WebKitGTK/ALSA/PulseAudio).  Cargo picks the copies up through a managed
+`[patch.crates-io]` block in `.cargo/config.toml` (or the legacy `.cargo/config`
+when that exists, since Cargo gives it precedence).
+"""
+import argparse
+import json
+import os
+import pathlib
+import re
+import shutil
+import subprocess
+import sys
+
+DEFAULT_CRATES = ("winit", "tao", "wry", "cpal")
+MARKER = "termux-x11-rust"
+DISABLED_OS = "termux_android_app"
+PATCH_DIR = pathlib.Path(".termux-x11") / "crates"
+BEGIN = "# BEGIN " + MARKER + " (generated, do not edit)"
+END = "# END " + MARKER
+
+ANDROID_CFG = re.compile(r'target_os\s*=\s*"android"')
+LINUX_CFG = re.compile(r'target_os\s*=\s*"linux"')
+BUILD_SCRIPT_RULES = (
+    (re.compile(r'\btarget\.contains\("android"\)'), "false"),
+    (re.compile(r'\btarget_os\s*==\s*"android"'), 'target_os == "%s"' % DISABLED_OS),
+)
+
+
+def rewrite_cfgs(text):
+    """Make Android compile the Linux code paths and drop the APK-only ones."""
+    text = ANDROID_CFG.sub('target_os = "%s"' % DISABLED_OS, text)
+    return LINUX_CFG.sub('any(target_os = "linux", target_os = "android")', text)
+
+
+def rewrite_build_script(text):
+    for pattern, replacement in BUILD_SCRIPT_RULES:
+        text = pattern.sub(replacement, text)
+    return rewrite_cfgs(text)
+
+
+def cpal_default_to_pulseaudio(manifest):
+    """Without this, patched cpal compiles no audio host that works on Android: the
+    AAudio host is disabled and `default = []` enables nothing else, so ALSA (which
+    has no hardware access in Termux) is the only host. Make PulseAudio the default
+    so plain `rodio` playback works; the ALSA fallback stays available."""
+    text = manifest.read_text(encoding="utf-8")
+    updated = re.sub(r"(?m)^(default\s*=\s*)\[\]", r'\1["pulseaudio"]', text, count=1)
+    if updated == text:
+        raise SystemExit("cpal: expected `default = []` in [features] of %s; adjust the hook" % manifest)
+    manifest.write_text(updated, encoding="utf-8")
+
+
+CRATE_HOOKS = {"cpal": cpal_default_to_pulseaudio}
+
+
+def patch_crate(source, destination):
+    if destination.exists():
+        shutil.rmtree(destination)
+    shutil.copytree(source, destination, ignore=shutil.ignore_patterns(".cargo-ok", ".cargo_vcs_info.json", "target"))
+    changed = 0
+    for path in sorted(destination.rglob("*")):
+        if not path.is_file() or path.suffix not in (".rs", ".toml") or path.name == "Cargo.toml.orig":
+            continue
+        original = path.read_text(encoding="utf-8")
+        is_build_script = path.parent == destination and path.name == "build.rs"
+        updated = rewrite_build_script(original) if is_build_script else rewrite_cfgs(original)
+        if updated != original:
+            path.write_text(updated, encoding="utf-8")
+            changed += 1
+    name = source.name.rsplit("-", 1)[0]
+    if name in CRATE_HOOKS:
+        CRATE_HOOKS[name](destination / "Cargo.toml")
+    (destination / ".termux-x11-patched").write_text(source.name + "\n", encoding="utf-8")
+    return changed
+
+
+def cargo(*args, cwd):
+    return subprocess.run(("cargo",) + args, cwd=cwd, check=True, stdout=subprocess.PIPE, text=True).stdout
+
+
+def locked_packages(project, names):
+    metadata = json.loads(cargo("metadata", "--format-version", "1", cwd=project))
+    found = []
+    for package in metadata["packages"]:
+        source = package.get("source") or ""
+        manifest_dir = pathlib.Path(package["manifest_path"]).parent
+        if package["name"] in names and (source.startswith("registry+") or (manifest_dir / ".termux-x11-patched").exists()):
+            found.append((package["name"], package["version"], manifest_dir))
+    return sorted(found)
+
+
+def unpatched_source(project, name, version, manifest_dir):
+    """Return the registry copy even when an earlier run already redirected Cargo to a patched one."""
+    if not (manifest_dir / ".termux-x11-patched").exists():
+        return manifest_dir
+    home = pathlib.Path(os.environ.get("CARGO_HOME", pathlib.Path.home() / ".cargo"))
+    for candidate in sorted((home / "registry" / "src").glob("*/%s-%s" % (name, version))):
+        return candidate
+    raise SystemExit("%s %s: registry source missing; run `cargo fetch` after `%s clean`" % (name, version, MARKER))
+
+
+def render_patch_block(entries):
+    lines = [BEGIN, "[patch.crates-io]"]
+    seen = set()
+    for name, version, path in entries:
+        key = name if name not in seen else "%s-%s" % (name, version.replace(".", "_"))
+        seen.add(name)
+        package = "" if key == name else ', package = "%s"' % name
+        lines.append('%s = { path = "%s"%s }' % (key, path.as_posix(), package))
+    lines.append(END)
+    return "\n".join(lines) + "\n"
+
+
+def strip_managed_block(text):
+    return re.sub(r"(?ms)^" + re.escape(BEGIN) + r".*?^" + re.escape(END) + r"\n?", "", text)
+
+
+def config_path(project):
+    """Cargo prefers the legacy extensionless `.cargo/config` when both exist, so the
+    managed block must go there when it is present."""
+    legacy = project / ".cargo" / "config"
+    return legacy if legacy.exists() else project / ".cargo" / "config.toml"
+
+
+def write_config(project, block):
+    config = config_path(project)
+    config.parent.mkdir(exist_ok=True)
+    existing = strip_managed_block(config.read_text(encoding="utf-8")) if config.exists() else ""
+    if block and re.search(r"(?m)^\[patch\.crates-io\]", existing):
+        raise SystemExit("%s already has an unmanaged [patch.crates-io] table; merge it manually" % config)
+    text = existing.rstrip("\n")
+    text = (text + "\n\n" if text else "") + block if block else (text + "\n" if text else "")
+    if text:
+        config.write_text(text, encoding="utf-8")
+    elif config.exists():
+        config.unlink()
+
+
+def command_patch(args):
+    project = pathlib.Path(args.project).resolve()
+    names = set(args.crates or DEFAULT_CRATES)
+    if not (project / "Cargo.lock").exists():
+        cargo("generate-lockfile", cwd=project)
+    packages = locked_packages(project, names)
+    if not packages:
+        print("no crates to patch (%s)" % ", ".join(sorted(names)))
+        return 0
+    entries = []
+    for name, version, manifest_dir in packages:
+        source = unpatched_source(project, name, version, manifest_dir)
+        relative = PATCH_DIR / ("%s-%s" % (name, version))
+        changed = patch_crate(source, project / relative)
+        entries.append((name, version, project / relative))
+        print("patched %s %s (%d files)" % (name, version, changed))
+    write_config(project, render_patch_block(entries))
+    print("wrote %s" % config_path(project))
+    return 0
+
+
+def command_clean(args):
+    project = pathlib.Path(args.project).resolve()
+    write_config(project, "")
+    shutil.rmtree(project / ".termux-x11", ignore_errors=True)
+    print("removed %s patches from %s" % (MARKER, project))
+    return 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog=MARKER, description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+    patch = sub.add_parser("patch", help="vendor and rewrite GUI/audio crates found in Cargo.lock")
+    patch.add_argument("--project", default=".", help="Cargo workspace root (default: .)")
+    patch.add_argument("--crate", dest="crates", action="append", help="crate name to patch (repeatable; default: %s)" % ", ".join(DEFAULT_CRATES))
+    patch.set_defaults(func=command_patch)
+    clean = sub.add_parser("clean", help="remove the vendored copies and the managed config block")
+    clean.add_argument("--project", default=".")
+    clean.set_defaults(func=command_clean)
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

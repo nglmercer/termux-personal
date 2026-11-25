@@ -1,0 +1,9 @@
+[package]
+name = "tao-wry"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+tao = { version = "0.37", default-features = false, features = ["rwh_06", "x11"] }
+wry = "0.57"

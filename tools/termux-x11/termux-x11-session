@@ -1,0 +1,191 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Start/stop the Termux:X11 display and PulseAudio for native (non-proot) GUI apps.
+#   termux-x11-session start   # X server :0, PulseAudio, Termux:X11 activity
+#   eval "$(termux-x11-session env)"
+#   termux-x11-session status | stop
+set -u
+
+# This script manages its own PulseAudio daemon in $XDG_RUNTIME_DIR/pulse; an
+# inherited PULSE_SERVER would make `pulseaudio --start` believe a server already
+# exists, and PULSE_RUNTIME_PATH would point start/stop at another daemon.
+unset PULSE_SERVER PULSE_RUNTIME_PATH
+
+PREFIX=${PREFIX:-/data/data/com.termux/files/usr}
+TMPDIR=${TMPDIR:-$PREFIX/tmp}
+DISPLAY_NUMBER=${TERMUX_X11_DISPLAY:-0}
+RUNTIME_DIR=${XDG_RUNTIME_DIR:-$TMPDIR}
+X_SOCKET=$TMPDIR/.X11-unix/X$DISPLAY_NUMBER
+PULSE_SOCKET=$RUNTIME_DIR/pulse/native
+LOG_DIR=${TERMUX_X11_LOG_DIR:-$TMPDIR/termux-x11-session}
+WM_PID_FILE=$LOG_DIR/wm-$DISPLAY_NUMBER.pid
+
+print_env() {
+	printf 'export DISPLAY=:%s\n' "$DISPLAY_NUMBER"
+	printf 'export XDG_RUNTIME_DIR=%q\n' "$RUNTIME_DIR"
+	printf 'export PULSE_SERVER=%q\n' "unix:$PULSE_SOCKET"
+}
+
+wait_for_socket() {
+	local socket=$1 tries=50
+	while [ ! -S "$socket" ] && [ "$tries" -gt 0 ]; do
+		sleep 0.1
+		tries=$((tries - 1))
+	done
+	[ -S "$socket" ]
+}
+
+x11_server_pids() {
+	# The server binary sets its comm to "main", so pgrep -x cannot find it; match
+	# the exact argv instead: `termux-x11 com.termux.x11 :0 -ac`. This script's own
+	# cmdline contains "termux-x11" too, so a bare pgrep -f is not enough.
+	local pid args
+	for pid in $(pgrep -f termux-x11 2>/dev/null); do
+		[ -r "/proc/$pid/cmdline" ] || continue
+		args=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null) || continue
+		case "$args" in
+		"termux-x11 com.termux.x11 :$DISPLAY_NUMBER "*|"termux-x11 :$DISPLAY_NUMBER "*)
+			echo "$pid"
+			;;
+		esac
+	done
+}
+
+start_x11() {
+	if [ -S "$X_SOCKET" ] && [ -n "$(x11_server_pids)" ]; then
+		echo "x11: already running on :$DISPLAY_NUMBER"
+		return 0
+	fi
+	command -v termux-x11 >/dev/null || { echo "x11: install with: pkg install x11-repo && pkg install termux-x11-nightly" >&2; return 1; }
+	rm -f "$X_SOCKET" "$TMPDIR/.X$DISPLAY_NUMBER-lock"
+	# termux-x11 connects the LorieService app binder; without the Activity it still
+	# serves X clients, the screen just stays black until the app is opened.
+	XDG_RUNTIME_DIR=$RUNTIME_DIR nohup termux-x11 ":$DISPLAY_NUMBER" -ac >"$LOG_DIR/x11.log" 2>&1 &
+	if ! wait_for_socket "$X_SOCKET"; then
+		if grep -q "server already running" "$LOG_DIR/x11.log" 2>/dev/null && DISPLAY=:$DISPLAY_NUMBER xdpyinfo >/dev/null 2>&1; then
+			echo "x11: already running on :$DISPLAY_NUMBER"
+			return 0
+		fi
+		echo "x11: server did not start, see $LOG_DIR/x11.log" >&2
+		return 1
+	fi
+	echo "x11: started on :$DISPLAY_NUMBER"
+}
+
+managed_wm_pid() {
+	# The pid file holds "<pid> <comm>"; checking comm guards against pid reuse.
+	local pid name
+	[ -r "$WM_PID_FILE" ] || return 1
+	read -r pid name <"$WM_PID_FILE" || return 1
+	[ -n "$pid" ] && [ "$(cat "/proc/$pid/comm" 2>/dev/null)" = "$name" ] && echo "$pid"
+}
+
+start_wm() {
+	# Without a window manager no one assigns X input focus: pointer events reach
+	# windows, but keyboard input never does. fluxbox/openbox are small and focus
+	# windows on click; TERMUX_X11_WM overrides the autodetected one.
+	[ "${TERMUX_X11_NO_WM:-0}" = 1 ] && return 0
+	local wm=${TERMUX_X11_WM:-} pid
+	if [ -n "$wm" ]; then
+		command -v "$wm" >/dev/null || { echo "wm: TERMUX_X11_WM=$wm is not installed" >&2; return 1; }
+	else
+		for wm in fluxbox openbox jwm; do
+			command -v "$wm" >/dev/null && break
+			wm=
+		done
+	fi
+	[ -n "$wm" ] || { echo "wm: none installed, keyboard focus will not work (pkg install fluxbox)"; return 0; }
+	# Track our own WM by pid file so WMs on other displays (e.g. a VNC desktop)
+	# neither block startup here nor get killed by stop.
+	if pid=$(managed_wm_pid); then
+		echo "wm: already running (pid $pid)"
+		return 0
+	fi
+	DISPLAY=:$DISPLAY_NUMBER XDG_RUNTIME_DIR=$RUNTIME_DIR nohup "$wm" >"$LOG_DIR/wm.log" 2>&1 &
+	pid=$!
+	sleep 0.5
+	if ! kill -0 "$pid" 2>/dev/null; then
+		rm -f "$WM_PID_FILE"
+		if grep -qiE 'another window manager|already managed' "$LOG_DIR/wm.log" 2>/dev/null; then
+			echo "wm: display :$DISPLAY_NUMBER already has a window manager"
+			return 0
+		fi
+		echo "wm: $wm exited immediately, see $LOG_DIR/wm.log" >&2
+		return 1
+	fi
+	echo "$pid $(cat "/proc/$pid/comm" 2>/dev/null)" >"$WM_PID_FILE"
+	echo "wm: $wm started"
+}
+
+start_pulse() {
+	command -v pulseaudio >/dev/null || { echo "audio: install with: pkg install pulseaudio" >&2; return 1; }
+	if XDG_RUNTIME_DIR=$RUNTIME_DIR pulseaudio --check 2>/dev/null; then
+		echo "audio: pulseaudio already running"
+		return 0
+	fi
+	# module-aaudio-sink is the Android 8+ output; module-sles-sink (default.pa) is the fallback.
+	local sink=module-sles-sink sdk
+	sdk=$(getprop ro.build.version.sdk 2>/dev/null)
+	if [ "${sdk:-0}" -ge 26 ] && [ -e "$PREFIX/lib/pulseaudio/modules/module-aaudio-sink.so" ]; then
+		sink=module-aaudio-sink
+	fi
+	sink=${TERMUX_X11_AUDIO_SINK:-$sink}
+	XDG_RUNTIME_DIR=$RUNTIME_DIR pulseaudio --start --exit-idle-time=-1 --log-target=file:"$LOG_DIR/pulse.log" \
+		-n --load="$sink" --load=module-native-protocol-unix --load=module-always-sink || {
+		echo "audio: pulseaudio failed, see $LOG_DIR/pulse.log" >&2
+		return 1
+	}
+	wait_for_socket "$PULSE_SOCKET" || { echo "audio: socket $PULSE_SOCKET missing" >&2; return 1; }
+	echo "audio: pulseaudio started ($sink)"
+}
+
+open_activity() {
+	command -v am >/dev/null && am start -n com.termux.x11/.MainActivity >/dev/null 2>&1 ||
+		echo "x11: open the Termux:X11 app to see the display"
+}
+
+case ${1:-} in
+start)
+	mkdir -p "$LOG_DIR"
+	rc=0
+	start_x11 || rc=1
+	if [ "$rc" = 0 ]; then start_wm || rc=1; fi
+	start_pulse || rc=1
+	[ "${TERMUX_X11_NO_ACTIVITY:-0}" = 1 ] || open_activity
+	echo "run: eval \"\$(termux-x11-session env)\""
+	exit $rc
+	;;
+env) print_env ;;
+status)
+	[ -S "$X_SOCKET" ] && echo "x11: $X_SOCKET" || echo "x11: not running"
+	XDG_RUNTIME_DIR=$RUNTIME_DIR pulseaudio --check 2>/dev/null && echo "audio: $PULSE_SOCKET" || echo "audio: not running"
+	;;
+stop)
+	# --kill only sends SIGTERM, which the daemon sometimes catches without ever
+	# exiting; wait for it and fall back to SIGKILL so the next start is clean.
+	pulse_pid=$(cat "$RUNTIME_DIR/pulse/pid" 2>/dev/null)
+	XDG_RUNTIME_DIR=$RUNTIME_DIR pulseaudio --kill 2>/dev/null
+	if [ -n "$pulse_pid" ] && [ "$(cat "/proc/$pulse_pid/comm" 2>/dev/null)" = pulseaudio ]; then
+		for _ in $(seq 50); do
+			kill -0 "$pulse_pid" 2>/dev/null || break
+			sleep 0.1
+		done
+		kill -9 "$pulse_pid" 2>/dev/null
+		# A client may have autospawned a new daemon meanwhile; keep its pid file.
+		[ "$(cat "$RUNTIME_DIR/pulse/pid" 2>/dev/null)" = "$pulse_pid" ] && rm -f "$RUNTIME_DIR/pulse/pid"
+	fi
+	unset pulse_pid
+	for server_pid in $(x11_server_pids); do
+		kill "$server_pid" 2>/dev/null
+	done
+	unset server_pid
+	wm_pid=$(managed_wm_pid) && kill "$wm_pid" 2>/dev/null
+	unset wm_pid
+	rm -f "$WM_PID_FILE"
+	rm -f "$X_SOCKET" "$TMPDIR/.X$DISPLAY_NUMBER-lock"
+	echo "stopped"
+	;;
+*)
+	echo "usage: termux-x11-session start|env|status|stop" >&2
+	exit 2
+	;;
+esac
