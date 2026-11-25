@@ -77,6 +77,29 @@ class ConfigTest(unittest.TestCase):
             tool.write_config(project, "")
             self.assertEqual(config.read_text(), "[build]\njobs = 2\n")
 
+    def test_legacy_extensionless_config_wins(self):
+        with tempfile.TemporaryDirectory() as temp:
+            project = pathlib.Path(temp)
+            (project / ".cargo").mkdir()
+            legacy = project / ".cargo/config"
+            legacy.write_text("[build]\njobs = 2\n")
+            entries = [("tao", "0.37.3", project / "a")]
+            tool.write_config(project, tool.render_patch_block(entries))
+            self.assertIn(tool.BEGIN, legacy.read_text())
+            self.assertFalse((project / ".cargo/config.toml").exists())
+            tool.write_config(project, "")
+            self.assertEqual(legacy.read_text(), "[build]\njobs = 2\n")
+
+    def test_cpal_hook_enables_pulseaudio_default(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            source = root / "registry/cpal-0.18.2"
+            source.mkdir(parents=True)
+            (source / "Cargo.toml").write_text("[features]\ndefault = []\npulseaudio = []\n")
+            destination = root / "project/.termux-x11/crates/cpal-0.18.2"
+            tool.patch_crate(source, destination)
+            self.assertIn('default = ["pulseaudio"]', (destination / "Cargo.toml").read_text())
+
     def test_refuses_to_merge_unmanaged_patch_table(self):
         with tempfile.TemporaryDirectory() as temp:
             project = pathlib.Path(temp)

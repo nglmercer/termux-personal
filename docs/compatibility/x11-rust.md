@@ -68,6 +68,8 @@ eval "$(termux-x11-session env)"
   Clients find it through `$XDG_RUNTIME_DIR/pulse/native` (the session exports
   `XDG_RUNTIME_DIR=$PREFIX/tmp` and `PULSE_SERVER`).
 
+Only one X display can exist at a time: the companion app's service is a singleton, and a second `termux-x11` instance exits with "already has an active X server connection".
+
 ## Verified results (2026-11-25, emulator-5554, Android 16 x86-64)
 
 All three example binaries in `tools/termux-x11/examples` built with the on-device

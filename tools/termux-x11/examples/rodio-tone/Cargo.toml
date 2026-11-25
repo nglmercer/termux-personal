@@ -6,4 +6,4 @@ publish = false
 
 [dependencies]
 rodio = { version = "0.23", default-features = false, features = ["playback"] }
-cpal = { version = "0.18.2", features = ["pulseaudio"] }
+cpal = "0.18.2"

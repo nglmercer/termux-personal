@@ -7,7 +7,8 @@ process is a plain bionic Linux process that can talk to an X server and a
 PulseAudio server, so this tool vendors those crates into the project and
 rewrites their target cfgs so Android selects the Linux backends
 (X11/GTK/WebKitGTK/ALSA/PulseAudio).  Cargo picks the copies up through a managed
-`[patch.crates-io]` block in `.cargo/config.toml`.
+`[patch.crates-io]` block in `.cargo/config.toml` (or the legacy `.cargo/config`
+when that exists, since Cargo gives it precedence).
 """
 import argparse
 import json
@@ -45,6 +46,21 @@ def rewrite_build_script(text):
     return rewrite_cfgs(text)
 
 
+def cpal_default_to_pulseaudio(manifest):
+    """Without this, patched cpal compiles no audio host that works on Android: the
+    AAudio host is disabled and `default = []` enables nothing else, so ALSA (which
+    has no hardware access in Termux) is the only host. Make PulseAudio the default
+    so plain `rodio` playback works; the ALSA fallback stays available."""
+    text = manifest.read_text(encoding="utf-8")
+    updated = re.sub(r"(?m)^(default\s*=\s*)\[\]", r'\1["pulseaudio"]', text, count=1)
+    if updated == text:
+        raise SystemExit("cpal: expected `default = []` in [features] of %s; adjust the hook" % manifest)
+    manifest.write_text(updated, encoding="utf-8")
+
+
+CRATE_HOOKS = {"cpal": cpal_default_to_pulseaudio}
+
+
 def patch_crate(source, destination):
     if destination.exists():
         shutil.rmtree(destination)
@@ -59,6 +75,9 @@ def patch_crate(source, destination):
         if updated != original:
             path.write_text(updated, encoding="utf-8")
             changed += 1
+    name = source.name.rsplit("-", 1)[0]
+    if name in CRATE_HOOKS:
+        CRATE_HOOKS[name](destination / "Cargo.toml")
     (destination / ".termux-x11-patched").write_text(source.name + "\n", encoding="utf-8")
     return changed
 
@@ -104,8 +123,15 @@ def strip_managed_block(text):
     return re.sub(r"(?ms)^" + re.escape(BEGIN) + r".*?^" + re.escape(END) + r"\n?", "", text)
 
 
+def config_path(project):
+    """Cargo prefers the legacy extensionless `.cargo/config` when both exist, so the
+    managed block must go there when it is present."""
+    legacy = project / ".cargo" / "config"
+    return legacy if legacy.exists() else project / ".cargo" / "config.toml"
+
+
 def write_config(project, block):
-    config = project / ".cargo" / "config.toml"
+    config = config_path(project)
     config.parent.mkdir(exist_ok=True)
     existing = strip_managed_block(config.read_text(encoding="utf-8")) if config.exists() else ""
     if block and re.search(r"(?m)^\[patch\.crates-io\]", existing):
@@ -135,7 +161,7 @@ def command_patch(args):
         entries.append((name, version, project / relative))
         print("patched %s %s (%d files)" % (name, version, changed))
     write_config(project, render_patch_block(entries))
-    print("wrote %s" % (project / ".cargo" / "config.toml"))
+    print("wrote %s" % config_path(project))
     return 0
 
 

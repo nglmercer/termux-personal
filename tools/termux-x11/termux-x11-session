@@ -5,6 +5,10 @@
 #   termux-x11-session status | stop
 set -u
 
+# This script manages its own PulseAudio daemon; an inherited PULSE_SERVER would
+# make `pulseaudio --start` believe a server already exists and skip startup.
+unset PULSE_SERVER
+
 PREFIX=${PREFIX:-/data/data/com.termux/files/usr}
 TMPDIR=${TMPDIR:-$PREFIX/tmp}
 DISPLAY_NUMBER=${TERMUX_X11_DISPLAY:-0}
@@ -28,8 +32,24 @@ wait_for_socket() {
 	[ -S "$socket" ]
 }
 
+x11_server_pids() {
+	# The server binary sets its comm to "main", so pgrep -x cannot find it; match
+	# the exact argv instead: `termux-x11 com.termux.x11 :0 -ac`. This script's own
+	# cmdline contains "termux-x11" too, so a bare pgrep -f is not enough.
+	local pid args
+	for pid in $(pgrep -f termux-x11 2>/dev/null); do
+		[ -r "/proc/$pid/cmdline" ] || continue
+		args=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null) || continue
+		case "$args" in
+		"termux-x11 com.termux.x11 :$DISPLAY_NUMBER "*|"termux-x11 :$DISPLAY_NUMBER "*)
+			echo "$pid"
+			;;
+		esac
+	done
+}
+
 start_x11() {
-	if [ -S "$X_SOCKET" ] && pgrep -x termux-x11 >/dev/null 2>&1; then
+	if [ -S "$X_SOCKET" ] && [ -n "$(x11_server_pids)" ]; then
 		echo "x11: already running on :$DISPLAY_NUMBER"
 		return 0
 	fi
@@ -93,7 +113,10 @@ status)
 	;;
 stop)
 	XDG_RUNTIME_DIR=$RUNTIME_DIR pulseaudio --kill 2>/dev/null
-	pkill -x termux-x11 2>/dev/null
+	for server_pid in $(x11_server_pids); do
+		kill "$server_pid" 2>/dev/null
+	done
+	unset server_pid
 	rm -f "$X_SOCKET" "$TMPDIR/.X$DISPLAY_NUMBER-lock"
 	echo "stopped"
 	;;
