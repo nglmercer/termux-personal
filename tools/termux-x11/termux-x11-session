@@ -70,6 +70,14 @@ start_x11() {
 	echo "x11: started on :$DISPLAY_NUMBER"
 }
 
+managed_wm_pid() {
+	# The pid file holds "<pid> <comm>"; checking comm guards against pid reuse.
+	local pid name
+	[ -r "$WM_PID_FILE" ] || return 1
+	read -r pid name <"$WM_PID_FILE" || return 1
+	[ -n "$pid" ] && [ "$(cat "/proc/$pid/comm" 2>/dev/null)" = "$name" ] && echo "$pid"
+}
+
 start_wm() {
 	# Without a window manager no one assigns X input focus: pointer events reach
 	# windows, but keyboard input never does. fluxbox/openbox are small and focus
@@ -87,8 +95,7 @@ start_wm() {
 	[ -n "$wm" ] || { echo "wm: none installed, keyboard focus will not work (pkg install fluxbox)"; return 0; }
 	# Track our own WM by pid file so WMs on other displays (e.g. a VNC desktop)
 	# neither block startup here nor get killed by stop.
-	pid=$(cat "$WM_PID_FILE" 2>/dev/null)
-	if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+	if pid=$(managed_wm_pid); then
 		echo "wm: already running (pid $pid)"
 		return 0
 	fi
@@ -97,10 +104,14 @@ start_wm() {
 	sleep 0.5
 	if ! kill -0 "$pid" 2>/dev/null; then
 		rm -f "$WM_PID_FILE"
+		if grep -qiE 'another window manager|already managed' "$LOG_DIR/wm.log" 2>/dev/null; then
+			echo "wm: display :$DISPLAY_NUMBER already has a window manager"
+			return 0
+		fi
 		echo "wm: $wm exited immediately, see $LOG_DIR/wm.log" >&2
 		return 1
 	fi
-	echo "$pid" >"$WM_PID_FILE"
+	echo "$pid $(cat "/proc/$pid/comm" 2>/dev/null)" >"$WM_PID_FILE"
 	echo "wm: $wm started"
 }
 
@@ -149,11 +160,17 @@ status)
 	;;
 stop)
 	XDG_RUNTIME_DIR=$RUNTIME_DIR pulseaudio --kill 2>/dev/null
+	# --kill only signals the daemon; wait so an immediate start does not see it.
+	for _ in $(seq 50); do
+		XDG_RUNTIME_DIR=$RUNTIME_DIR pulseaudio --check 2>/dev/null || break
+		sleep 0.1
+	done
 	for server_pid in $(x11_server_pids); do
 		kill "$server_pid" 2>/dev/null
 	done
 	unset server_pid
-	[ -f "$WM_PID_FILE" ] && kill "$(cat "$WM_PID_FILE")" 2>/dev/null
+	wm_pid=$(managed_wm_pid) && kill "$wm_pid" 2>/dev/null
+	unset wm_pid
 	rm -f "$WM_PID_FILE"
 	rm -f "$X_SOCKET" "$TMPDIR/.X$DISPLAY_NUMBER-lock"
 	echo "stopped"
