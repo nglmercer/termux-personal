@@ -1,0 +1,9 @@
+[package]
+name = "rodio-tone"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+rodio = { version = "0.23", default-features = false, features = ["playback"] }
+cpal = { version = "0.18.2", features = ["pulseaudio"] }

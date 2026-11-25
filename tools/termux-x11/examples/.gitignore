@@ -1,0 +1,6 @@
+/target/
+/.termux-x11/
+/.cargo/
+/Cargo.lock
+__pycache__/
+*.pyc

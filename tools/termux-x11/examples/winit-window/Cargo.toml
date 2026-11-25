@@ -1,0 +1,8 @@
+[package]
+name = "winit-window"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+winit = { version = "0.30.13", default-features = false, features = ["x11", "rwh_06"] }

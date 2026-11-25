@@ -1,0 +1,6 @@
+[workspace]
+members = ["winit-window", "tao-wry", "rodio-tone"]
+resolver = "2"
+
+[profile.dev]
+debug = false

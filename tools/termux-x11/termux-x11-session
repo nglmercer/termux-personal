@@ -1,0 +1,104 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Start/stop the Termux:X11 display and PulseAudio for native (non-proot) GUI apps.
+#   termux-x11-session start   # X server :0, PulseAudio, Termux:X11 activity
+#   eval "$(termux-x11-session env)"
+#   termux-x11-session status | stop
+set -u
+
+PREFIX=${PREFIX:-/data/data/com.termux/files/usr}
+TMPDIR=${TMPDIR:-$PREFIX/tmp}
+DISPLAY_NUMBER=${TERMUX_X11_DISPLAY:-0}
+RUNTIME_DIR=${XDG_RUNTIME_DIR:-$TMPDIR}
+X_SOCKET=$TMPDIR/.X11-unix/X$DISPLAY_NUMBER
+PULSE_SOCKET=$RUNTIME_DIR/pulse/native
+LOG_DIR=${TERMUX_X11_LOG_DIR:-$TMPDIR/termux-x11-session}
+
+print_env() {
+	printf 'export DISPLAY=:%s\n' "$DISPLAY_NUMBER"
+	printf 'export XDG_RUNTIME_DIR=%q\n' "$RUNTIME_DIR"
+	printf 'export PULSE_SERVER=%q\n' "unix:$PULSE_SOCKET"
+}
+
+wait_for_socket() {
+	local socket=$1 tries=50
+	while [ ! -S "$socket" ] && [ "$tries" -gt 0 ]; do
+		sleep 0.1
+		tries=$((tries - 1))
+	done
+	[ -S "$socket" ]
+}
+
+start_x11() {
+	if [ -S "$X_SOCKET" ] && pgrep -x termux-x11 >/dev/null 2>&1; then
+		echo "x11: already running on :$DISPLAY_NUMBER"
+		return 0
+	fi
+	command -v termux-x11 >/dev/null || { echo "x11: install with: pkg install x11-repo && pkg install termux-x11-nightly" >&2; return 1; }
+	rm -f "$X_SOCKET" "$TMPDIR/.X$DISPLAY_NUMBER-lock"
+	# termux-x11 connects the LorieService app binder; without the Activity it still
+	# serves X clients, the screen just stays black until the app is opened.
+	XDG_RUNTIME_DIR=$RUNTIME_DIR nohup termux-x11 ":$DISPLAY_NUMBER" -ac >"$LOG_DIR/x11.log" 2>&1 &
+	if ! wait_for_socket "$X_SOCKET"; then
+		if grep -q "server already running" "$LOG_DIR/x11.log" 2>/dev/null && DISPLAY=:$DISPLAY_NUMBER xdpyinfo >/dev/null 2>&1; then
+			echo "x11: already running on :$DISPLAY_NUMBER"
+			return 0
+		fi
+		echo "x11: server did not start, see $LOG_DIR/x11.log" >&2
+		return 1
+	fi
+	echo "x11: started on :$DISPLAY_NUMBER"
+}
+
+start_pulse() {
+	command -v pulseaudio >/dev/null || { echo "audio: install with: pkg install pulseaudio" >&2; return 1; }
+	if XDG_RUNTIME_DIR=$RUNTIME_DIR pulseaudio --check 2>/dev/null; then
+		echo "audio: pulseaudio already running"
+		return 0
+	fi
+	# module-aaudio-sink is the Android 8+ output; module-sles-sink (default.pa) is the fallback.
+	local sink=module-sles-sink sdk
+	sdk=$(getprop ro.build.version.sdk 2>/dev/null)
+	if [ "${sdk:-0}" -ge 26 ] && [ -e "$PREFIX/lib/pulseaudio/modules/module-aaudio-sink.so" ]; then
+		sink=module-aaudio-sink
+	fi
+	sink=${TERMUX_X11_AUDIO_SINK:-$sink}
+	XDG_RUNTIME_DIR=$RUNTIME_DIR pulseaudio --start --exit-idle-time=-1 --log-target=file:"$LOG_DIR/pulse.log" \
+		-n --load="$sink" --load=module-native-protocol-unix --load=module-always-sink || {
+		echo "audio: pulseaudio failed, see $LOG_DIR/pulse.log" >&2
+		return 1
+	}
+	wait_for_socket "$PULSE_SOCKET" || { echo "audio: socket $PULSE_SOCKET missing" >&2; return 1; }
+	echo "audio: pulseaudio started ($sink)"
+}
+
+open_activity() {
+	command -v am >/dev/null && am start -n com.termux.x11/.MainActivity >/dev/null 2>&1 ||
+		echo "x11: open the Termux:X11 app to see the display"
+}
+
+case ${1:-} in
+start)
+	mkdir -p "$LOG_DIR"
+	rc=0
+	start_x11 || rc=1
+	start_pulse || rc=1
+	[ "${TERMUX_X11_NO_ACTIVITY:-0}" = 1 ] || open_activity
+	echo "run: eval \"\$(termux-x11-session env)\""
+	exit $rc
+	;;
+env) print_env ;;
+status)
+	[ -S "$X_SOCKET" ] && echo "x11: $X_SOCKET" || echo "x11: not running"
+	XDG_RUNTIME_DIR=$RUNTIME_DIR pulseaudio --check 2>/dev/null && echo "audio: $PULSE_SOCKET" || echo "audio: not running"
+	;;
+stop)
+	XDG_RUNTIME_DIR=$RUNTIME_DIR pulseaudio --kill 2>/dev/null
+	pkill -x termux-x11 2>/dev/null
+	rm -f "$X_SOCKET" "$TMPDIR/.X$DISPLAY_NUMBER-lock"
+	echo "stopped"
+	;;
+*)
+	echo "usage: termux-x11-session start|env|status|stop" >&2
+	exit 2
+	;;
+esac
