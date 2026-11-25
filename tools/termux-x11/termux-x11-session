@@ -16,6 +16,7 @@ RUNTIME_DIR=${XDG_RUNTIME_DIR:-$TMPDIR}
 X_SOCKET=$TMPDIR/.X11-unix/X$DISPLAY_NUMBER
 PULSE_SOCKET=$RUNTIME_DIR/pulse/native
 LOG_DIR=${TERMUX_X11_LOG_DIR:-$TMPDIR/termux-x11-session}
+WM_PID_FILE=$LOG_DIR/wm-$DISPLAY_NUMBER.pid
 
 print_env() {
 	printf 'export DISPLAY=:%s\n' "$DISPLAY_NUMBER"
@@ -74,16 +75,32 @@ start_wm() {
 	# windows, but keyboard input never does. fluxbox/openbox are small and focus
 	# windows on click; TERMUX_X11_WM overrides the autodetected one.
 	[ "${TERMUX_X11_NO_WM:-0}" = 1 ] && return 0
-	local wm=${TERMUX_X11_WM:-}
-	if [ -z "$wm" ]; then
+	local wm=${TERMUX_X11_WM:-} pid
+	if [ -n "$wm" ]; then
+		command -v "$wm" >/dev/null || { echo "wm: TERMUX_X11_WM=$wm is not installed" >&2; return 1; }
+	else
 		for wm in fluxbox openbox jwm; do
 			command -v "$wm" >/dev/null && break
 			wm=
 		done
 	fi
 	[ -n "$wm" ] || { echo "wm: none installed, keyboard focus will not work (pkg install fluxbox)"; return 0; }
-	pgrep -x "$wm" >/dev/null 2>&1 && return 0
+	# Track our own WM by pid file so WMs on other displays (e.g. a VNC desktop)
+	# neither block startup here nor get killed by stop.
+	pid=$(cat "$WM_PID_FILE" 2>/dev/null)
+	if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+		echo "wm: already running (pid $pid)"
+		return 0
+	fi
 	DISPLAY=:$DISPLAY_NUMBER XDG_RUNTIME_DIR=$RUNTIME_DIR nohup "$wm" >"$LOG_DIR/wm.log" 2>&1 &
+	pid=$!
+	sleep 0.5
+	if ! kill -0 "$pid" 2>/dev/null; then
+		rm -f "$WM_PID_FILE"
+		echo "wm: $wm exited immediately, see $LOG_DIR/wm.log" >&2
+		return 1
+	fi
+	echo "$pid" >"$WM_PID_FILE"
 	echo "wm: $wm started"
 }
 
@@ -119,7 +136,7 @@ start)
 	mkdir -p "$LOG_DIR"
 	rc=0
 	start_x11 || rc=1
-	[ "$rc" = 0 ] && start_wm
+	if [ "$rc" = 0 ]; then start_wm || rc=1; fi
 	start_pulse || rc=1
 	[ "${TERMUX_X11_NO_ACTIVITY:-0}" = 1 ] || open_activity
 	echo "run: eval \"\$(termux-x11-session env)\""
@@ -136,10 +153,8 @@ stop)
 		kill "$server_pid" 2>/dev/null
 	done
 	unset server_pid
-	for wm_proc in ${TERMUX_X11_WM:-} fluxbox openbox jwm; do
-		[ -n "$wm_proc" ] && pkill -x "$wm_proc" 2>/dev/null
-	done
-	unset wm_proc
+	[ -f "$WM_PID_FILE" ] && kill "$(cat "$WM_PID_FILE")" 2>/dev/null
+	rm -f "$WM_PID_FILE"
 	rm -f "$X_SOCKET" "$TMPDIR/.X$DISPLAY_NUMBER-lock"
 	echo "stopped"
 	;;
