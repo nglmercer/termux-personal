@@ -1,0 +1,112 @@
+#!/system/bin/sh
+# Explicit per-command adapter for statically linked Linux executables.
+# Uses proot only for the selected command: provide Linux-style resolver, hosts,
+# temporary, and CA paths without changing the caller's shell or package files.
+prefix=${PREFIX:-/data/data/com.termux/files/usr}
+
+usage() {
+    printf '%s\n' 'Usage: termux-glibc-run [--] COMMAND [ARG...]'
+    printf '%s\n' 'Runs COMMAND through proot with Termux resolver, hosts, tmp and CA files mapped to common Linux paths.'
+}
+
+fail() {
+    printf '%s\n' "termux-glibc-run: $1" >&2
+    exit 1
+}
+
+case "${1-}" in
+    -h|--help)
+        usage
+        exit 0 ;;
+    --)
+        shift ;;
+    -*)
+        usage >&2
+        exit 2 ;;
+esac
+
+if [ "$#" -eq 0 ]; then
+    usage >&2
+    exit 2
+fi
+
+case "$prefix" in
+    /*) ;;
+    *) fail 'PREFIX must be an absolute path.' ;;
+esac
+case "$prefix" in
+    *:*) fail 'PREFIX contains an unsupported colon.' ;;
+esac
+
+case "$1" in
+    */*) program=$1 ;;
+    *) program=$(command -v "$1" 2>/dev/null) ;;
+esac
+case "$program" in
+    /*) ;;
+    *) fail 'Command was not found at an absolute path.' ;;
+esac
+if [ ! -f "$program" ] || [ ! -x "$program" ]; then
+    fail 'Command is not an executable regular file.'
+fi
+shift
+
+proot_bin=$prefix/bin/proot
+if [ ! -x "$proot_bin" ]; then
+    proot_bin=$(command -v proot 2>/dev/null)
+fi
+case "$proot_bin" in
+    /*) ;;
+    *) fail 'Termux proot is unavailable; install the proot package.' ;;
+esac
+if [ ! -x "$proot_bin" ]; then
+    fail 'Termux proot is unavailable; install the proot package.'
+fi
+
+resolver=$prefix/etc/resolv.conf
+hosts_file=$prefix/etc/hosts
+tmp_dir=$prefix/tmp
+ca_bundle=$prefix/etc/tls/cert.pem
+
+if [ ! -f "$resolver" ] || [ ! -r "$resolver" ]; then
+    fail 'Termux resolver configuration is missing or unreadable.'
+fi
+if [ ! -f "$hosts_file" ] || [ ! -r "$hosts_file" ]; then
+    fail 'Termux hosts file is missing or unreadable.'
+fi
+if [ ! -d "$tmp_dir" ]; then
+    fail 'Termux temporary directory is unavailable.'
+fi
+
+# A caller-selected CA file is authoritative, including when it is empty.
+# Otherwise select the verified Termux bundle only inside this process and
+# expose it at common Linux bundle locations for programs that ignore SSL_CERT_FILE.
+bind_ca=no
+if [ "${SSL_CERT_FILE+x}" != x ]; then
+    if [ ! -f "$ca_bundle" ] || [ ! -r "$ca_bundle" ]; then
+        fail 'Termux CA bundle is missing or unreadable; install ca-certificates or set SSL_CERT_FILE.'
+    fi
+    SSL_CERT_FILE=$ca_bundle
+    export SSL_CERT_FILE
+    bind_ca=yes
+fi
+
+if [ "$bind_ca" = yes ]; then
+    exec "$proot_bin" \
+        -b "$tmp_dir:/tmp" \
+        -b "$resolver:/etc/resolv.conf" \
+        -b "$hosts_file:/etc/hosts" \
+        -b "$ca_bundle:/etc/ssl/certs/ca-certificates.crt" \
+        -b "$ca_bundle:/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem" \
+        -b "$ca_bundle:/etc/pki/tls/certs/ca-bundle.crt" \
+        -b "$ca_bundle:/etc/ssl/ca-bundle.pem" \
+        -b "$ca_bundle:/etc/pki/tls/cacert.pem" \
+        -b "$ca_bundle:/etc/ssl/cert.pem" \
+        "$program" "$@"
+fi
+
+exec "$proot_bin" \
+    -b "$tmp_dir:/tmp" \
+    -b "$resolver:/etc/resolv.conf" \
+    -b "$hosts_file:/etc/hosts" \
+    "$program" "$@"

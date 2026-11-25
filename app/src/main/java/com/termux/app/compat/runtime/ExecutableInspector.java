@@ -151,7 +151,8 @@ public final class ExecutableInspector {
                     return result(Status.ABI_MISMATCH, detail + "\nAndroid's native ABIs are little-endian; translation layers were not tested.");
                 if (supportedAbis.length > 0 && knownMachine(machine) && !matchesAbi(machine, supportedAbis))
                     return result(Status.ABI_MISMATCH, detail + "\nArchitecture is not in Android's reported ABI list; translation layers were not tested.");
-                if (interpreter == null) return result(Status.UNTESTED, detail + "\nNo ELF interpreter: possibly static or a shared object. Runtime cannot be determined from this alone.");
+                if (interpreter == null) return result(Status.UNTESTED, detail + "\nNo ELF interpreter: possibly static or a shared object. Runtime cannot be determined from this alone." +
+                    " If this is a static Linux executable, the optional termux-glibc-run adapter runs one command through proot with Termux resolver, hosts, tmp and CA paths; kernel, ABI and program compatibility remain untested.");
                 if (!new File(interpreter).canExecute()) {
                     File adapter = glibcLoaderDirectory == null ? null : new File(glibcLoaderDirectory, new File(interpreter).getName());
                     if ("Linux glibc".equals(runtime(interpreter)) && adapter != null && adapter.isFile() && adapter.canExecute()) {

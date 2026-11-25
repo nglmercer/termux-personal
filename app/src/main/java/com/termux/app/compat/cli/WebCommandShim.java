@@ -28,6 +28,7 @@ public final class WebCommandShim {
     public static synchronized Status ensureDoctorV2(Context context) { return ensureAsset(context, "compat-v2", "termux-compat"); }
     public static synchronized Status ensureRuntimeAdapter(Context context) { return ensureAsset(context, "termux-run-clean"); }
     public static synchronized Status ensureRuntimeAdapterV2(Context context) { return ensureAsset(context, "compat-v2", "termux-run-clean"); }
+    public static synchronized Status ensureGlibcRunnerV2(Context context) { return ensureAsset(context, "compat-v2", "termux-glibc-run"); }
     private static Status ensureAsset(Context context, String name) {
         return ensureAsset(context, DIRECTORY, name);
     }
@@ -42,7 +43,7 @@ public final class WebCommandShim {
     }
     static Status install(File filesDir, String directoryName, String name, byte[] expected) {
         boolean supported = (DIRECTORY.equals(directoryName) && (NAME.equals(name) || "termux-compat".equals(name) || "termux-run-clean".equals(name))) ||
-            ("compat-v2".equals(directoryName) && ("termux-run-clean".equals(name) || "termux-compat".equals(name)));
+            ("compat-v2".equals(directoryName) && ("termux-run-clean".equals(name) || "termux-compat".equals(name) || "termux-glibc-run".equals(name)));
         if (filesDir == null || !supported || expected == null || expected.length == 0 || expected.length > MAX_BYTES) return Status.UNAVAILABLE;
         File directory = new File(filesDir, directoryName);
         try {
@@ -73,11 +74,16 @@ public final class WebCommandShim {
                     if (e.errno == OsConstants.EEXIST) return verifyExisting(file, expected);
                     return Status.UNAVAILABLE;
                 }
-                try (FileOutputStream output = new FileOutputStream(fd)) {
-                    output.write(expected);
-                    output.flush();
-                    Os.fchmod(fd, 0700);
-                    output.getFD().sync();
+                try {
+                    ParcelFileDescriptor outputHandle = ParcelFileDescriptor.dup(fd);
+                    try (FileOutputStream output = new ParcelFileDescriptor.AutoCloseOutputStream(outputHandle)) {
+                        output.write(expected);
+                        output.flush();
+                        Os.fchmod(fd, 0700);
+                        output.getFD().sync();
+                    }
+                } finally {
+                    Os.close(fd);
                 }
                 return Status.READY;
             }
@@ -88,11 +94,16 @@ public final class WebCommandShim {
             StructStat entry = Os.lstat(file.getPath());
             if (!OsConstants.S_ISREG(entry.st_mode) || entry.st_uid != android.os.Process.myUid()) return Status.CONFLICT;
             FileDescriptor fd = Os.open(file.getPath(), OsConstants.O_RDONLY | OsConstants.O_NONBLOCK | OsConstants.O_NOFOLLOW | OsConstants.O_CLOEXEC, 0);
-            try (FileInputStream input = new FileInputStream(fd)) {
-                StructStat info = Os.fstat(fd);
-                if (!OsConstants.S_ISREG(info.st_mode) || info.st_uid != android.os.Process.myUid() || (info.st_mode & 0100) == 0)
-                    return Status.CONFLICT;
-                return Arrays.equals(expected, readBounded(input)) ? Status.READY : Status.CONFLICT;
+            try {
+                ParcelFileDescriptor inputHandle = ParcelFileDescriptor.dup(fd);
+                try (FileInputStream input = new ParcelFileDescriptor.AutoCloseInputStream(inputHandle)) {
+                    StructStat info = Os.fstat(fd);
+                    if (!OsConstants.S_ISREG(info.st_mode) || info.st_uid != android.os.Process.myUid() || (info.st_mode & 0100) == 0)
+                        return Status.CONFLICT;
+                    return Arrays.equals(expected, readBounded(input)) ? Status.READY : Status.CONFLICT;
+                }
+            } finally {
+                Os.close(fd);
             }
         } catch (ErrnoException | IOException | SecurityException e) { return Status.CONFLICT; }
     }
